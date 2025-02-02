@@ -1,4 +1,24 @@
 'use client';
+// Temel arayüz tanımlamaları
+interface GoogleSheetRow {
+  studentId: string;
+  studentName: string;
+}
+
+interface Location {
+  lat: number;
+  lng: number;
+}
+
+interface QRCodeData {
+  timestamp: number;
+  classLocation: Location;
+  validUntil: number;
+  week: number;
+}
+
+// HTML5QrCode instance tipi
+type HTML5QrCodeInstance = InstanceType<typeof Html5Qrcode>;
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Camera, Calendar } from 'lucide-react';
@@ -13,7 +33,7 @@ const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID || '';
 const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
 const MAX_DISTANCE = 0.1;
 
-const loadScanner = async () => {
+const loadScanner = async (): Promise<typeof Html5Qrcode | null> => {
   if (typeof window !== 'undefined') {
     const { Html5Qrcode } = await import('html5-qrcode');
     return Html5Qrcode;
@@ -33,15 +53,15 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
 };
 
 const AttendanceSystem = () => {
-  const [mode, setMode] = useState('teacher');
+  const [mode, setMode] = useState<'teacher' | 'student'>('teacher');
   const [selectedWeek, setSelectedWeek] = useState(1);
   const [qrData, setQrData] = useState('');
-  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [location, setLocation] = useState<Location | null>(null);
   const [studentId, setStudentId] = useState('');
   const [attendance] = useState<GoogleSheetRow[]>([]);
   const [status, setStatus] = useState('');
   const [isScanning, setIsScanning] = useState(false);
-  const [html5QrCode, setHtml5QrCode] = useState<any>(null);
+  const [html5QrCode, setHtml5QrCode] = useState<HTML5QrCodeInstance | null>(null);
   const [validStudents, setValidStudents] = useState<GoogleSheetRow[]>([]);
 
   const fetchStudentList = async () => {
@@ -153,7 +173,7 @@ const AttendanceSystem = () => {
 
   const handleQrScan = useCallback(async (decodedText: string) => {
     try {
-      const scannedData = JSON.parse(decodedText);
+      const scannedData: QRCodeData = JSON.parse(decodedText);
       
       const isValidStudent = validStudents.some(s => s.studentId === studentId);
       if (!isValidStudent) {
@@ -201,7 +221,7 @@ const AttendanceSystem = () => {
   }, []);
 
   useEffect(() => {
-    let scanner: any;
+    let scanner: HTML5QrCodeInstance | null = null;
     
     const initializeScanner = async () => {
       if (isScanning) {
@@ -224,7 +244,7 @@ const AttendanceSystem = () => {
         }
       }
     };
-
+  
     initializeScanner();
     return () => {
       if (scanner) scanner.stop().catch(() => {});
