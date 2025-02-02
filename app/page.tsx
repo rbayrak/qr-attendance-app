@@ -401,7 +401,7 @@ const AttendanceSystem = () => {
               </button>
 
               <button
-                onClick={() => setIsScanning(!isScanning)}
+                onClick={startScanning}  // DOĞRU
                 className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700"
                 disabled={!location || !studentId || !validStudents.some(s => s.studentId === studentId)}
               >
