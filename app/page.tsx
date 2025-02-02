@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Camera, Calendar } from 'lucide-react';
-import { Html5Qrcode } from 'html5-qrcode';
 import Image from 'next/image';
 
 interface GoogleSheetRow {
@@ -13,6 +12,14 @@ interface GoogleSheetRow {
 const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID || '';
 const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
 const MAX_DISTANCE = 0.1;
+
+const loadScanner = async () => {
+  if (typeof window !== 'undefined') {
+    const { Html5Qrcode } = await import('html5-qrcode');
+    return Html5Qrcode;
+  }
+  return null;
+};
 
 const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
   const R = 6371;
@@ -34,7 +41,7 @@ const AttendanceSystem = () => {
   const [attendance] = useState<GoogleSheetRow[]>([]);
   const [status, setStatus] = useState('');
   const [isScanning, setIsScanning] = useState(false);
-  const [html5QrCode, setHtml5QrCode] = useState<Html5Qrcode | null>(null);
+  const [html5QrCode, setHtml5QrCode] = useState<any>(null);
   const [validStudents, setValidStudents] = useState<GoogleSheetRow[]>([]);
 
   const fetchStudentList = async () => {
@@ -194,19 +201,22 @@ const AttendanceSystem = () => {
   }, []);
 
   useEffect(() => {
-    let scanner: Html5Qrcode | undefined;
+    let scanner: any;
     
     const initializeScanner = async () => {
       if (isScanning) {
         try {
-          scanner = new Html5Qrcode("qr-reader");
-          await scanner.start(
-            { facingMode: "environment" },
-            { fps: 10, qrbox: 250 },
-            handleQrScan,
-            () => {}
-          );
-          setHtml5QrCode(scanner);
+          const Html5Qrcode = await loadScanner();
+          if (Html5Qrcode) {
+            scanner = new Html5Qrcode("qr-reader");
+            await scanner.start(
+              { facingMode: "environment" },
+              { fps: 10, qrbox: { width: 250, height: 250 } },
+              handleQrScan,
+              () => {}
+            );
+            setHtml5QrCode(scanner);
+          }
         } catch (error) {
           console.error('Kamera başlatma hatası:', error);
           setStatus('❌ Kamera başlatılamadı');
