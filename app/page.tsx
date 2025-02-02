@@ -1,14 +1,15 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Camera, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
+import Image from 'next/image';
 
 const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID || '';
 const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
 const MAX_DISTANCE = 0.1;
 
-const calculateDistance = (lat1, lon1, lat2, lon2) => {
+const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
   const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
@@ -23,26 +24,24 @@ const AttendanceSystem = () => {
   const [mode, setMode] = useState('teacher');
   const [selectedWeek, setSelectedWeek] = useState(1);
   const [qrData, setQrData] = useState('');
-  const [location, setLocation] = useState(null);
+  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [studentId, setStudentId] = useState('');
-  const [attendance, setAttendance] = useState([]);
+  const [attendance] = useState<Array<{ studentId: string; studentName: string }>>([]);
   const [status, setStatus] = useState('');
   const [isScanning, setIsScanning] = useState(false);
-  const [html5QrCode, setHtml5QrCode] = useState(null);
-  const [validStudents, setValidStudents] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [html5QrCode, setHtml5QrCode] = useState<Html5Qrcode | null>(null);
+  const [validStudents, setValidStudents] = useState<Array<{ studentId: string; studentName: string }>>([]);
 
-  // Öğrenci listesini Google Sheets'ten çekme
   const fetchStudentList = async () => {
     try {
       const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C?key=${API_KEY}` // A:C olarak düzeltildi
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C?key=${API_KEY}`
       );
       const data = await response.json();
       
-      const students = data.values.slice(1).map(row => ({
-        studentId: row[1]?.toString() || '', // B sütunu
-        studentName: row[2]?.toString() || '' // C sütunu
+      const students = data.values.slice(1).map((row: any[]) => ({
+        studentId: row[1]?.toString() || '',
+        studentName: row[2]?.toString() || ''
       }));
       
       setValidStudents(students);
@@ -51,23 +50,15 @@ const AttendanceSystem = () => {
       setStatus('❌ Öğrenci listesi yüklenemedi');
     }
   };
-  
 
-  useEffect(() => {
-    fetchStudentList();
-  }, []);
-
-  // Google Sheets'te yoklama güncelleme
-  const updateAttendance = async (studentId) => {
+  const updateAttendance = async (studentId: string) => {
     try {
-      setIsLoading(true);
-      
       const response = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z?key=${API_KEY}`
       );
       const data = await response.json();
       
-      const studentRow = data.values.findIndex(row => row[1] === studentId);
+      const studentRow = data.values.findIndex((row: any[]) => row[1] === studentId);
       if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
 
       const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
@@ -92,8 +83,6 @@ const AttendanceSystem = () => {
       console.error('Yoklama güncelleme hatası:', error);
       setStatus('❌ Yoklama kaydedilemedi');
       return false;
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -113,6 +102,7 @@ const AttendanceSystem = () => {
         setStatus('📍 Konum alındı');
       },
       (error) => {
+        console.error('Konum hatası:', error);
         setStatus(`❌ Konum hatası: ${error.message}`);
       }
     );
@@ -135,7 +125,7 @@ const AttendanceSystem = () => {
     setStatus('✅ QR kod oluşturuldu');
   };
 
-  const handleStudentIdChange = (e) => {
+  const handleStudentIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newId = e.target.value;
     setStudentId(newId);
     
@@ -149,11 +139,10 @@ const AttendanceSystem = () => {
     }
   };
 
-  const handleQrScan = async (decodedText) => {
+  const handleQrScan = useCallback(async (decodedText: string) => {
     try {
       const scannedData = JSON.parse(decodedText);
       
-      // Öğrenci kontrolü
       const isValidStudent = validStudents.some(s => s.studentId === studentId);
       if (!isValidStudent) {
         setStatus('❌ Öğrenci numarası listede bulunamadı');
@@ -190,12 +179,17 @@ const AttendanceSystem = () => {
         }
       }
     } catch (error) {
+      console.error('QR tarama hatası:', error);
       setStatus('❌ Geçersiz QR kod');
     }
-  };
+  }, [studentId, location, html5QrCode, validStudents]);
 
   useEffect(() => {
-    let scanner;
+    fetchStudentList();
+  }, []);
+
+  useEffect(() => {
+    let scanner: Html5Qrcode | undefined;
     
     const initializeScanner = async () => {
       if (isScanning) {
@@ -209,6 +203,7 @@ const AttendanceSystem = () => {
           );
           setHtml5QrCode(scanner);
         } catch (error) {
+          console.error('Kamera başlatma hatası:', error);
           setStatus('❌ Kamera başlatılamadı');
           setIsScanning(false);
         }
@@ -219,7 +214,7 @@ const AttendanceSystem = () => {
     return () => {
       if (scanner) scanner.stop().catch(() => {});
     };
-  }, [isScanning]);
+  }, [isScanning, handleQrScan]);
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
@@ -275,9 +270,11 @@ const AttendanceSystem = () => {
 
             {qrData && (
               <div className="mt-4 text-center">
-                <img 
+                <Image 
                   src={`https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qrData)}&size=200x200`}
                   alt="QR Code"
+                  width={200}
+                  height={200}
                   className="mx-auto border-4 border-white rounded-lg shadow-lg"
                 />
                 <p className="mt-2 text-sm text-gray-600">5 dakika geçerli</p>

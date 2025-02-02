@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */// Güvenlik header'ları
+  // Güvenlik header'ları
   async headers() {
     return [
       {
@@ -13,7 +13,17 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-  // Diğer yapılandırmalar...
+  // Image domains için yapılandırma
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'api.qrserver.com',
+        port: '',
+        pathname: '/v1/create-qr-code/**',
+      },
+    ],
+  },
 };
 
 export default nextConfig;
