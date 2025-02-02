@@ -31,11 +31,11 @@ const AttendanceSystem = () => {
   const [qrData, setQrData] = useState('');
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [studentId, setStudentId] = useState('');
-  const [attendance] = useState<Array<{ studentId: string; studentName: string }>>([]);
+  const [attendance] = useState<GoogleSheetRow[]>([]);
   const [status, setStatus] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   const [html5QrCode, setHtml5QrCode] = useState<Html5Qrcode | null>(null);
-  const [validStudents, setValidStudents] = useState<Array<{ studentId: string; studentName: string }>>([]);
+  const [validStudents, setValidStudents] = useState<GoogleSheetRow[]>([]);
 
   const fetchStudentList = async () => {
     try {
@@ -44,7 +44,6 @@ const AttendanceSystem = () => {
       );
       const data = await response.json();
       
-      // row tipini string[] olarak belirtelim
       const students = data.values.slice(1).map((row: string[]) => ({
         studentId: row[1]?.toString() || '',
         studentName: row[2]?.toString() || ''
@@ -55,9 +54,9 @@ const AttendanceSystem = () => {
       console.error('Öğrenci listesi çekme hatası:', error);
       setStatus('❌ Öğrenci listesi yüklenemedi');
     }
-};
+  };
 
-  const updateAttendance = async (studentId: string) => {
+  const updateAttendance = useCallback(async (studentId: string) => {
     try {
       const response = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z?key=${API_KEY}`
@@ -90,7 +89,7 @@ const AttendanceSystem = () => {
       setStatus('❌ Yoklama kaydedilemedi');
       return false;
     }
-  };
+  }, [selectedWeek]);
 
   const getLocation = () => {
     if (!navigator.geolocation) {
@@ -188,7 +187,7 @@ const AttendanceSystem = () => {
       console.error('QR tarama hatası:', error);
       setStatus('❌ Geçersiz QR kod');
     }
-}, [studentId, location, html5QrCode, validStudents, updateAttendance]);
+  }, [studentId, location, html5QrCode, validStudents, updateAttendance]);
 
   useEffect(() => {
     fetchStudentList();
