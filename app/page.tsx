@@ -5,6 +5,11 @@ import { Camera, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import Image from 'next/image';
 
+interface GoogleSheetRow {
+  studentId: string;
+  studentName: string;
+}
+
 const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID || '';
 const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
 const MAX_DISTANCE = 0.1;
@@ -39,7 +44,8 @@ const AttendanceSystem = () => {
       );
       const data = await response.json();
       
-      const students = data.values.slice(1).map((row: any[]) => ({
+      // row tipini string[] olarak belirtelim
+      const students = data.values.slice(1).map((row: string[]) => ({
         studentId: row[1]?.toString() || '',
         studentName: row[2]?.toString() || ''
       }));
@@ -49,7 +55,7 @@ const AttendanceSystem = () => {
       console.error('Öğrenci listesi çekme hatası:', error);
       setStatus('❌ Öğrenci listesi yüklenemedi');
     }
-  };
+};
 
   const updateAttendance = async (studentId: string) => {
     try {
@@ -58,7 +64,7 @@ const AttendanceSystem = () => {
       );
       const data = await response.json();
       
-      const studentRow = data.values.findIndex((row: any[]) => row[1] === studentId);
+      const studentRow = data.values.findIndex((row: string[]) => row[1] === studentId);
       if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
 
       const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
@@ -182,7 +188,7 @@ const AttendanceSystem = () => {
       console.error('QR tarama hatası:', error);
       setStatus('❌ Geçersiz QR kod');
     }
-  }, [studentId, location, html5QrCode, validStudents]);
+}, [studentId, location, html5QrCode, validStudents, updateAttendance]);
 
   useEffect(() => {
     fetchStudentList();
