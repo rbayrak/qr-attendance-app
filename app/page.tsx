@@ -160,13 +160,12 @@ const AttendanceSystem = () => {
 
   const startScanning = async () => {
     try {
-      // Kamera izinlerini kontrol et
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      stream.getTracks().forEach(track => track.stop()); // İzin kontrolünden sonra stream'i kapat
-      setIsScanning(!isScanning);
+      stream.getTracks().forEach(track => track.stop());
+      setIsScanning(true);
     } catch (error) {
-      console.error('Kamera erişim hatası:', error);
-      setStatus('❌ Kamera erişim izni verilmedi');
+      console.error('Kamera hatası:', error);
+      setStatus('❌ Kamera izni verilmedi veya cihaz yok');
     }
   };
 
