@@ -32,9 +32,15 @@ const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
 const MAX_DISTANCE = 0.1;
 
 const loadScanner = async (): Promise<typeof HTML5QrCodeType | null> => {
-  if (typeof window !== 'undefined') {
-    const { Html5Qrcode } = await import('html5-qrcode');
-    return Html5Qrcode;
+  try {
+    if (typeof window !== 'undefined') {
+      // Dynamic import'u try-catch içine aldık
+      const { Html5Qrcode } = await import('html5-qrcode');
+      return Html5Qrcode;
+    }
+  } catch (error) {
+    console.error('QR Scanner yüklenirken hata:', error);
+    setStatus('❌ QR tarayıcı yüklenemedi');
   }
   return null;
 };
@@ -155,6 +161,19 @@ const AttendanceSystem = () => {
     setStatus('✅ QR kod oluşturuldu');
   };
 
+  const startScanning = async () => {
+    try {
+      // Kamera izinlerini kontrol et
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream.getTracks().forEach(track => track.stop()); // İzin kontrolünden sonra stream'i kapat
+      
+      setIsScanning(true);
+    } catch (error) {
+      console.error('Kamera erişim hatası:', error);
+      setStatus('❌ Kamera erişim izni verilmedi');
+    }
+  };
+
   const handleStudentIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newId = e.target.value;
     setStudentId(newId);
@@ -224,17 +243,39 @@ const AttendanceSystem = () => {
     const initializeScanner = async () => {
       if (isScanning) {
         try {
-          const Html5Qrcode = await loadScanner();
-          if (Html5Qrcode) {
-            scanner = new Html5Qrcode("qr-reader");
-            await scanner.start(
-              { facingMode: "environment" },
-              { fps: 10, qrbox: { width: 250, height: 250 } },
-              handleQrScan,
-              () => {}
-            );
-            setHtml5QrCode(scanner);
+          // Önce mevcut tarayıcıyı durduralım
+          if (html5QrCode) {
+            await html5QrCode.stop();
+            setHtml5QrCode(null);
           }
+  
+          const Html5Qrcode = await loadScanner();
+          if (!Html5Qrcode) {
+            throw new Error('QR tarayıcı yüklenemedi');
+          }
+  
+          // QR reader elementinin varlığını kontrol edelim
+          const readerElement = document.getElementById("qr-reader");
+          if (!readerElement) {
+            throw new Error('QR okuyucu elementi bulunamadı');
+          }
+  
+          scanner = new Html5Qrcode("qr-reader");
+          
+          await scanner.start(
+            { facingMode: "environment" },
+            {
+              fps: 10,
+              qrbox: { width: 250, height: 250 },
+              aspectRatio: 1.0
+            },
+            handleQrScan,
+            (errorMessage: string) => {
+              console.log('QR tarama devam ediyor...', errorMessage);
+            }
+          );
+          
+          setHtml5QrCode(scanner);
         } catch (error) {
           console.error('Kamera başlatma hatası:', error);
           setStatus('❌ Kamera başlatılamadı');
@@ -244,19 +285,24 @@ const AttendanceSystem = () => {
     };
   
     initializeScanner();
+  
+    // Cleanup function
     return () => {
-      if (scanner) scanner.stop().catch(() => {});
+      if (scanner) {
+        scanner.stop().catch(console.error);
+      }
     };
-  }, [isScanning, handleQrScan]);
+  }, [isScanning, handleQrScan, html5QrCode]);
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
       <div className="max-w-md mx-auto space-y-6">
         <button
-          onClick={() => setMode(m => m === 'teacher' ? 'student' : 'teacher')}
-          className="w-full p-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+           onClick={startScanning}
+           className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700"
+           disabled={!location || !studentId || !validStudents.some(s => s.studentId === studentId)}
         >
-          {mode === 'teacher' ? '📱 Öğrenci Modu' : '👨🏫 Öğretmen Modu'}
+           {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
         </button>
 
         {status && (
@@ -371,10 +417,10 @@ const AttendanceSystem = () => {
               </button>
 
               {isScanning && (
-                <div className="relative aspect-square bg-gray-200 rounded-xl overflow-hidden">
-                  <div id="qr-reader" className="w-full h-full"></div>
-                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-sm">
-                    QR kodu kameraya gösterin
+                <div className="relative w-full aspect-square bg-gray-200 rounded-xl overflow-hidden">
+                  <div id="qr-reader" className="w-full h-full" style={{ minHeight: '300px' }}></div>
+                  <div className="absolute inset-0 pointer-events-none bg-black/50 flex items-center justify-center text-white text-sm">
+                     QR kodu kameraya gösterin
                   </div>
                 </div>
               )}
