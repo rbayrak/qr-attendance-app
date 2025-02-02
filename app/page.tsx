@@ -1,4 +1,11 @@
 'use client';
+
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { Camera, Calendar } from 'lucide-react';
+import Image from 'next/image';
+import { Html5Qrcode as HTML5QrCodeType } from 'html5-qrcode';
+
 // Temel arayüz tanımlamaları
 interface GoogleSheetRow {
   studentId: string;
@@ -18,22 +25,13 @@ interface QRCodeData {
 }
 
 // HTML5QrCode instance tipi
-type HTML5QrCodeInstance = InstanceType<typeof Html5Qrcode>;
-
-import React, { useState, useEffect, useCallback } from 'react';
-import { Camera, Calendar } from 'lucide-react';
-import Image from 'next/image';
-
-interface GoogleSheetRow {
-  studentId: string;
-  studentName: string;
-}
+type HTML5QrCodeInstance = HTML5QrCodeType;
 
 const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID || '';
 const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
 const MAX_DISTANCE = 0.1;
 
-const loadScanner = async (): Promise<typeof Html5Qrcode | null> => {
+const loadScanner = async (): Promise<typeof HTML5QrCodeType | null> => {
   if (typeof window !== 'undefined') {
     const { Html5Qrcode } = await import('html5-qrcode');
     return Html5Qrcode;
@@ -61,7 +59,7 @@ const AttendanceSystem = () => {
   const [attendance] = useState<GoogleSheetRow[]>([]);
   const [status, setStatus] = useState('');
   const [isScanning, setIsScanning] = useState(false);
-  const [html5QrCode, setHtml5QrCode] = useState<HTML5QrCodeInstance | null>(null);
+  const const [html5QrCode, setHtml5QrCode] = useState<HTML5QrCodeInstance | null>(null);
   const [validStudents, setValidStudents] = useState<GoogleSheetRow[]>([]);
 
   const fetchStudentList = async () => {
