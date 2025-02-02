@@ -1,6 +1,5 @@
 'use client';
 
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { Camera, Calendar } from 'lucide-react';
 import Image from 'next/image';
@@ -34,13 +33,11 @@ const MAX_DISTANCE = 0.1;
 const loadScanner = async (): Promise<typeof HTML5QrCodeType | null> => {
   try {
     if (typeof window !== 'undefined') {
-      // Dynamic import'u try-catch içine aldık
       const { Html5Qrcode } = await import('html5-qrcode');
       return Html5Qrcode;
     }
   } catch (error) {
     console.error('QR Scanner yüklenirken hata:', error);
-    setStatus('❌ QR tarayıcı yüklenemedi');
   }
   return null;
 };
@@ -166,8 +163,7 @@ const AttendanceSystem = () => {
       // Kamera izinlerini kontrol et
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       stream.getTracks().forEach(track => track.stop()); // İzin kontrolünden sonra stream'i kapat
-      
-      setIsScanning(true);
+      setIsScanning(!isScanning);
     } catch (error) {
       console.error('Kamera erişim hatası:', error);
       setStatus('❌ Kamera erişim izni verilmedi');
@@ -243,23 +239,21 @@ const AttendanceSystem = () => {
     const initializeScanner = async () => {
       if (isScanning) {
         try {
-          // Önce mevcut tarayıcıyı durduralım
           if (html5QrCode) {
             await html5QrCode.stop();
             setHtml5QrCode(null);
           }
-  
+
           const Html5Qrcode = await loadScanner();
           if (!Html5Qrcode) {
             throw new Error('QR tarayıcı yüklenemedi');
           }
-  
-          // QR reader elementinin varlığını kontrol edelim
+
           const readerElement = document.getElementById("qr-reader");
           if (!readerElement) {
             throw new Error('QR okuyucu elementi bulunamadı');
           }
-  
+
           scanner = new Html5Qrcode("qr-reader");
           
           await scanner.start(
@@ -283,10 +277,9 @@ const AttendanceSystem = () => {
         }
       }
     };
-  
+
     initializeScanner();
-  
-    // Cleanup function
+
     return () => {
       if (scanner) {
         scanner.stop().catch(console.error);
@@ -298,11 +291,10 @@ const AttendanceSystem = () => {
     <div className="min-h-screen p-4 bg-gray-50">
       <div className="max-w-md mx-auto space-y-6">
         <button
-           onClick={startScanning}
-           className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700"
-           disabled={!location || !studentId || !validStudents.some(s => s.studentId === studentId)}
+          onClick={() => setMode(m => m === 'teacher' ? 'student' : 'teacher')}
+          className="w-full p-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
         >
-           {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
+          {mode === 'teacher' ? '📱 Öğrenci Modu' : '👨🏫 Öğretmen Modu'}
         </button>
 
         {status && (
