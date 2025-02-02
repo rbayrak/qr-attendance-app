@@ -59,7 +59,7 @@ const AttendanceSystem = () => {
   const [attendance] = useState<GoogleSheetRow[]>([]);
   const [status, setStatus] = useState('');
   const [isScanning, setIsScanning] = useState(false);
-  const const [html5QrCode, setHtml5QrCode] = useState<HTML5QrCodeInstance | null>(null);
+  const [html5QrCode, setHtml5QrCode] = useState<HTML5QrCodeInstance | null>(null);
   const [validStudents, setValidStudents] = useState<GoogleSheetRow[]>([]);
 
   const fetchStudentList = async () => {
