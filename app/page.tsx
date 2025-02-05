@@ -3,12 +3,23 @@
 import React, { useState, useEffect } from 'react';
 import { Camera, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
+import Image from 'next/image';
+
+interface Location {
+  lat: number;
+  lng: number;
+}
+
+interface Student {
+  studentId: string;
+  studentName: string;
+}
 
 const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID;
 const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
 const MAX_DISTANCE = 0.1;
 
-const calculateDistance = (lat1, lon1, lat2, lon2) => {
+const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
   const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
@@ -19,20 +30,22 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 };
 
-const AttendanceSystem = () => {
-  const [mode, setMode] = useState('teacher');
-  const [selectedWeek, setSelectedWeek] = useState(1);
-  const [qrData, setQrData] = useState('');
-  const [location, setLocation] = useState(null);
-  const [studentId, setStudentId] = useState('');
-  const [attendance, setAttendance] = useState([]);
-  const [status, setStatus] = useState('');
-  const [isScanning, setIsScanning] = useState(false);
-  const [html5QrCode, setHtml5QrCode] = useState(null);
-  const [validStudents, setValidStudents] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
+export default function Home() {
+  const [mode, setMode] = useState<'teacher' | 'student'>('teacher');
+  const [selectedWeek, setSelectedWeek] = useState<number>(1);
+  const [qrData, setQrData] = useState<string>('');
+  const [location, setLocation] = useState<Location | null>(null);
+  const [studentId, setStudentId] = useState<string>('');
+  const [attendance, setAttendance] = useState<Student[]>([]);
+  const [status, setStatus] = useState<string>('');
+  const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [html5QrCode, setHtml5QrCode] = useState<Html5Qrcode | null>(null);
+  const [validStudents, setValidStudents] = useState<Student[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  // Öğrenci listesini Google Sheets'ten çekme
+  // Bundan sonraki kod aynı kalacak, sadece tip eklemeleri yapılacak
+  // ...
+  
   const fetchStudentList = async () => {
     if (!SPREADSHEET_ID || !API_KEY) {
       setStatus('❌ API yapılandırması eksik');
@@ -54,16 +67,16 @@ const AttendanceSystem = () => {
         throw new Error('Geçerli veri bulunamadı');
       }
 
-      const students = data.values.slice(1).map(row => ({
+      const students = data.values.slice(1).map((row: any[]) => ({
         studentId: row[1]?.toString() || '',
         studentName: row[2]?.toString() || ''
-      })).filter(student => student.studentId && student.studentName);
+      })).filter((student: Student) => student.studentId && student.studentName);
       
       setValidStudents(students);
       setStatus('✅ Öğrenci listesi yüklendi');
     } catch (error) {
       console.error('Öğrenci listesi çekme hatası:', error);
-      setStatus('❌ Öğrenci listesi yüklenemedi: ' + error.message);
+      setStatus('❌ Öğrenci listesi yüklenemedi: ' + (error as Error).message);
     }
   };
 
@@ -71,8 +84,7 @@ const AttendanceSystem = () => {
     fetchStudentList();
   }, []);
 
-  // Google Sheets'te yoklama güncelleme
-  const updateAttendance = async (studentId) => {
+  const updateAttendance = async (studentId: string): Promise<boolean> => {
     if (!SPREADSHEET_ID || !API_KEY) {
       setStatus('❌ API yapılandırması eksik');
       return false;
@@ -81,7 +93,6 @@ const AttendanceSystem = () => {
     try {
       setIsLoading(true);
       
-      // Önce mevcut verileri al
       const response = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/Yoklama!A:Z?key=${API_KEY}`
       );
@@ -92,10 +103,10 @@ const AttendanceSystem = () => {
 
       const data = await response.json();
       
-      const studentRow = data.values?.findIndex(row => row[1] === studentId);
+      const studentRow = data.values?.findIndex((row: string[]) => row[1] === studentId);
       if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
 
-      const weekColumn = String.fromCharCode(67 + selectedWeek - 1); // C sütunundan başla
+      const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
       const range = `Yoklama!${weekColumn}${studentRow + 1}`;
 
       const updateResponse = await fetch(
@@ -122,7 +133,7 @@ const AttendanceSystem = () => {
       return true;
     } catch (error) {
       console.error('Yoklama güncelleme hatası:', error);
-      setStatus('❌ Yoklama kaydedilemedi: ' + error.message);
+      setStatus('❌ Yoklama kaydedilemedi: ' + (error as Error).message);
       return false;
     } finally {
       setIsLoading(false);
@@ -164,7 +175,7 @@ const AttendanceSystem = () => {
     const payload = {
       timestamp: Date.now(),
       classLocation: location,
-      validUntil: Date.now() + 300000, // 5 dakika
+      validUntil: Date.now() + 300000,
       week: selectedWeek
     };
     
@@ -172,7 +183,7 @@ const AttendanceSystem = () => {
     setStatus('✅ QR kod oluşturuldu');
   };
 
-  const handleStudentIdChange = (e) => {
+  const handleStudentIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newId = e.target.value.trim();
     setStudentId(newId);
     
@@ -188,11 +199,10 @@ const AttendanceSystem = () => {
     }
   };
 
-  const handleQrScan = async (decodedText) => {
+  const handleQrScan = async (decodedText: string) => {
     try {
       const scannedData = JSON.parse(decodedText);
       
-      // Öğrenci kontrolü
       const isValidStudent = validStudents.some(s => s.studentId === studentId);
       if (!isValidStudent) {
         setStatus('❌ Öğrenci numarası listede bulunamadı');
@@ -236,7 +246,7 @@ const AttendanceSystem = () => {
   };
 
   useEffect(() => {
-    let scanner;
+    let scanner: Html5Qrcode | null = null;
     
     const initializeScanner = async () => {
       if (isScanning) {
@@ -251,7 +261,7 @@ const AttendanceSystem = () => {
           setHtml5QrCode(scanner);
         } catch (error) {
           console.error('Kamera hatası:', error);
-          setStatus('❌ Kamera başlatılamadı: ' + error.message);
+          setStatus('❌ Kamera başlatılamadı: ' + (error as Error).message);
           setIsScanning(false);
         }
       }
@@ -326,9 +336,11 @@ const AttendanceSystem = () => {
 
             {qrData && (
               <div className="mt-4 text-center">
-                <img 
+                <Image 
                   src={`https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qrData)}&size=200x200`}
                   alt="QR Code"
+                  width={200}
+                  height={200}
                   className="mx-auto border-4 border-white rounded-lg shadow-lg"
                 />
                 <p className="mt-2 text-sm text-gray-600">5 dakika geçerli</p>
@@ -350,6 +362,7 @@ const AttendanceSystem = () => {
           </div>
         ) : (
           <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
+            <h2 className="text-2xl font-bold"></h2>
             <h2 className="text-2xl font-bold">Öğrenci Paneli</h2>
             
             <div className="space-y-4">
@@ -396,8 +409,8 @@ const AttendanceSystem = () => {
 
               {isScanning && (
                 <div className="relative aspect-square bg-gray-200 rounded-xl overflow-hidden">
-                  <div id="qr-reader" className="w-full h-full"></div>
-                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-sm">
+                  <div id="qr-reader" className="w-full h-full" style={{ minHeight: '300px' }}></div>
+                  <div className="absolute inset-0 pointer-events-none bg-black/50 flex items-center justify-center text-white text-sm">
                     QR kodu kameraya gösterin
                   </div>
                 </div>
@@ -408,6 +421,4 @@ const AttendanceSystem = () => {
       </div>
     </div>
   );
-};
-
-export default AttendanceSystem;
+}
