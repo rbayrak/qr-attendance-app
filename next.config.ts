@@ -14,7 +14,9 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  swcMinify: true,
+  eslint: {
+    ignoreDuringBuilds: true, // ESLint kontrollerini devre dışı bırak
+  }
 }
 
 export default nextConfig

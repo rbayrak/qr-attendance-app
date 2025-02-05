@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Camera, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import Image from 'next/image';
@@ -13,6 +13,17 @@ interface Location {
 interface Student {
   studentId: string;
   studentName: string;
+}
+
+interface GoogleSheetRow {
+  [key: string]: string;
+}
+
+interface QRCodeData {
+  timestamp: number;
+  classLocation: Location;
+  validUntil: number;
+  week: number;
 }
 
 const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID;
@@ -36,17 +47,14 @@ export default function Home() {
   const [qrData, setQrData] = useState<string>('');
   const [location, setLocation] = useState<Location | null>(null);
   const [studentId, setStudentId] = useState<string>('');
-  const [attendance, setAttendance] = useState<Student[]>([]);
+  const [attendance] = useState<Student[]>([]);
   const [status, setStatus] = useState<string>('');
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [html5QrCode, setHtml5QrCode] = useState<Html5Qrcode | null>(null);
   const [validStudents, setValidStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  // Bundan sonraki kod aynı kalacak, sadece tip eklemeleri yapılacak
-  // ...
-  
-  const fetchStudentList = async () => {
+  const fetchStudentList = useCallback(async () => {
     if (!SPREADSHEET_ID || !API_KEY) {
       setStatus('❌ API yapılandırması eksik');
       return;
@@ -67,7 +75,7 @@ export default function Home() {
         throw new Error('Geçerli veri bulunamadı');
       }
 
-      const students = data.values.slice(1).map((row: any[]) => ({
+      const students = data.values.slice(1).map((row: GoogleSheetRow[]) => ({
         studentId: row[1]?.toString() || '',
         studentName: row[2]?.toString() || ''
       })).filter((student: Student) => student.studentId && student.studentName);
@@ -78,13 +86,9 @@ export default function Home() {
       console.error('Öğrenci listesi çekme hatası:', error);
       setStatus('❌ Öğrenci listesi yüklenemedi: ' + (error as Error).message);
     }
-  };
-
-  useEffect(() => {
-    fetchStudentList();
   }, []);
 
-  const updateAttendance = async (studentId: string): Promise<boolean> => {
+  const updateAttendance = useCallback(async (studentId: string): Promise<boolean> => {
     if (!SPREADSHEET_ID || !API_KEY) {
       setStatus('❌ API yapılandırması eksik');
       return false;
@@ -138,9 +142,9 @@ export default function Home() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [selectedWeek]);
 
-  const getLocation = () => {
+  const getLocation = useCallback(() => {
     if (!navigator.geolocation) {
       setStatus('❌ Konum desteği yok');
       return;
@@ -164,15 +168,15 @@ export default function Home() {
         maximumAge: 0
       }
     );
-  };
+  }, []);
 
-  const generateQR = () => {
+  const generateQR = useCallback(() => {
     if (!location) {
       setStatus('❌ Önce konum alın');
       return;
     }
     
-    const payload = {
+    const payload: QRCodeData = {
       timestamp: Date.now(),
       classLocation: location,
       validUntil: Date.now() + 300000,
@@ -181,9 +185,9 @@ export default function Home() {
     
     setQrData(JSON.stringify(payload));
     setStatus('✅ QR kod oluşturuldu');
-  };
+  }, [location, selectedWeek]);
 
-  const handleStudentIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleStudentIdChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const newId = e.target.value.trim();
     setStudentId(newId);
     
@@ -197,11 +201,11 @@ export default function Home() {
     } else {
       setStatus('');
     }
-  };
+  }, [validStudents]);
 
-  const handleQrScan = async (decodedText: string) => {
+  const handleQrScan = useCallback(async (decodedText: string) => {
     try {
-      const scannedData = JSON.parse(decodedText);
+      const scannedData = JSON.parse(decodedText) as QRCodeData;
       
       const isValidStudent = validStudents.some(s => s.studentId === studentId);
       if (!isValidStudent) {
@@ -243,7 +247,11 @@ export default function Home() {
       console.error('QR tarama hatası:', error);
       setStatus('❌ Geçersiz QR kod');
     }
-  };
+  }, [studentId, location, validStudents, updateAttendance, html5QrCode]);
+
+  useEffect(() => {
+    fetchStudentList();
+  }, [fetchStudentList]);
 
   useEffect(() => {
     let scanner: Html5Qrcode | null = null;
@@ -273,7 +281,7 @@ export default function Home() {
         scanner.stop().catch(console.error);
       }
     };
-  }, [isScanning]);
+  }, [isScanning, handleQrScan]);
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
@@ -362,7 +370,6 @@ export default function Home() {
           </div>
         ) : (
           <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
-            <h2 className="text-2xl font-bold"></h2>
             <h2 className="text-2xl font-bold">Öğrenci Paneli</h2>
             
             <div className="space-y-4">
