@@ -1,46 +1,14 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Camera, Calendar } from 'lucide-react';
-import Image from 'next/image';
-import { Html5Qrcode as HTML5QrCodeType } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 
-interface GoogleSheetRow {
-  studentId: string;
-  studentName: string;
-}
-
-interface Location {
-  lat: number;
-  lng: number;
-}
-
-interface QRCodeData {
-  timestamp: number;
-  classLocation: Location;
-  validUntil: number;
-  week: number;
-}
-
-type HTML5QrCodeInstance = HTML5QrCodeType;
-
-const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID || '';
-const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
+const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID;
+const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
 const MAX_DISTANCE = 0.1;
 
-const loadScanner = async (): Promise<typeof HTML5QrCodeType | null> => {
-  try {
-    if (typeof window !== 'undefined') {
-      const { Html5Qrcode } = await import('html5-qrcode');
-      return Html5Qrcode;
-    }
-  } catch (error) {
-    console.error('QR Scanner yüklenirken hata:', error);
-  }
-  return null;
-};
-
-const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
@@ -52,71 +20,116 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
 };
 
 const AttendanceSystem = () => {
-  const [mode, setMode] = useState<'teacher' | 'student'>('teacher');
+  const [mode, setMode] = useState('teacher');
   const [selectedWeek, setSelectedWeek] = useState(1);
   const [qrData, setQrData] = useState('');
-  const [location, setLocation] = useState<Location | null>(null);
+  const [location, setLocation] = useState(null);
   const [studentId, setStudentId] = useState('');
+  const [attendance, setAttendance] = useState([]);
   const [status, setStatus] = useState('');
   const [isScanning, setIsScanning] = useState(false);
-  const [html5QrCode, setHtml5QrCode] = useState<HTML5QrCodeInstance | null>(null);
-  const [validStudents, setValidStudents] = useState<GoogleSheetRow[]>([]);
+  const [html5QrCode, setHtml5QrCode] = useState(null);
+  const [validStudents, setValidStudents] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const fetchStudentList = useCallback(async () => {
+  // Öğrenci listesini Google Sheets'ten çekme
+  const fetchStudentList = async () => {
+    if (!SPREADSHEET_ID || !API_KEY) {
+      setStatus('❌ API yapılandırması eksik');
+      return;
+    }
+
     try {
       const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C?key=${API_KEY}`
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/Öğrenciler!A:C?key=${API_KEY}`
       );
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
       const data = await response.json();
       
-      const students = data.values.slice(1).map((row: string[]) => ({
+      if (!data.values || data.values.length < 2) {
+        throw new Error('Geçerli veri bulunamadı');
+      }
+
+      const students = data.values.slice(1).map(row => ({
         studentId: row[1]?.toString() || '',
         studentName: row[2]?.toString() || ''
-      }));
+      })).filter(student => student.studentId && student.studentName);
       
       setValidStudents(students);
+      setStatus('✅ Öğrenci listesi yüklendi');
     } catch (error) {
       console.error('Öğrenci listesi çekme hatası:', error);
-      setStatus('❌ Öğrenci listesi yüklenemedi');
+      setStatus('❌ Öğrenci listesi yüklenemedi: ' + error.message);
     }
-  }, [API_KEY, SPREADSHEET_ID]);
+  };
 
-  const updateAttendance = useCallback(async (studentId: string) => {
+  useEffect(() => {
+    fetchStudentList();
+  }, []);
+
+  // Google Sheets'te yoklama güncelleme
+  const updateAttendance = async (studentId) => {
+    if (!SPREADSHEET_ID || !API_KEY) {
+      setStatus('❌ API yapılandırması eksik');
+      return false;
+    }
+
     try {
+      setIsLoading(true);
+      
+      // Önce mevcut verileri al
       const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z?key=${API_KEY}`
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/Yoklama!A:Z?key=${API_KEY}`
       );
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
       const data = await response.json();
       
-      const studentRow = data.values.findIndex((row: string[]) => row[1] === studentId);
+      const studentRow = data.values?.findIndex(row => row[1] === studentId);
       if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
 
-      const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
-      const cellRange = `${weekColumn}${studentRow + 1}`;
+      const weekColumn = String.fromCharCode(67 + selectedWeek - 1); // C sütunundan başla
+      const range = `Yoklama!${weekColumn}${studentRow + 1}`;
 
-      await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}?valueInputOption=RAW&key=${API_KEY}`,
+      const updateResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${range}?valueInputOption=RAW`,
         {
           method: 'PUT',
           headers: {
+            'Authorization': `Bearer ${API_KEY}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            values: [['VAR']]
+            range: range,
+            majorDimension: "ROWS",
+            values: [["VAR"]]
           })
         }
       );
+
+      if (!updateResponse.ok) {
+        throw new Error(`Update failed: ${updateResponse.status}`);
+      }
 
       setStatus('✅ Yoklama kaydedildi');
       return true;
     } catch (error) {
       console.error('Yoklama güncelleme hatası:', error);
-      setStatus('❌ Yoklama kaydedilemedi');
+      setStatus('❌ Yoklama kaydedilemedi: ' + error.message);
       return false;
+    } finally {
+      setIsLoading(false);
     }
-  }, [selectedWeek, API_KEY, SPREADSHEET_ID]);
+  };
 
-  const getLocation = useCallback(() => {
+  const getLocation = () => {
     if (!navigator.geolocation) {
       setStatus('❌ Konum desteği yok');
       return;
@@ -132,13 +145,17 @@ const AttendanceSystem = () => {
         setStatus('📍 Konum alındı');
       },
       (error) => {
-        console.error('Konum hatası:', error);
         setStatus(`❌ Konum hatası: ${error.message}`);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 5000,
+        maximumAge: 0
       }
     );
-  }, []);
+  };
 
-  const generateQR = useCallback(() => {
+  const generateQR = () => {
     if (!location) {
       setStatus('❌ Önce konum alın');
       return;
@@ -147,27 +164,16 @@ const AttendanceSystem = () => {
     const payload = {
       timestamp: Date.now(),
       classLocation: location,
-      validUntil: Date.now() + 300000,
+      validUntil: Date.now() + 300000, // 5 dakika
       week: selectedWeek
     };
     
     setQrData(JSON.stringify(payload));
     setStatus('✅ QR kod oluşturuldu');
-  }, [location, selectedWeek]);
+  };
 
-  const startScanning = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      stream.getTracks().forEach(track => track.stop());
-      setIsScanning(!isScanning);
-    } catch (error) {
-      console.error('Kamera erişim hatası:', error);
-      setStatus('❌ Kamera erişim izni verilmedi');
-    }
-  }, [isScanning]);
-
-  const handleStudentIdChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const newId = e.target.value;
+  const handleStudentIdChange = (e) => {
+    const newId = e.target.value.trim();
     setStudentId(newId);
     
     if (newId) {
@@ -177,20 +183,23 @@ const AttendanceSystem = () => {
       } else {
         setStatus('✅ Öğrenci numarası doğrulandı');
       }
+    } else {
+      setStatus('');
     }
-  }, [validStudents]);
+  };
 
-  const handleQrScan = useCallback(async (decodedText: string) => {
+  const handleQrScan = async (decodedText) => {
     try {
-      const scannedData: QRCodeData = JSON.parse(decodedText);
+      const scannedData = JSON.parse(decodedText);
       
+      // Öğrenci kontrolü
       const isValidStudent = validStudents.some(s => s.studentId === studentId);
       if (!isValidStudent) {
         setStatus('❌ Öğrenci numarası listede bulunamadı');
         return;
       }
 
-      if (scannedData.validUntil < Date.now()) {
+      if (!scannedData.validUntil || scannedData.validUntil < Date.now()) {
         setStatus('❌ QR kod süresi dolmuş');
         return;
       }
@@ -217,56 +226,44 @@ const AttendanceSystem = () => {
         setIsScanning(false);
         if (html5QrCode) {
           await html5QrCode.stop();
+          setHtml5QrCode(null);
         }
       }
     } catch (error) {
       console.error('QR tarama hatası:', error);
       setStatus('❌ Geçersiz QR kod');
     }
-  }, [studentId, location, html5QrCode, validStudents, updateAttendance]);
+  };
 
   useEffect(() => {
-    fetchStudentList();
-  }, [fetchStudentList]);
-
-  useEffect(() => {
-    let scanner: HTML5QrCodeInstance | null = null;
+    let scanner;
     
     const initializeScanner = async () => {
       if (isScanning) {
         try {
-          const Html5Qrcode = await loadScanner();
-          if (!Html5Qrcode) throw new Error('QR tarayıcı yüklenemedi');
-
-          const readerElement = document.getElementById("qr-reader");
-          if (!readerElement) throw new Error('QR okuyucu elementi bulunamadı');
-
           scanner = new Html5Qrcode("qr-reader");
-          
           await scanner.start(
             { facingMode: "environment" },
-            { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
+            { fps: 10, qrbox: 250 },
             handleQrScan,
-            (errorMessage: string) => console.log('Tarama durumu:', errorMessage)
+            () => {}
           );
-          
           setHtml5QrCode(scanner);
         } catch (error) {
-          console.error('Kamera başlatma hatası:', error);
-          setStatus('❌ Kamera başlatılamadı');
+          console.error('Kamera hatası:', error);
+          setStatus('❌ Kamera başlatılamadı: ' + error.message);
           setIsScanning(false);
         }
       }
     };
 
     initializeScanner();
-
     return () => {
       if (scanner) {
         scanner.stop().catch(console.error);
       }
     };
-  }, [isScanning, handleQrScan]);
+  }, [isScanning]);
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
@@ -285,6 +282,12 @@ const AttendanceSystem = () => {
             'bg-green-100 text-green-800'}`}
           >
             {status}
+          </div>
+        )}
+
+        {isLoading && (
+          <div className="p-4 bg-blue-100 text-blue-800 rounded-lg">
+            İşlem yapılıyor...
           </div>
         )}
 
@@ -307,29 +310,41 @@ const AttendanceSystem = () => {
 
             <button
               onClick={getLocation}
-              className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
+              disabled={isLoading}
+              className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 disabled:opacity-50"
             >
               <Camera size={18} /> Konum Al
             </button>
 
             <button
               onClick={generateQR}
+              disabled={!location || isLoading}
               className="w-full p-3 bg-purple-600 text-white rounded-lg disabled:opacity-50 hover:bg-purple-700"
-              disabled={!location}
             >
               QR Oluştur
             </button>
 
             {qrData && (
               <div className="mt-4 text-center">
-                <Image 
+                <img 
                   src={`https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qrData)}&size=200x200`}
                   alt="QR Code"
-                  width={200}
-                  height={200}
                   className="mx-auto border-4 border-white rounded-lg shadow-lg"
                 />
                 <p className="mt-2 text-sm text-gray-600">5 dakika geçerli</p>
+              </div>
+            )}
+
+            {attendance.length > 0 && (
+              <div className="mt-4">
+                <h3 className="text-lg font-semibold mb-2">Yoklama Listesi</h3>
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {attendance.map((item, index) => (
+                    <div key={index} className="p-2 bg-gray-50 rounded-lg">
+                      <span className="font-medium">#{item.studentId}</span> - {item.studentName}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -339,14 +354,16 @@ const AttendanceSystem = () => {
             
             <div className="space-y-4">
               <input
+                type="text"
                 value={studentId}
                 onChange={handleStudentIdChange}
                 placeholder="Öğrenci Numaranız"
+                disabled={isLoading}
                 className={`w-full p-3 border rounded-lg focus:ring-2 ${
                   studentId && !validStudents.some(s => s.studentId === studentId)
                     ? 'border-red-500 focus:ring-red-500'
                     : 'focus:ring-blue-500'
-                }`}
+                } disabled:opacity-50`}
               />
 
               {studentId && (
@@ -363,24 +380,25 @@ const AttendanceSystem = () => {
 
               <button
                 onClick={getLocation}
-                className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
+                disabled={isLoading}
+                className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 disabled:opacity-50"
               >
                 <Camera size={18} /> Konumu Doğrula
               </button>
 
               <button
-                onClick={startScanning}
-                className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                disabled={!location || !studentId || !validStudents.some(s => s.studentId === studentId)}
+                onClick={() => setIsScanning(!isScanning)}
+                className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                disabled={!location || !studentId || !validStudents.some(s => s.studentId === studentId) || isLoading}
               >
                 {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
               </button>
 
               {isScanning && (
-                <div className="relative w-full aspect-square bg-gray-200 rounded-xl overflow-hidden">
-                  <div id="qr-reader" className="w-full h-full" style={{ minHeight: '300px' }}></div>
-                  <div className="absolute inset-0 pointer-events-none bg-black/50 flex items-center justify-center text-white text-sm">
-                     QR kodu kameraya gösterin
+                <div className="relative aspect-square bg-gray-200 rounded-xl overflow-hidden">
+                  <div id="qr-reader" className="w-full h-full"></div>
+                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-sm">
+                    QR kodu kameraya gösterin
                   </div>
                 </div>
               )}
