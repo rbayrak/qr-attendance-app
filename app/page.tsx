@@ -2,8 +2,13 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Camera, Calendar } from 'lucide-react';
-import { Html5Qrcode } from 'html5-qrcode';
 import Image from 'next/image';
+import dynamic from 'next/dynamic';
+
+// Html5Qrcode'u dinamik olarak import ediyoruz
+const Html5QrCode = dynamic(() => import('html5-qrcode').then(mod => mod.Html5Qrcode), {
+  ssr: false,
+});
 
 interface Location {
   lat: number;
@@ -13,10 +18,6 @@ interface Location {
 interface Student {
   studentId: string;
   studentName: string;
-}
-
-interface GoogleSheetRow {
-  [key: string]: string;
 }
 
 interface QRCodeData {
@@ -47,14 +48,14 @@ export default function Home() {
   const [qrData, setQrData] = useState<string>('');
   const [location, setLocation] = useState<Location | null>(null);
   const [studentId, setStudentId] = useState<string>('');
-  const [attendance] = useState<Student[]>([]);
+  const [attendance, setAttendance] = useState<Student[]>([]);
   const [status, setStatus] = useState<string>('');
   const [isScanning, setIsScanning] = useState<boolean>(false);
-  const [html5QrCode, setHtml5QrCode] = useState<Html5Qrcode | null>(null);
+  const [html5QrCode, setHtml5QrCode] = useState<any>(null);
   const [validStudents, setValidStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  const fetchStudentList = async () => {
+  const fetchStudentList = useCallback(async () => {
     if (!SPREADSHEET_ID || !API_KEY) {
       setStatus('❌ API yapılandırması eksik');
       console.error('SPREADSHEET_ID veya API_KEY eksik');
@@ -62,7 +63,6 @@ export default function Home() {
     }
 
     try {
-      // URL'yi kontrol için konsola yazdır
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C?key=${API_KEY}`;
       console.log('API URL:', url);
 
@@ -76,12 +76,12 @@ export default function Home() {
 
       const data = await response.json();
       console.log('API Yanıtı:', data);
-      
+
       if (!data.values || data.values.length < 2) {
         throw new Error('Geçerli veri bulunamadı');
       }
 
-      const students = data.values.slice(1).map((row: any[]) => ({
+      const students = data.values.slice(1).map((row: string[]) => ({
         studentId: row[1]?.toString() || '',
         studentName: row[2]?.toString() || ''
       })).filter(student => student.studentId && student.studentName);
@@ -92,7 +92,7 @@ export default function Home() {
       console.error('Öğrenci listesi çekme hatası:', error);
       setStatus('❌ Öğrenci listesi yüklenemedi: ' + (error as Error).message);
     }
-  };
+  }, []);
 
   const updateAttendance = useCallback(async (studentId: string): Promise<boolean> => {
     if (!SPREADSHEET_ID || !API_KEY) {
@@ -104,7 +104,7 @@ export default function Home() {
       setIsLoading(true);
       
       const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/Yoklama!A:Z?key=${API_KEY}`
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z?key=${API_KEY}`
       );
 
       if (!response.ok) {
@@ -117,7 +117,7 @@ export default function Home() {
       if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
 
       const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
-      const range = `Yoklama!${weekColumn}${studentRow + 1}`;
+      const range = `${weekColumn}${studentRow + 1}`;
 
       const updateResponse = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${range}?valueInputOption=RAW`,
@@ -260,15 +260,23 @@ export default function Home() {
   }, [fetchStudentList]);
 
   useEffect(() => {
-    let scanner: Html5Qrcode | null = null;
+    let scanner: any = null;
     
     const initializeScanner = async () => {
-      if (isScanning) {
+      if (isScanning && typeof window !== 'undefined') {
         try {
-          scanner = new Html5Qrcode("qr-reader");
+          if (!document.getElementById('qr-reader')) {
+            console.error('QR okuyucu elementi bulunamadı');
+            return;
+          }
+
+          scanner = new Html5QrCode("qr-reader");
           await scanner.start(
             { facingMode: "environment" },
-            { fps: 10, qrbox: 250 },
+            {
+              fps: 10,
+              qrbox: { width: 250, height: 250 },
+            },
             handleQrScan,
             () => {}
           );
@@ -283,7 +291,7 @@ export default function Home() {
 
     initializeScanner();
     return () => {
-      if (scanner) {
+      if (scanner && scanner.isScanning) {
         scanner.stop().catch(console.error);
       }
     };
@@ -434,4 +442,3 @@ export default function Home() {
       </div>
     </div>
   );
-}
