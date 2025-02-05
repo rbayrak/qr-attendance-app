@@ -54,31 +54,37 @@ export default function Home() {
   const [validStudents, setValidStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  const fetchStudentList = useCallback(async () => {
+  const fetchStudentList = async () => {
     if (!SPREADSHEET_ID || !API_KEY) {
       setStatus('❌ API yapılandırması eksik');
+      console.error('SPREADSHEET_ID veya API_KEY eksik');
       return;
     }
 
     try {
-      const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/Öğrenciler!A:C?key=${API_KEY}`
-      );
+      // URL'yi kontrol için konsola yazdır
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C?key=${API_KEY}`;
+      console.log('API URL:', url);
+
+      const response = await fetch(url);
 
       if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        console.error('API Hata Detayları:', errorData);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       const data = await response.json();
+      console.log('API Yanıtı:', data);
       
       if (!data.values || data.values.length < 2) {
         throw new Error('Geçerli veri bulunamadı');
       }
 
-      const students = data.values.slice(1).map((row: GoogleSheetRow[]) => ({
+      const students = data.values.slice(1).map((row: any[]) => ({
         studentId: row[1]?.toString() || '',
         studentName: row[2]?.toString() || ''
-      })).filter((student: Student) => student.studentId && student.studentName);
+      })).filter(student => student.studentId && student.studentName);
       
       setValidStudents(students);
       setStatus('✅ Öğrenci listesi yüklendi');
@@ -86,7 +92,7 @@ export default function Home() {
       console.error('Öğrenci listesi çekme hatası:', error);
       setStatus('❌ Öğrenci listesi yüklenemedi: ' + (error as Error).message);
     }
-  }, []);
+  };
 
   const updateAttendance = useCallback(async (studentId: string): Promise<boolean> => {
     if (!SPREADSHEET_ID || !API_KEY) {
