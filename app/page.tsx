@@ -348,7 +348,9 @@ const AttendanceSystem = () => {
               disabled={isLoading}
             >
               <Camera size={18} /> Konum Al
-              <button
+            </button>
+
+            <button
               onClick={generateQR}
               className="w-full p-3 bg-purple-600 text-white rounded-lg disabled:opacity-50 hover:bg-purple-700"
               disabled={!location || isLoading}
