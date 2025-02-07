@@ -174,9 +174,9 @@ const AttendanceSystem = () => {
       const data = await response.json();
       
       // Öğrenci listesini API'den al
-      //const studentsResponse = await fetch('/api/students');
-      //const students = await studentsResponse.json();
-      const students = await getStudents();
+      const studentsResponse = await fetch('/api/students');
+      const students = await studentsResponse.json();
+      //const students = await getStudents();
       
       const studentRow = data.values.findIndex((row: string[]) => students.some(s => s.studentId === row[1]));
       if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
