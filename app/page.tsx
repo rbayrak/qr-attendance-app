@@ -22,13 +22,12 @@ const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID;
 const MAX_DISTANCE = 0.1;
 
 // Google Auth yardımcı fonksiyonları
+// Google Auth yardımcı fonksiyonları
 let tokenClient: any;
 let accessToken: string | null = null;
 
-const initializeGoogleAuth = () => {
-  return new Promise((resolve, reject) => {
-    if (typeof window === 'undefined') return;
-    
+const initializeGoogleAuth = async () => {
+  return new Promise<void>((resolve, reject) => {
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
     if (!clientId) {
       reject(new Error('Client ID bulunamadı. Lütfen env değerlerini kontrol edin.'));
@@ -36,59 +35,43 @@ const initializeGoogleAuth = () => {
     }
 
     try {
-      window.gapi.load('client:auth2', async () => {
-        try {
-          await window.gapi.client.init({
-            apiKey: process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
-            clientId: clientId,
-            scope: 'https://www.googleapis.com/auth/spreadsheets',
-            plugin_name: 'qr-attendance'
-          });
-
-          tokenClient = google.accounts.oauth2.initTokenClient({
-            client_id: clientId,
-            scope: 'https://www.googleapis.com/auth/spreadsheets',
-            callback: (tokenResponse: any) => {
-              if (tokenResponse.error) {
-                reject(new Error(`Token hatası: ${tokenResponse.error}`));
-                return;
-              }
-              accessToken = tokenResponse.access_token;
-              resolve(accessToken);
-            },
-          });
-
-          // Token isteğini başlat
-          setTimeout(() => {
-            tokenClient.requestAccessToken({ prompt: 'consent' });
-          }, 1000);
-
-        } catch (error) {
-          console.error('GAPI init hatası:', error);
-          reject(error);
-        }
+      tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: 'https://www.googleapis.com/auth/spreadsheets',
+        callback: (tokenResponse: any) => {
+          if (tokenResponse.error) {
+            reject(new Error(`Token hatası: ${tokenResponse.error}`));
+            return;
+          }
+          accessToken = tokenResponse.access_token;
+          resolve();
+        },
       });
     } catch (error) {
-      console.error('GAPI load hatası:', error);
-      reject(error);
+      reject(new Error(`Google Auth başlatma hatası: ${error}`));
     }
   });
 };
 
-const getAccessToken = async () => {
+const getAccessToken = async (): Promise<string> => {
   if (!accessToken) {
-    tokenClient.requestAccessToken();
-    return new Promise((resolve) => {
-      const checkToken = setInterval(() => {
-        if (accessToken) {
-          clearInterval(checkToken);
-          resolve(accessToken);
-        }
-      }, 100);
+    return new Promise((resolve, reject) => {
+      try {
+        tokenClient.requestAccessToken({ prompt: 'consent' });
+        const checkInterval = setInterval(() => {
+          if (accessToken) {
+            clearInterval(checkInterval);
+            resolve(accessToken);
+          }
+        }, 100);
+      } catch (error) {
+        reject(new Error(`Token alma hatası: ${error}`));
+      }
     });
   }
   return accessToken;
 };
+
 
 interface Student {
   studentId: string;
@@ -168,55 +151,60 @@ const AttendanceSystem = () => {
 
 
   // Öğrenci listesini Google Sheets'ten çekme
-  const fetchStudentList = async () => {
+  // Öğrenci listesini Google Sheets'ten çekme
+  const fetchStudentList = async (isPublic: boolean = false) => {
     try {
-      const token = await getAccessToken();
-      const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C`,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        }
-      );
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C`;
+      const options: RequestInit = isPublic 
+        ? { headers: { 'X-Requested-With': 'XMLHttpRequest' } }
+        : { headers: { 'Authorization': `Bearer ${await getAccessToken()}` } };
+
+      const response = await fetch(url, options);
       const data = await response.json();
       
-      const students = data.values.slice(1).map((row: string[]) => ({
-        studentId: row[1]?.toString() || '',
-        studentName: row[2]?.toString() || ''
-      }));
-      
+      // Veri validasyon ve normalleştirme
+      const students = (data.values || []).slice(1).map((row: string[]) => ({
+        studentId: (row[1]?.toString() || '').trim().padStart(10, '0'),
+        studentName: (row[2]?.toString() || '').trim()
+      })).filter((s: Student) => s.studentId && s.studentName);
+
       setValidStudents(students);
     } catch (error) {
-      console.error('Öğrenci listesi çekme hatası:', error);
-      setStatus('❌ Öğrenci listesi yüklenemedi');
+      throw new Error(`Öğrenci listesi çekme hatası: ${error}`);
     }
   };
+
 
   // Google Sheets'te yoklama güncelleme
   const updateAttendance = async (studentId: string) => {
     try {
       setIsLoading(true);
-      
+      setStatus('⏳ Yoklama kaydediliyor...');
+  
+      // 1. Öğrenci kontrolü
+      const studentExists = validStudents.some(s => s.studentId === studentId);
+      if (!studentExists) throw new Error('Öğrenci bulunamadı');
+  
+      // 2. Token alımı
       const token = await getAccessToken();
-      const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z`,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        }
-      );
-      const data = await response.json();
       
-      const studentRow = data.values.findIndex((row: string[]) => row[1] === studentId);
-      if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
-
-      const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
-      const cellRange = `${weekColumn}${studentRow + 1}`;
-
+      // 3. Sheet verilerini çek
+      const sheetResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      const sheetData = await sheetResponse.json();
+  
+      // 4. Hücre konumunu bul
+      const rowIndex = sheetData.values.findIndex(
+        (row: string[]) => row[1]?.trim() === studentId
+      );
+      if (rowIndex === -1) throw new Error('Öğrenci satırı bulunamadı');
+  
+      // 5. Hücreyi güncelle
+      const weekColumn = String.fromCharCode(67 + selectedWeek - 1); // C=3. hafta
       const updateResponse = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${weekColumn}${rowIndex + 1}`,
         {
           method: 'PUT',
           headers: {
@@ -224,29 +212,31 @@ const AttendanceSystem = () => {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            range: cellRange,
+            range: `${weekColumn}${rowIndex + 1}`,
             values: [['VAR']],
             majorDimension: "ROWS",
-            valueInputOption: "RAW"
+            valueInputOption: "USER_ENTERED"
           })
         }
       );
-
+  
       if (!updateResponse.ok) {
         const errorData = await updateResponse.json();
         throw new Error(errorData.error?.message || 'Güncelleme hatası');
       }
-
-      setStatus('✅ Yoklama kaydedildi');
+  
+      setStatus('✅ Yoklama başarıyla kaydedildi');
       return true;
     } catch (error) {
-      console.error('Yoklama güncelleme hatası:', error);
-      setStatus(`❌ Yoklama kaydedilemedi: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
+      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      setStatus(`❌ Hata: ${errorMessage}`);
       return false;
     } finally {
       setIsLoading(false);
     }
   };
+  
+
   const getLocation = () => {
     if (!navigator.geolocation) {
       setStatus('❌ Konum desteği yok');
@@ -345,31 +335,61 @@ const AttendanceSystem = () => {
   };
 
   useEffect(() => {
-    let scanner: Html5Qrcode;
+    const loadDependencies = async () => {
+      try {
+        if (mode === 'teacher') {
+          await initializeGoogleAuth();
+          await fetchStudentList();
+        } else {
+          await fetchStudentList(true); // Public erişim
+        }
+        setIsAuthenticated(true);
+      } catch (error) {
+        setStatus(`❌ ${error instanceof Error ? error.message : 'Sistem hatası'}`);
+      }
+    };
+  
+    // Google script yüklenmesini garantile
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    document.head.appendChild(script);
+  
+    script.onload = loadDependencies;
+    return () => {
+      document.head.removeChild(script);
+    };
+  }, [mode]);
+  
+  useEffect(() => {
+    let scanner: Html5Qrcode | null = null;
     
     const initializeScanner = async () => {
       if (isScanning) {
         try {
           scanner = new Html5Qrcode("qr-reader");
           await scanner.start(
-            { facingMode: "environment" },
-            { fps: 10, qrbox: 250 },
+            { facingMode: "environment" }, 
+            { fps: 10, qrbox: 250 }, 
             handleQrScan,
-            () => {}
+            undefined
           );
-          setHtml5QrCode(scanner);
         } catch (error) {
-          setStatus('❌ Kamera başlatılamadı');
+          setStatus('❌ Kamera erişimi reddedildi');
           setIsScanning(false);
         }
       }
     };
-
+  
     initializeScanner();
     return () => {
-      if (scanner) scanner.stop().catch(() => {});
+      if (scanner?.isScanning()) {
+        scanner.stop().catch(() => {});
+      }
     };
   }, [isScanning]);
+  
   
   if (!isAuthenticated) {
     return (
