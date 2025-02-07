@@ -174,7 +174,7 @@ const AttendanceSystem = () => {
       const data = await response.json();
       
       // Öğrenci listesini API'den al
-      const studentsResponse = await fetch('/api/students');
+      //const studentsResponse = await fetch('/api/students');
       //const students = await studentsResponse.json();
       const students = await getStudents();
       
