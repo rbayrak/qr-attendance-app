@@ -111,7 +111,7 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 };
 const AttendanceSystem = () => {
-  const [mode, setMode] = useState<'teacher' | 'student'>('teacher');
+  const [mode, setMode] = useState<'teacher' | 'student'>('student');
   const [selectedWeek, setSelectedWeek] = useState<number>(1);
   const [qrData, setQrData] = useState<string>('');
   const [location, setLocation] = useState<Location | null>(null);
@@ -124,20 +124,48 @@ const AttendanceSystem = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
+  // useEffect içindeki initialize fonksiyonunu değiştirin
   useEffect(() => {
     const initialize = async () => {
-      try {
-        await initializeGoogleAuth();
-        setIsAuthenticated(true);
-        await fetchStudentList();
-      } catch (error) {
-        console.error('Google Auth başlatma hatası:', error);
-        setStatus('❌ Google yetkilendirme hatası: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'));
+      if (mode === 'teacher') { // Sadece öğretmen modunda yetkilendirme yap
+        try {
+          await initializeGoogleAuth();
+          setIsAuthenticated(true);
+          await fetchStudentList();
+        } catch (error) {
+          console.error('Google Auth hatası:', error);
+          setStatus('❌ Öğretmen girişi gerekiyor');
+        }
+      } else { // Öğrenci modunda direkt öğrenci listesini çek
+        try {
+          await fetchStudentListPublic();
+          setIsAuthenticated(true); // Öğrenciler için yetkilendirme gerekmez
+        } catch (error) {
+          setStatus('❌ Öğrenci listesi yüklenemedi');
+        }
       }
     };
-  
-    initialize();
-  }, []);
+
+  initialize();
+}, [mode]);
+
+  // API key ile public erişim
+  const fetchStudentListPublic = async () => {
+    try {
+      const response = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
+      );
+      const data = await response.json();
+      const students = data.values.slice(1).map((row: string[]) => ({
+        studentId: row[1]?.toString() || '',
+        studentName: row[2]?.toString() || ''
+      }));
+      setValidStudents(students);
+    } catch (error) {
+      setStatus('❌ Liste yüklenemedi');
+    }
+  };
+
 
   // Öğrenci listesini Google Sheets'ten çekme
   const fetchStudentList = async () => {
