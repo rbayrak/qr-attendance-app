@@ -113,7 +113,7 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 };
 const AttendanceSystem = () => {
-  const [mode, setMode] = useState<'teacher' | 'student'>('teacher');
+  const [mode, setMode] = useState<'teacher' | 'student'>('student');
   const [selectedWeek, setSelectedWeek] = useState<number>(1);
   const [qrData, setQrData] = useState<string>('');
   const [location, setLocation] = useState<Location | null>(null);
@@ -148,8 +148,7 @@ const AttendanceSystem = () => {
   // Öğrenci listesini Google Sheets'ten çekme
   const fetchStudentList = async () => {
     try {
-      const token = await getAccessToken();
-      const students = await getStudents(token);
+      const students = await getStudents();
       setValidStudents(students);
     } catch (error) {
       console.error('Öğrenci listesi çekme hatası:', error);
@@ -158,6 +157,7 @@ const AttendanceSystem = () => {
   };
 
   // Google Sheets'te yoklama güncelleme
+  
   const updateAttendance = async (studentId: string) => {
     try {
       setIsLoading(true);
@@ -173,13 +173,17 @@ const AttendanceSystem = () => {
       );
       const data = await response.json();
       
-      const students = await getStudents(token);
+      // Öğrenci listesini API'den al
+      const studentsResponse = await fetch('/api/students');
+      //const students = await studentsResponse.json();
+      const students = await getStudents();
+      
       const studentRow = data.values.findIndex((row: string[]) => students.some(s => s.studentId === row[1]));
       if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
-
+   
       const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
       const cellRange = `${weekColumn}${studentRow + 1}`;
-
+   
       const updateResponse = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
         {
@@ -196,12 +200,12 @@ const AttendanceSystem = () => {
           })
         }
       );
-
+   
       if (!updateResponse.ok) {
         const errorData = await updateResponse.json();
         throw new Error(errorData.error?.message || 'Güncelleme hatası');
       }
-
+   
       setStatus('✅ Yoklama kaydedildi');
       return true;
     } catch (error) {
@@ -211,7 +215,9 @@ const AttendanceSystem = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+   };
+
+
   const getLocation = () => {
     if (!navigator.geolocation) {
       setStatus('❌ Konum desteği yok');
@@ -367,7 +373,7 @@ const AttendanceSystem = () => {
           className="w-full p-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
           disabled={isLoading}
         >
-          {mode === 'teacher' ? '📱 Öğrenci Modu' : '👨🏫 Öğretmen Modu'}
+          {mode === 'student' ? '👨🏫 Öğretmen Modu' : '📱 Öğrenci Modu'}
         </button>
 
         {status && (
