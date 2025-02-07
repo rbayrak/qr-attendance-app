@@ -8,11 +8,9 @@ declare global {
   }
 }
 
-
 import React, { useState, useEffect } from 'react';
 import { Camera, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { getStudents } from './utils/studentCache';
 
 console.log('ENV Check:', {
   SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID,
@@ -77,7 +75,7 @@ const initializeGoogleAuth = () => {
   });
 };
 
-const getAccessToken = async (): Promise<string> => {
+const getAccessToken = async () => {
   if (!accessToken) {
     tokenClient.requestAccessToken();
     return new Promise((resolve) => {
@@ -113,7 +111,7 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 };
 const AttendanceSystem = () => {
-  const [mode, setMode] = useState<'teacher' | 'student'>('student');
+  const [mode, setMode] = useState<'teacher' | 'student'>('teacher');
   const [selectedWeek, setSelectedWeek] = useState<number>(1);
   const [qrData, setQrData] = useState<string>('');
   const [location, setLocation] = useState<Location | null>(null);
@@ -124,31 +122,42 @@ const AttendanceSystem = () => {
   const [html5QrCode, setHtml5QrCode] = useState<Html5Qrcode | null>(null);
   const [validStudents, setValidStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isTeacherAuthenticated, setIsTeacherAuthenticated] = useState<boolean>(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
   useEffect(() => {
     const initialize = async () => {
-      if (mode === 'teacher') {
-        try {
-          await initializeGoogleAuth();
-          setIsTeacherAuthenticated(true);
-          await fetchStudentList();
-        } catch (error) {
-          console.error('Google Auth hatası:', error);
-          setStatus('❌ Yetkilendirme hatası: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'));
-        }
+      try {
+        await initializeGoogleAuth();
+        setIsAuthenticated(true);
+        await fetchStudentList();
+      } catch (error) {
+        console.error('Google Auth başlatma hatası:', error);
+        setStatus('❌ Google yetkilendirme hatası: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'));
       }
     };
-    
-    initialize();
-  }, [mode]);
-
   
+    initialize();
+  }, []);
 
   // Öğrenci listesini Google Sheets'ten çekme
   const fetchStudentList = async () => {
     try {
-      const students = await getStudents();
+      const token = await getAccessToken();
+      const response = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }
+      );
+      const data = await response.json();
+      
+      const students = data.values.slice(1).map((row: string[]) => ({
+        studentId: row[1]?.toString() || '',
+        studentName: row[2]?.toString() || ''
+      }));
+      
       setValidStudents(students);
     } catch (error) {
       console.error('Öğrenci listesi çekme hatası:', error);
@@ -157,95 +166,59 @@ const AttendanceSystem = () => {
   };
 
   // Google Sheets'te yoklama güncelleme
-  
   const updateAttendance = async (studentId: string) => {
     try {
       setIsLoading(true);
-  
+      
       const token = await getAccessToken();
-  
-      // 1. Tablodaki tüm verileri çek
       const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/Sheet1!A1:Z`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z`,
         {
           headers: {
-            Authorization: `Bearer ${token}`,
-          },
+            'Authorization': `Bearer ${token}`
+          }
         }
       );
-  
-      if (!response.ok) {
-        throw new Error('Google Sheets verileri alınamadı');
-      }
-  
       const data = await response.json();
-  
-      // 2. Başlık satırını ve öğrenci satırlarını ayır
-      const rows = data.values;
-      const headerRow = rows[0]; // İlk satır başlıklar
-      const studentRows = rows.slice(1); // Başlık dışındaki satırlar
-  
-      // 3. Öğrenci numarasına göre ilgili satırı bul
-      const studentRowIndex = studentRows.findIndex(
-        (row) => row[1]?.trim() === studentId.trim()
-      );
-  
-      if (studentRowIndex === -1) {
-        throw new Error('Öğrenci bulunamadı');
-      }
-  
-      // 4. Seçili hafta sütununu bul
-      const weekColumnIndex = headerRow.findIndex(
-        (cell) => cell === `Hafta-${selectedWeek}`
-      );
-  
-      if (weekColumnIndex === -1) {
-        throw new Error(`Hafta-${selectedWeek} sütunu bulunamadı`);
-      }
-  
-      // 5. Güncelleme yapılacak hücre aralığını belirle
-      const cellRange = `Sheet1!${String.fromCharCode(65 + weekColumnIndex)}${
-        studentRowIndex + 2
-      }`; // +2 çünkü başlık ve 0-index farkı var
-  
-      // 6. Hücreyi güncelle
+      
+      const studentRow = data.values.findIndex((row: string[]) => row[1] === studentId);
+      if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
+
+      const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
+      const cellRange = `${weekColumn}${studentRow + 1}`;
+
       const updateResponse = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}?valueInputOption=USER_ENTERED`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
         {
           method: 'PUT',
           headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({
             range: cellRange,
-            values: [['VAR']], // Hücreye "VAR" yazılacak
-          }),
+            values: [['VAR']],
+            majorDimension: "ROWS",
+            valueInputOption: "RAW"
+          })
         }
       );
-  
+
       if (!updateResponse.ok) {
         const errorData = await updateResponse.json();
         throw new Error(errorData.error?.message || 'Güncelleme hatası');
       }
-  
+
       setStatus('✅ Yoklama kaydedildi');
       return true;
     } catch (error) {
       console.error('Yoklama güncelleme hatası:', error);
-      setStatus(
-        `❌ Yoklama kaydedilemedi: ${
-          error instanceof Error ? error.message : 'Bilinmeyen hata'
-        }`
-      );
+      setStatus(`❌ Yoklama kaydedilemedi: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
       return false;
     } finally {
       setIsLoading(false);
     }
   };
-  
-
-
   const getLocation = () => {
     if (!navigator.geolocation) {
       setStatus('❌ Konum desteği yok');
@@ -370,8 +343,7 @@ const AttendanceSystem = () => {
     };
   }, [isScanning]);
   
-  // Auth kontrolünü buraya ekleyin
-  if (mode === 'teacher' && !isTeacherAuthenticated) {
+  if (!isAuthenticated) {
     return (
       <div className="min-h-screen p-4 bg-gray-50">
         <div className="max-w-md mx-auto p-4 bg-white rounded-xl shadow-md space-y-4">
@@ -380,14 +352,31 @@ const AttendanceSystem = () => {
             <div className="p-4 rounded-lg bg-red-100 text-red-800">
               <p className="font-medium">Hata Detayı:</p>
               <p className="mt-1">{status}</p>
+              <p className="mt-2 text-sm">
+                Eğer bu hata devam ederse, tarayıcı önbelleğini temizleyip sayfayı yeniden yüklemeyi deneyin.
+              </p>
             </div>
           )}
-          <button
-            onClick={() => window.location.reload()}
-            className="w-full p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            Yeniden Dene
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => window.location.reload()}
+              className="flex-1 p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Yeniden Dene
+            </button>
+            <button
+              onClick={() => {
+                console.log('Current ENV:', {
+                  SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID,
+                  API_KEY: process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
+                  CLIENT_ID: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
+                });
+              }}
+              className="p-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+            >
+              Debug
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -401,7 +390,7 @@ const AttendanceSystem = () => {
           className="w-full p-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
           disabled={isLoading}
         >
-          {mode === 'student' ? '👨🏫 Öğretmen Modu' : '📱 Öğrenci Modu'}
+          {mode === 'teacher' ? '📱 Öğrenci Modu' : '👨🏫 Öğretmen Modu'}
         </button>
 
         {status && (
