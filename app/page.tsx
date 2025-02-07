@@ -8,6 +8,7 @@ declare global {
   }
 }
 
+
 import React, { useState, useEffect } from 'react';
 import { Camera, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -122,22 +123,26 @@ const AttendanceSystem = () => {
   const [html5QrCode, setHtml5QrCode] = useState<Html5Qrcode | null>(null);
   const [validStudents, setValidStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isTeacherAuthenticated, setIsTeacherAuthenticated] = useState<boolean>(false);
 
   useEffect(() => {
     const initialize = async () => {
-      try {
-        await initializeGoogleAuth();
-        setIsAuthenticated(true);
-        await fetchStudentList();
-      } catch (error) {
-        console.error('Google Auth başlatma hatası:', error);
-        setStatus('❌ Google yetkilendirme hatası: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'));
+      if (mode === 'teacher') {
+        try {
+          await initializeGoogleAuth();
+          setIsTeacherAuthenticated(true);
+          await fetchStudentList();
+        } catch (error) {
+          console.error('Google Auth hatası:', error);
+          setStatus('❌ Yetkilendirme hatası: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'));
+        }
       }
     };
-  
+    
     initialize();
-  }, []);
+  }, [mode]);
+
+  
 
   // Öğrenci listesini Google Sheets'ten çekme
   const fetchStudentList = async () => {
@@ -343,7 +348,8 @@ const AttendanceSystem = () => {
     };
   }, [isScanning]);
   
-  if (!isAuthenticated) {
+  // Auth kontrolünü buraya ekleyin
+  if (mode === 'teacher' && !isTeacherAuthenticated) {
     return (
       <div className="min-h-screen p-4 bg-gray-50">
         <div className="max-w-md mx-auto p-4 bg-white rounded-xl shadow-md space-y-4">
@@ -352,31 +358,14 @@ const AttendanceSystem = () => {
             <div className="p-4 rounded-lg bg-red-100 text-red-800">
               <p className="font-medium">Hata Detayı:</p>
               <p className="mt-1">{status}</p>
-              <p className="mt-2 text-sm">
-                Eğer bu hata devam ederse, tarayıcı önbelleğini temizleyip sayfayı yeniden yüklemeyi deneyin.
-              </p>
             </div>
           )}
-          <div className="flex gap-2">
-            <button
-              onClick={() => window.location.reload()}
-              className="flex-1 p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              Yeniden Dene
-            </button>
-            <button
-              onClick={() => {
-                console.log('Current ENV:', {
-                  SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID,
-                  API_KEY: process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
-                  CLIENT_ID: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
-                });
-              }}
-              className="p-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-            >
-              Debug
-            </button>
-          </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="w-full p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            Yeniden Dene
+          </button>
         </div>
       </div>
     );
