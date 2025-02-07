@@ -5,10 +5,61 @@ import { Camera, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 
 const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID;
-const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
 const MAX_DISTANCE = 0.1;
 
-const calculateDistance = (lat1, lon1, lat2, lon2) => {
+// Google Auth yardımcı fonksiyonları
+let tokenClient: any;
+let accessToken: string | null = null;
+
+const initializeGoogleAuth = () => {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined') return;
+    
+    window.gapi.load('client:auth2', async () => {
+      await window.gapi.client.init({
+        apiKey: process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
+        clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+        scope: 'https://www.googleapis.com/auth/spreadsheets',
+      });
+
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+        scope: 'https://www.googleapis.com/auth/spreadsheets',
+        callback: (tokenResponse: any) => {
+          accessToken = tokenResponse.access_token;
+          resolve(accessToken);
+        },
+      });
+    });
+  });
+};
+
+const getAccessToken = async () => {
+  if (!accessToken) {
+    tokenClient.requestAccessToken();
+    return new Promise((resolve) => {
+      const checkToken = setInterval(() => {
+        if (accessToken) {
+          clearInterval(checkToken);
+          resolve(accessToken);
+        }
+      }, 100);
+    });
+  }
+  return accessToken;
+};
+
+interface Student {
+  studentId: string;
+  studentName: string;
+}
+
+interface Location {
+  lat: number;
+  lng: number;
+}
+
+const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
   const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
@@ -18,31 +69,44 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
     Math.sin(dLon/2) * Math.sin(dLon/2);
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 };
-
 const AttendanceSystem = () => {
-  const [mode, setMode] = useState('teacher');
-  const [selectedWeek, setSelectedWeek] = useState(1);
-  const [qrData, setQrData] = useState('');
-  const [location, setLocation] = useState(null);
-  const [studentId, setStudentId] = useState('');
-  const [attendance, setAttendance] = useState([]);
-  const [status, setStatus] = useState('');
-  const [isScanning, setIsScanning] = useState(false);
-  const [html5QrCode, setHtml5QrCode] = useState(null);
-  const [validStudents, setValidStudents] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [mode, setMode] = useState<'teacher' | 'student'>('teacher');
+  const [selectedWeek, setSelectedWeek] = useState<number>(1);
+  const [qrData, setQrData] = useState<string>('');
+  const [location, setLocation] = useState<Location | null>(null);
+  const [studentId, setStudentId] = useState<string>('');
+  const [attendance, setAttendance] = useState<Student[]>([]);
+  const [status, setStatus] = useState<string>('');
+  const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [html5QrCode, setHtml5QrCode] = useState<Html5Qrcode | null>(null);
+  const [validStudents, setValidStudents] = useState<Student[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+
+  useEffect(() => {
+    initializeGoogleAuth().then(() => {
+      setIsAuthenticated(true);
+      fetchStudentList();
+    }).catch(console.error);
+  }, []);
 
   // Öğrenci listesini Google Sheets'ten çekme
   const fetchStudentList = async () => {
     try {
+      const token = await getAccessToken();
       const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C?key=${API_KEY}` // A:C olarak düzeltildi
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }
       );
       const data = await response.json();
       
-      const students = data.values.slice(1).map(row => ({
-        studentId: row[1]?.toString() || '', // B sütunu
-        studentName: row[2]?.toString() || '' // C sütunu
+      const students = data.values.slice(1).map((row: string[]) => ({
+        studentId: row[1]?.toString() || '',
+        studentName: row[2]?.toString() || ''
       }));
       
       setValidStudents(students);
@@ -51,37 +115,36 @@ const AttendanceSystem = () => {
       setStatus('❌ Öğrenci listesi yüklenemedi');
     }
   };
-  
-
-  useEffect(() => {
-    fetchStudentList();
-  }, []);
 
   // Google Sheets'te yoklama güncelleme
-  const updateAttendance = async (studentId) => {
+  const updateAttendance = async (studentId: string) => {
     try {
       setIsLoading(true);
       
-      // Önce mevcut verileri oku
+      const token = await getAccessToken();
       const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z?key=${API_KEY}`
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }
       );
       const data = await response.json();
       
-      const studentRow = data.values.findIndex(row => row[1] === studentId);
+      const studentRow = data.values.findIndex((row: string[]) => row[1] === studentId);
       if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
-  
+
       const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
       const cellRange = `${weekColumn}${studentRow + 1}`;
-  
-      // Güncelleme isteği
-      await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}:${cellRange}`,
+
+      const updateResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
         {
-          method: 'POST',
+          method: 'PUT',
           headers: {
-            'Authorization': `Bearer ${API_KEY}`,
-            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({
             range: cellRange,
@@ -91,18 +154,22 @@ const AttendanceSystem = () => {
           })
         }
       );
-  
+
+      if (!updateResponse.ok) {
+        const errorData = await updateResponse.json();
+        throw new Error(errorData.error?.message || 'Güncelleme hatası');
+      }
+
       setStatus('✅ Yoklama kaydedildi');
       return true;
     } catch (error) {
       console.error('Yoklama güncelleme hatası:', error);
-      setStatus('❌ Yoklama kaydedilemedi');
+      setStatus(`❌ Yoklama kaydedilemedi: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
       return false;
     } finally {
       setIsLoading(false);
     }
   };
-
   const getLocation = () => {
     if (!navigator.geolocation) {
       setStatus('❌ Konum desteği yok');
@@ -141,7 +208,7 @@ const AttendanceSystem = () => {
     setStatus('✅ QR kod oluşturuldu');
   };
 
-  const handleStudentIdChange = (e) => {
+  const handleStudentIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newId = e.target.value;
     setStudentId(newId);
     
@@ -155,7 +222,7 @@ const AttendanceSystem = () => {
     }
   };
 
-  const handleQrScan = async (decodedText) => {
+  const handleQrScan = async (decodedText: string) => {
     try {
       const scannedData = JSON.parse(decodedText);
       
@@ -201,7 +268,7 @@ const AttendanceSystem = () => {
   };
 
   useEffect(() => {
-    let scanner;
+    let scanner: Html5Qrcode;
     
     const initializeScanner = async () => {
       if (isScanning) {
@@ -226,6 +293,15 @@ const AttendanceSystem = () => {
       if (scanner) scanner.stop().catch(() => {});
     };
   }, [isScanning]);
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen p-4 bg-gray-50">
+        <div className="max-w-md mx-auto p-4 bg-white rounded-xl shadow-md">
+          <p>Google hesabı yetkilendiriliyor...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
@@ -233,6 +309,7 @@ const AttendanceSystem = () => {
         <button
           onClick={() => setMode(m => m === 'teacher' ? 'student' : 'teacher')}
           className="w-full p-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+          disabled={isLoading}
         >
           {mode === 'teacher' ? '📱 Öğrenci Modu' : '👨🏫 Öğretmen Modu'}
         </button>
@@ -257,6 +334,7 @@ const AttendanceSystem = () => {
                 value={selectedWeek}
                 onChange={(e) => setSelectedWeek(Number(e.target.value))}
                 className="p-2 border rounded-lg flex-1"
+                disabled={isLoading}
               >
                 {[...Array(16)].map((_, i) => (
                   <option key={i+1} value={i+1}>Hafta {i+1}</option>
@@ -267,14 +345,13 @@ const AttendanceSystem = () => {
             <button
               onClick={getLocation}
               className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
+              disabled={isLoading}
             >
               <Camera size={18} /> Konum Al
-            </button>
-
-            <button
+              <button
               onClick={generateQR}
               className="w-full p-3 bg-purple-600 text-white rounded-lg disabled:opacity-50 hover:bg-purple-700"
-              disabled={!location}
+              disabled={!location || isLoading}
             >
               QR Oluştur
             </button>
@@ -317,6 +394,7 @@ const AttendanceSystem = () => {
                     ? 'border-red-500 focus:ring-red-500'
                     : 'focus:ring-blue-500'
                 }`}
+                disabled={isLoading}
               />
 
               {studentId && (
@@ -334,14 +412,15 @@ const AttendanceSystem = () => {
               <button
                 onClick={getLocation}
                 className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
+                disabled={isLoading}
               >
                 <Camera size={18} /> Konumu Doğrula
               </button>
 
               <button
                 onClick={() => setIsScanning(!isScanning)}
-                className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                disabled={!location || !studentId || !validStudents.some(s => s.studentId === studentId)}
+                className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                disabled={!location || !studentId || !validStudents.some(s => s.studentId === studentId) || isLoading}
               >
                 {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
               </button>
