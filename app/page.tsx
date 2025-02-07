@@ -12,25 +12,43 @@ let tokenClient: any;
 let accessToken: string | null = null;
 
 const initializeGoogleAuth = () => {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     if (typeof window === 'undefined') return;
     
-    window.gapi.load('client:auth2', async () => {
-      await window.gapi.client.init({
-        apiKey: process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
-        clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
-        scope: 'https://www.googleapis.com/auth/spreadsheets',
-      });
+    try {
+      window.gapi.load('client:auth2', async () => {
+        try {
+          await window.gapi.client.init({
+            apiKey: process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
+            clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+            scope: 'https://www.googleapis.com/auth/spreadsheets',
+            plugin_name: 'qr-attendance'
+          });
 
-      tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
-        scope: 'https://www.googleapis.com/auth/spreadsheets',
-        callback: (tokenResponse: any) => {
-          accessToken = tokenResponse.access_token;
-          resolve(accessToken);
-        },
+          tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+            scope: 'https://www.googleapis.com/auth/spreadsheets',
+            callback: (tokenResponse: any) => {
+              if (tokenResponse.error) {
+                reject(tokenResponse.error);
+                return;
+              }
+              accessToken = tokenResponse.access_token;
+              resolve(accessToken);
+            },
+          });
+
+          tokenClient.requestAccessToken();
+
+        } catch (error) {
+          console.error('GAPI init hatası:', error);
+          reject(error);
+        }
       });
-    });
+    } catch (error) {
+      console.error('GAPI load hatası:', error);
+      reject(error);
+    }
   });
 };
 
@@ -84,10 +102,18 @@ const AttendanceSystem = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
   useEffect(() => {
-    initializeGoogleAuth().then(() => {
-      setIsAuthenticated(true);
-      fetchStudentList();
-    }).catch(console.error);
+    const initialize = async () => {
+      try {
+        await initializeGoogleAuth();
+        setIsAuthenticated(true);
+        await fetchStudentList();
+      } catch (error) {
+        console.error('Google Auth başlatma hatası:', error);
+        setStatus('❌ Google yetkilendirme hatası: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'));
+      }
+    };
+  
+    initialize();
   }, []);
 
   // Öğrenci listesini Google Sheets'ten çekme
@@ -293,11 +319,23 @@ const AttendanceSystem = () => {
       if (scanner) scanner.stop().catch(() => {});
     };
   }, [isScanning]);
+  
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen p-4 bg-gray-50">
-        <div className="max-w-md mx-auto p-4 bg-white rounded-xl shadow-md">
-          <p>Google hesabı yetkilendiriliyor...</p>
+        <div className="max-w-md mx-auto p-4 bg-white rounded-xl shadow-md space-y-4">
+          <p className="text-center">Google hesabı yetkilendiriliyor...</p>
+          {status && (
+            <div className="p-4 rounded-lg bg-red-100 text-red-800">
+              {status}
+            </div>
+          )}
+          <button
+            onClick={() => window.location.reload()}
+            className="w-full p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            Yeniden Dene
+          </button>
         </div>
       </div>
     );
