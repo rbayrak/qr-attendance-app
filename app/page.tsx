@@ -161,61 +161,89 @@ const AttendanceSystem = () => {
   const updateAttendance = async (studentId: string) => {
     try {
       setIsLoading(true);
-      
+  
       const token = await getAccessToken();
+  
+      // 1. Tablodaki tüm verileri çek
       const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/Sheet1!A1:Z`,
         {
           headers: {
-            'Authorization': `Bearer ${token}`
-          }
+            Authorization: `Bearer ${token}`,
+          },
         }
       );
+  
+      if (!response.ok) {
+        throw new Error('Google Sheets verileri alınamadı');
+      }
+  
       const data = await response.json();
-      
-      // Öğrenci listesini API'den al
-      const studentsResponse = await fetch('/api/students');
-      const students = await studentsResponse.json();
-      //const students = await getStudents();
-      
-      const studentRow = data.values.findIndex((row: string[]) => students.some(s => s.studentId === row[1]));
-      if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
-   
-      const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
-      const cellRange = `${weekColumn}${studentRow + 1}`;
-   
+  
+      // 2. Başlık satırını ve öğrenci satırlarını ayır
+      const rows = data.values;
+      const headerRow = rows[0]; // İlk satır başlıklar
+      const studentRows = rows.slice(1); // Başlık dışındaki satırlar
+  
+      // 3. Öğrenci numarasına göre ilgili satırı bul
+      const studentRowIndex = studentRows.findIndex(
+        (row) => row[1]?.trim() === studentId.trim()
+      );
+  
+      if (studentRowIndex === -1) {
+        throw new Error('Öğrenci bulunamadı');
+      }
+  
+      // 4. Seçili hafta sütununu bul
+      const weekColumnIndex = headerRow.findIndex(
+        (cell) => cell === `Hafta-${selectedWeek}`
+      );
+  
+      if (weekColumnIndex === -1) {
+        throw new Error(`Hafta-${selectedWeek} sütunu bulunamadı`);
+      }
+  
+      // 5. Güncelleme yapılacak hücre aralığını belirle
+      const cellRange = `Sheet1!${String.fromCharCode(65 + weekColumnIndex)}${
+        studentRowIndex + 2
+      }`; // +2 çünkü başlık ve 0-index farkı var
+  
+      // 6. Hücreyi güncelle
       const updateResponse = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}?valueInputOption=USER_ENTERED`,
         {
           method: 'PUT',
           headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
           },
           body: JSON.stringify({
             range: cellRange,
-            values: [['VAR']],
-            majorDimension: "ROWS",
-            valueInputOption: "RAW"
-          })
+            values: [['VAR']], // Hücreye "VAR" yazılacak
+          }),
         }
       );
-   
+  
       if (!updateResponse.ok) {
         const errorData = await updateResponse.json();
         throw new Error(errorData.error?.message || 'Güncelleme hatası');
       }
-   
+  
       setStatus('✅ Yoklama kaydedildi');
       return true;
     } catch (error) {
       console.error('Yoklama güncelleme hatası:', error);
-      setStatus(`❌ Yoklama kaydedilemedi: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
+      setStatus(
+        `❌ Yoklama kaydedilemedi: ${
+          error instanceof Error ? error.message : 'Bilinmeyen hata'
+        }`
+      );
       return false;
     } finally {
       setIsLoading(false);
     }
-   };
+  };
+  
 
 
   const getLocation = () => {

@@ -8,16 +8,12 @@ let cachedStudents: Student[] | null = null;
 let lastFetchTime: number = 0;
 const CACHE_DURATION = 1000 * 60 * 60; // 1 saat
 
-export const getStudents = async () => {
-  const now = Date.now();
-  if (cachedStudents && (now - lastFetchTime < CACHE_DURATION)) {
-    return cachedStudents;
+export const getStudents = async (): Promise<Student[]> => {
+  try {
+    const response = await fetch('/api/students'); // API endpoint kontrolü
+    return await response.json();
+  } catch (error) {
+    console.error('Öğrenci listesi alınamadı:', error);
+    return [];
   }
-
-  const response = await fetch('/api/students');
-  const students = await response.json();
-  cachedStudents = students;
-  lastFetchTime = now;
-  
-  return cachedStudents;
 };
