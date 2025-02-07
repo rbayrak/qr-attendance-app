@@ -1,8 +1,22 @@
 'use client';
 
+// TypeScript için window tanımlamaları
+declare global {
+  interface Window {
+    gapi: any;
+    google: any;
+  }
+}
+
 import React, { useState, useEffect } from 'react';
 import { Camera, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
+
+console.log('ENV Check:', {
+  SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID,
+  API_KEY: process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
+  CLIENT_ID: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
+});
 
 const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID;
 const MAX_DISTANCE = 0.1;
@@ -15,22 +29,28 @@ const initializeGoogleAuth = () => {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined') return;
     
+    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+    if (!clientId) {
+      reject(new Error('Client ID bulunamadı. Lütfen env değerlerini kontrol edin.'));
+      return;
+    }
+
     try {
       window.gapi.load('client:auth2', async () => {
         try {
           await window.gapi.client.init({
             apiKey: process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
-            clientId: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+            clientId: clientId,
             scope: 'https://www.googleapis.com/auth/spreadsheets',
             plugin_name: 'qr-attendance'
           });
 
           tokenClient = google.accounts.oauth2.initTokenClient({
-            client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+            client_id: clientId,
             scope: 'https://www.googleapis.com/auth/spreadsheets',
             callback: (tokenResponse: any) => {
               if (tokenResponse.error) {
-                reject(tokenResponse.error);
+                reject(new Error(`Token hatası: ${tokenResponse.error}`));
                 return;
               }
               accessToken = tokenResponse.access_token;
@@ -38,7 +58,10 @@ const initializeGoogleAuth = () => {
             },
           });
 
-          tokenClient.requestAccessToken();
+          // Token isteğini başlat
+          setTimeout(() => {
+            tokenClient.requestAccessToken({ prompt: 'consent' });
+          }, 1000);
 
         } catch (error) {
           console.error('GAPI init hatası:', error);
@@ -324,18 +347,36 @@ const AttendanceSystem = () => {
     return (
       <div className="min-h-screen p-4 bg-gray-50">
         <div className="max-w-md mx-auto p-4 bg-white rounded-xl shadow-md space-y-4">
-          <p className="text-center">Google hesabı yetkilendiriliyor...</p>
+          <p className="text-center text-lg font-semibold">Google hesabı yetkilendiriliyor...</p>
           {status && (
             <div className="p-4 rounded-lg bg-red-100 text-red-800">
-              {status}
+              <p className="font-medium">Hata Detayı:</p>
+              <p className="mt-1">{status}</p>
+              <p className="mt-2 text-sm">
+                Eğer bu hata devam ederse, tarayıcı önbelleğini temizleyip sayfayı yeniden yüklemeyi deneyin.
+              </p>
             </div>
           )}
-          <button
-            onClick={() => window.location.reload()}
-            className="w-full p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            Yeniden Dene
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => window.location.reload()}
+              className="flex-1 p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Yeniden Dene
+            </button>
+            <button
+              onClick={() => {
+                console.log('Current ENV:', {
+                  SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID,
+                  API_KEY: process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
+                  CLIENT_ID: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
+                });
+              }}
+              className="p-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+            >
+              Debug
+            </button>
+          </div>
         </div>
       </div>
     );
