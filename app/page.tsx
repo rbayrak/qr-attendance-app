@@ -62,6 +62,7 @@ const AttendanceSystem = () => {
     try {
       setIsLoading(true);
       
+      // Önce mevcut verileri oku
       const response = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z?key=${API_KEY}`
       );
@@ -69,23 +70,28 @@ const AttendanceSystem = () => {
       
       const studentRow = data.values.findIndex(row => row[1] === studentId);
       if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
-
+  
       const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
       const cellRange = `${weekColumn}${studentRow + 1}`;
-
+  
+      // Güncelleme isteği
       await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}?valueInputOption=RAW&key=${API_KEY}`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}:${cellRange}`,
         {
-          method: 'PUT',
+          method: 'POST',
           headers: {
+            'Authorization': `Bearer ${API_KEY}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            values: [['VAR']]
+            range: cellRange,
+            values: [['VAR']],
+            majorDimension: "ROWS",
+            valueInputOption: "RAW"
           })
         }
       );
-
+  
       setStatus('✅ Yoklama kaydedildi');
       return true;
     } catch (error) {
