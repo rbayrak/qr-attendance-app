@@ -12,6 +12,7 @@ declare global {
 import React, { useState, useEffect } from 'react';
 import { Camera, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
+import { getStudents } from './utils/studentCache';
 
 console.log('ENV Check:', {
   SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID,
@@ -76,7 +77,7 @@ const initializeGoogleAuth = () => {
   });
 };
 
-const getAccessToken = async () => {
+const getAccessToken = async (): Promise<string> => {
   if (!accessToken) {
     tokenClient.requestAccessToken();
     return new Promise((resolve) => {
@@ -148,21 +149,7 @@ const AttendanceSystem = () => {
   const fetchStudentList = async () => {
     try {
       const token = await getAccessToken();
-      const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C`,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        }
-      );
-      const data = await response.json();
-      
-      const students = data.values.slice(1).map((row: string[]) => ({
-        studentId: row[1]?.toString() || '',
-        studentName: row[2]?.toString() || ''
-      }));
-      
+      const students = await getStudents(token);
       setValidStudents(students);
     } catch (error) {
       console.error('Öğrenci listesi çekme hatası:', error);
@@ -186,7 +173,8 @@ const AttendanceSystem = () => {
       );
       const data = await response.json();
       
-      const studentRow = data.values.findIndex((row: string[]) => row[1] === studentId);
+      const students = await getStudents(token);
+      const studentRow = data.values.findIndex((row: string[]) => students.some(s => s.studentId === row[1]));
       if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
 
       const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
