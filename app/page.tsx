@@ -370,6 +370,8 @@ const AttendanceSystem = () => {
     }
   };
 
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+
   const handleQrScan = async (decodedText: string) => {
     try {
       const scannedData = JSON.parse(decodedText);
@@ -398,18 +400,12 @@ const AttendanceSystem = () => {
         scannedData.classLocation.lng
       );
 
-      console.log('Konum ve mesafe detayları:', {
-        öğrenciKonumu: {
-          lat: location.lat,
-          lng: location.lng
-        },
-        sınıfKonumu: {
-          lat: scannedData.classLocation.lat,
-          lng: scannedData.classLocation.lng
-        },
-        mesafe: distance,
-        maxİzinVerilenMesafe: MAX_DISTANCE
-      });
+      setDebugLogs(prev => [...prev, `
+        Öğrenci Konumu: ${location.lat}, ${location.lng}
+        Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
+        Mesafe: ${distance} km
+        Max İzin: ${MAX_DISTANCE} km
+      `]);
   
       if (distance > MAX_DISTANCE) {
         setStatus('❌ Sınıf konumunda değilsiniz');
@@ -512,6 +508,12 @@ const AttendanceSystem = () => {
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
+      {/* Debug Panel */}
+    <div className="mb-4 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-40">
+      {debugLogs.map((log, i) => (
+        <div key={i} className="whitespace-pre-wrap">{log}</div>
+      ))}
+    </div>
       {showPasswordModal && (
         <PasswordModal
           password={password}
