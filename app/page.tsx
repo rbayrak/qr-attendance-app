@@ -275,44 +275,51 @@ const AttendanceSystem = () => {
       );
       const data = await response.json();
   
-      // Başlıkları alın ve ilgili hafta sütununu bulun
-      const headers = data.values[0];
-      const weekColumnIndex = headers.findIndex((header: string) => header.trim() === `Hafta-${selectedWeek}`);
+      // Başlıkları al
+      const headers = data.values[0]; // Tablo başlıkları (ilk satır)
+      console.log({
+        headers, // Debug: Başlıkları kontrol et
+        selectedWeek,
+        expectedHeader: `Hafta-${selectedWeek}`,
+      });
+  
+      // İlgili hafta sütununu bul
+      const weekColumnIndex = headers.findIndex(
+        (header: string) => header.trim() === `Hafta-${selectedWeek}`
+      );
       if (weekColumnIndex === -1) {
-        throw new Error(`Hafta ${selectedWeek} için sütun bulunamadı.`);
+        console.error(`Hata: Hafta-${selectedWeek} başlığı bulunamadı. Mevcut başlıklar:`, headers);
+        throw new Error(`Hafta-${selectedWeek} için sütun bulunamadı.`);
       }
       const weekColumn = String.fromCharCode(65 + weekColumnIndex);
   
-      // Öğrenci satırını bulun
+      // Öğrenciyi bul
       const studentRow = data.values.findIndex((row: string[], index: number) => index > 0 && row[1] === studentId);
       if (studentRow === -1) {
         throw new Error('Öğrenci bulunamadı');
       }
   
-      // Hücre aralığını hesaplayın
+      // Hücre aralığını oluştur
       const cellRange = `${weekColumn}${studentRow + 1}`;
-  
       console.log({
-        selectedWeek,
         weekColumn,
-        weekColumnIndex,
         studentRow,
         cellRange,
       });
   
-      // Google Sheets'te güncelleme yapın
+      // Hücreyi güncelle
       const updateResponse = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}?valueInputOption=RAW`,
         {
           method: 'PUT',
           headers: {
             'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
           },
           body: JSON.stringify({
             range: cellRange,
             values: [['VAR']],
-          })
+          }),
         }
       );
   
@@ -322,15 +329,14 @@ const AttendanceSystem = () => {
       }
   
       setStatus('✅ Yoklama kaydedildi');
-      return true;
     } catch (error) {
       console.error('Yoklama güncelleme hatası:', error);
       setStatus(`❌ Yoklama kaydedilemedi: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
-      return false;
     } finally {
       setIsLoading(false);
     }
   };
+  
   
   
   
