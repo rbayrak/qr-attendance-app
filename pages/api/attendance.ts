@@ -1,4 +1,3 @@
-// attendance.ts dosyası:
 import { google } from 'googleapis';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -7,6 +6,21 @@ type ResponseData = {
   error?: string;
   debug?: any;
 };
+
+interface DebugInfo {
+  environmentCheck: {
+    SPREADSHEET_ID?: string;
+    NEXT_PUBLIC_SHEET_ID?: string;
+  };
+  operationDetails?: {
+    öğrenciNo: string;
+    bulunanSatır: number;
+    sütun: string;
+    aralık: string;
+    haftaNo: number;
+    sütunAscii: number;
+  };
+}
 
 export default async function handler(
   req: NextApiRequest,
@@ -24,7 +38,7 @@ export default async function handler(
     }
 
     // Debug bilgilerini hazırla
-    const debugInfo = {
+    const debugInfo: DebugInfo = {
       environmentCheck: {
         SPREADSHEET_ID: process.env.SPREADSHEET_ID,
         NEXT_PUBLIC_SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID
@@ -42,7 +56,7 @@ export default async function handler(
       scopes: ['https://www.googleapis.com/auth/spreadsheets']
     });
 
-    const sheets = google.sheets({ version: 'v4', auth });
+    const sheets = google.sheets({ version: '4', auth });
 
     // Önce öğrenciyi bul
     const response = await sheets.spreadsheets.values.get({
@@ -64,21 +78,21 @@ export default async function handler(
     // Gerçek satır numarası (1'den başlar)
     const studentRow = studentRowIndex + 1;
 
-    // Hafta sütununu belirle (C'den başlayarak)
-    const weekColumn = String.fromCharCode(67 + Number(week) - 1);
+    // Hafta sütununu belirle (D'den başlayarak)
+    const weekColumn = String.fromCharCode(68 + Number(week) - 1); // 68 = 'D'
     
     // Güncelleme aralığını belirle
     const range = `${weekColumn}${studentRow}`;
 
     // Operation detaylarını debug bilgilerine ekle
-    Object.assign(debugInfo, {
-      operationDetails: {
-        öğrenciNo: studentId,
-        bulunanSatır: studentRow,
-        sütun: weekColumn,
-        aralık: range
-      }
-    });
+    debugInfo.operationDetails = {
+      öğrenciNo: studentId,
+      bulunanSatır: studentRow,
+      sütun: weekColumn,
+      aralık: range,
+      haftaNo: Number(week),
+      sütunAscii: 68 + Number(week) - 1
+    };
 
     // Yoklamayı kaydet
     const updateResult = await sheets.spreadsheets.values.update({
@@ -103,7 +117,7 @@ export default async function handler(
     console.error('Error:', error);
     res.status(500).json({ 
       error: error instanceof Error ? error.message : 'Unknown error',
-      debug: 'debugInfo'
+      debug: debugInfo
     });
   }
 }
