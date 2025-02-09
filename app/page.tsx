@@ -260,88 +260,59 @@ const AttendanceSystem = () => {
   };
 
   // Google Sheets'te yoklama güncelleme
-  try {
-    setIsLoading(true);
-  
-    const token = await getAccessToken();
-    const response = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+  const updateAttendance = async (studentId: string) => {
+    try {
+      setIsLoading(true);
+      
+      const token = await getAccessToken();
+      const response = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }
+      );
+      const data = await response.json();
+      
+      const studentRow = data.values.findIndex((row: string[]) => row[1] === studentId);
+      if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
+
+      const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
+      const cellRange = `${weekColumn}${studentRow + 1}`;
+
+      const updateResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            range: cellRange,
+            values: [['VAR']],
+            majorDimension: "ROWS",
+            valueInputOption: "RAW"
+          })
+        }
+      );
+
+      if (!updateResponse.ok) {
+        const errorData = await updateResponse.json();
+        throw new Error(errorData.error?.message || 'Güncelleme hatası');
       }
-    );
-  
-    const data = await response.json();
-  
-    // Başlıkları al
-    const headers = data.values[0];
-  
-    console.log("Başlıklar (Headers):", headers);
-  
-    // Hafta sütununu bul
-    const weekColumnIndex = headers.findIndex((header: string) => header.trim() === `Hafta-${selectedWeek}`);
-    if (weekColumnIndex === -1) {
-      console.error(`Hata: Hafta-${selectedWeek} başlığı bulunamadı. Başlıklar:`, headers);
-      throw new Error(`Hafta-${selectedWeek} için sütun bulunamadı.`);
+
+      setStatus('✅ Yoklama kaydedildi');
+      return true;
+    } catch (error) {
+      console.error('Yoklama güncelleme hatası:', error);
+      setStatus(`❌ Yoklama kaydedilemedi: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
+      return false;
+    } finally {
+      setIsLoading(false);
     }
-  
-    const weekColumn = String.fromCharCode(65 + weekColumnIndex);
-  
-    console.log({
-      weekColumnIndex,
-      weekColumn,
-      selectedWeek,
-    });
-  
-    // Öğrenci satırını bul
-    const studentRow = data.values.findIndex((row: string[], index: number) => index > 0 && row[1] === studentId);
-    if (studentRow === -1) {
-      throw new Error("Öğrenci bulunamadı");
-    }
-  
-    const cellRange = `${weekColumn}${studentRow + 1}`;
-  
-    console.log({
-      cellRange,
-      weekColumn,
-      studentRow,
-    });
-  
-    // Hücreyi güncelle
-    const updateResponse = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}?valueInputOption=RAW`,
-      {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          range: cellRange,
-          values: [["VAR"]],
-        }),
-      }
-    );
-  
-    if (!updateResponse.ok) {
-      const errorData = await updateResponse.json();
-      throw new Error(errorData.error?.message || "Güncelleme hatası");
-    }
-  
-    setStatus("✅ Yoklama kaydedildi");
-  } catch (error) {
-    console.error("Hata:", error);
-    setStatus(`❌ Hata: ${error instanceof Error ? error.message : "Bilinmeyen hata"}`);
-  } finally {
-    setIsLoading(false);
-  }
-  
-  
-  
-  
-  
+  };
   const getLocation = () => {
     if (!navigator.geolocation) {
       setStatus('❌ Konum desteği yok');
