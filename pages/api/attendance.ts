@@ -1,4 +1,3 @@
-// attendance.ts dosyası:
 import { google } from 'googleapis';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -16,20 +15,20 @@ export default async function handler(
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  // Debug bilgileri için ana obje
+  const debugInfo: any = {
+    environmentCheck: {
+      SPREADSHEET_ID: process.env.SPREADSHEET_ID,
+      GOOGLE_PROJECT_ID: process.env.GOOGLE_PROJECT_ID,
+    },
+  };
+
   try {
     const { studentId, week } = req.body;
 
     if (!studentId || !week) {
       return res.status(400).json({ error: 'Öğrenci ID ve hafta bilgisi gerekli' });
     }
-
-    // Debug bilgilerini hazırla
-    const debugInfo = {
-      environmentCheck: {
-        SPREADSHEET_ID: process.env.SPREADSHEET_ID,
-        NEXT_PUBLIC_SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID
-      }
-    };
 
     // Service Account yetkilendirmesi
     const auth = new google.auth.GoogleAuth({
@@ -39,15 +38,15 @@ export default async function handler(
         private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
         client_email: process.env.GOOGLE_CLIENT_EMAIL,
       },
-      scopes: ['https://www.googleapis.com/auth/spreadsheets']
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
 
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // Önce öğrenciyi bul
+    // Tablodan verileri al
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.SPREADSHEET_ID,
-      range: 'A:C',
+      spreadsheetId: process.env.SPREADSHEET_ID as string,
+      range: 'A:F', // Başlıkları ve Hafta-1, Hafta-2... sütunlarını kapsar
     });
 
     const rows = response.data.values;
@@ -55,55 +54,58 @@ export default async function handler(
       return res.status(404).json({ error: 'Veri bulunamadı' });
     }
 
-    // Öğrenciyi bul ve satır numarasını al (1'den başlayarak)
-    const studentRowIndex = rows.findIndex(row => row[1] === studentId);
+    debugInfo.tableHeaders = rows[0]; // Başlıkları debug bilgisine ekle
+
+    // Öğrenciyi bul ve satır numarasını al
+    const studentRowIndex = rows.findIndex((row) => row[1] === studentId);
     if (studentRowIndex === -1) {
-      return res.status(404).json({ error: 'Öğrenci bulunamadı' });
+      debugInfo.error = 'Öğrenci bulunamadı';
+      return res.status(404).json({ error: 'Öğrenci bulunamadı', debug: debugInfo });
     }
-    
-    // Gerçek satır numarası (1'den başlar)
+
     const studentRow = studentRowIndex + 1;
 
-    // Hafta sütununu belirle (C'den başlayarak)
-    const weekColumn = String.fromCharCode(67 + Number(week) - 1);
-    
-    // Güncelleme aralığını belirle
+    // Hafta sütununu belirle
+    const headers = rows[0];
+    const weekColumnIndex = headers.findIndex((header) => header.trim() === `Hafta-${week}`);
+    if (weekColumnIndex === -1) {
+      debugInfo.error = `Hafta-${week} sütunu bulunamadı`;
+      return res.status(400).json({ error: `Hafta-${week} sütunu bulunamadı`, debug: debugInfo });
+    }
+
+    const weekColumn = String.fromCharCode(65 + weekColumnIndex);
     const range = `${weekColumn}${studentRow}`;
 
-    // Operation detaylarını debug bilgilerine ekle
-    Object.assign(debugInfo, {
-      operationDetails: {
-        öğrenciNo: studentId,
-        bulunanSatır: studentRow,
-        sütun: weekColumn,
-        aralık: range
-      }
-    });
+    debugInfo.operationDetails = {
+      studentId,
+      week,
+      weekColumn,
+      studentRow,
+      range,
+    };
 
-    // Yoklamayı kaydet
+    // Yoklamayı güncelle
     const updateResult = await sheets.spreadsheets.values.update({
-      spreadsheetId: process.env.SPREADSHEET_ID,
-      range: range,
+      spreadsheetId: process.env.SPREADSHEET_ID as string,
+      range,
       valueInputOption: 'RAW',
       requestBody: {
-        values: [['VAR']]
-      }
+        values: [['VAR']],
+      },
     });
 
-    // Başarılı yanıtta debug bilgilerini de gönder
-    res.status(200).json({ 
+    debugInfo.updateResult = updateResult.data;
+
+    res.status(200).json({
       success: true,
-      debug: {
-        ...debugInfo,
-        updateResult: updateResult.data
-      }
+      debug: debugInfo,
     });
-
   } catch (error) {
+    debugInfo.error = error instanceof Error ? error.message : 'Bilinmeyen hata';
     console.error('Error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: error instanceof Error ? error.message : 'Unknown error',
-      debug: 'debugInfo'
+      debug: debugInfo,
     });
   }
 }
