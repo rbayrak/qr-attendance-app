@@ -333,6 +333,7 @@ const AttendanceSystem = () => {
   };
   
   
+  
   const getLocation = () => {
     if (!navigator.geolocation) {
       setStatus('❌ Konum desteği yok');
