@@ -100,6 +100,8 @@ interface Location {
   lng: number;
 }
 
+
+
 const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
   const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -110,6 +112,10 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
     Math.sin(dLon/2) * Math.sin(dLon/2);
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 };
+
+const test1 = calculateDistance(41.015137, 28.979530, 41.015137, 28.979531); // Çok yakın iki nokta
+const test2 = calculateDistance(41.015137, 28.979530, 41.015150, 28.979550); // Biraz uzak iki nokta
+console.log('Mesafe test sonuçları:', {test1, test2});
 
 const PasswordModal = ({ 
   password, 
@@ -336,11 +342,16 @@ const AttendanceSystem = () => {
     
     const payload = {
       timestamp: Date.now(),
-      classLocation: location,
+      classLocation: {
+        lat: Number(location.lat), // Number'a çevirdiğimizden emin olalım
+        lng: Number(location.lng)
+      },
       validUntil: Date.now() + 300000,
       week: selectedWeek
     };
     
+    console.log('QR payload:', payload); // QR içeriğini kontrol edelim
+
     setQrData(JSON.stringify(payload));
     setStatus('✅ QR kod oluşturuldu');
   };
@@ -387,7 +398,18 @@ const AttendanceSystem = () => {
         scannedData.classLocation.lng
       );
 
-      console.log('Mesafe:', distance, 'km'); // Bu satırı ekleyin
+      console.log('Konum ve mesafe detayları:', {
+        öğrenciKonumu: {
+          lat: location.lat,
+          lng: location.lng
+        },
+        sınıfKonumu: {
+          lat: scannedData.classLocation.lat,
+          lng: scannedData.classLocation.lng
+        },
+        mesafe: distance,
+        maxİzinVerilenMesafe: MAX_DISTANCE
+      });
   
       if (distance > MAX_DISTANCE) {
         setStatus('❌ Sınıf konumunda değilsiniz');
