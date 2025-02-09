@@ -275,11 +275,11 @@ const AttendanceSystem = () => {
       );
       const data = await response.json();
       
-      const studentRow = data.values.findIndex((row: string[]) => row[1] === studentId);
+      const studentRow = data.values.findIndex((row: string[]) => row[1] === studentId + 1);
       if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
 
       const weekColumn = String.fromCharCode(68 + selectedWeek - 1);
-      const cellRange = `${weekColumn}${studentRow + 1}`;
+      const cellRange = `${weekColumn}${studentRow}`;
 
       const updateResponse = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
