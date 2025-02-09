@@ -111,7 +111,10 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 };
 const AttendanceSystem = () => {
-  const [mode, setMode] = useState<'teacher' | 'student'>('teacher');
+  const [mode, setMode] = useState<'teacher' | 'student'>('student'); // Varsayılan olarak öğrenci modu
+  const [showPasswordModal, setShowPasswordModal] = useState<boolean>(false);
+  const [password, setPassword] = useState<string>('');
+  const [isTeacherAuthenticated, setIsTeacherAuthenticated] = useState<boolean>(false);
   const [selectedWeek, setSelectedWeek] = useState<number>(1);
   const [qrData, setQrData] = useState<string>('');
   const [location, setLocation] = useState<Location | null>(null);
@@ -124,20 +127,77 @@ const AttendanceSystem = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
-  useEffect(() => {
-    const initialize = async () => {
-      try {
-        await initializeGoogleAuth();
+  const handlePasswordSubmit = () => {
+    // Örnek şifre: "teacher123" (Gerçek uygulamada daha güvenli bir yöntem kullanılmalı)
+    if (password === 'teacher123') {
+      setIsTeacherAuthenticated(true);
+      setMode('teacher');
+      setShowPasswordModal(false);
+      // Öğretmen moduna geçince Google yetkilendirmesini başlat
+      initializeGoogleAuth().then(() => {
         setIsAuthenticated(true);
-        await fetchStudentList();
-      } catch (error) {
+        fetchStudentList();
+      }).catch(error => {
         console.error('Google Auth başlatma hatası:', error);
-        setStatus('❌ Google yetkilendirme hatası: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'));
-      }
-    };
-  
-    initialize();
-  }, []);
+        setStatus('❌ Google yetkilendirme hatası');
+      });
+    } else {
+      setStatus('❌ Yanlış şifre');
+    }
+  };
+
+  const handleModeChange = () => {
+    if (mode === 'student') {
+      setShowPasswordModal(true);
+    } else {
+      // Öğrenci moduna geçerken direkt geçiş yap
+      setMode('student');
+      setIsTeacherAuthenticated(false);
+    }
+  };
+
+
+  useEffect(() => {
+    // Sadece öğretmen modunda ve henüz yetkilendirilmemişse Google Auth'u başlat
+    if (mode === 'teacher' && isTeacherAuthenticated && !isAuthenticated) {
+      initializeGoogleAuth().then(() => {
+        setIsAuthenticated(true);
+        fetchStudentList();
+      }).catch(error => {
+        console.error('Google Auth başlatma hatası:', error);
+        setStatus('❌ Google yetkilendirme hatası');
+      });
+    }
+  }, [mode, isTeacherAuthenticated]);
+
+  const PasswordModal = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl p-6 w-full max-w-md space-y-4">
+        <h3 className="text-xl font-bold">Öğretmen Girişi</h3>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Şifre"
+          className="w-full p-3 border rounded-lg"
+        />
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowPasswordModal(false)}
+            className="flex-1 p-3 bg-gray-500 text-white rounded-lg"
+          >
+            İptal
+          </button>
+          <button
+            onClick={handlePasswordSubmit}
+            className="flex-1 p-3 bg-blue-600 text-white rounded-lg"
+          >
+            Giriş
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   // Öğrenci listesini Google Sheets'ten çekme
   const fetchStudentList = async () => {
@@ -343,7 +403,7 @@ const AttendanceSystem = () => {
     };
   }, [isScanning]);
   
-  if (!isAuthenticated) {
+  if (mode === 'teacher' && !isAuthenticated && isTeacherAuthenticated) {
     return (
       <div className="min-h-screen p-4 bg-gray-50">
         <div className="max-w-md mx-auto p-4 bg-white rounded-xl shadow-md space-y-4">
@@ -384,9 +444,10 @@ const AttendanceSystem = () => {
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
+      {showPasswordModal && <PasswordModal />}
       <div className="max-w-md mx-auto space-y-6">
         <button
-          onClick={() => setMode(m => m === 'teacher' ? 'student' : 'teacher')}
+          onClick={handleModeChange}
           className="w-full p-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
           disabled={isLoading}
         >
