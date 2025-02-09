@@ -278,7 +278,7 @@ const AttendanceSystem = () => {
       const studentRow = data.values.findIndex((row: string[]) => row[1] === studentId);
       if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
 
-      const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
+      const weekColumn = String.fromCharCode(68 + selectedWeek - 1);
       const cellRange = `${weekColumn}${studentRow + 1}`;
 
       const updateResponse = await fetch(
