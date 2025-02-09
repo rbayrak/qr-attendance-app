@@ -263,7 +263,7 @@ const AttendanceSystem = () => {
   const updateAttendance = async (studentId: string) => {
     try {
       setIsLoading(true);
-      
+  
       const token = await getAccessToken();
       const response = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z`,
@@ -274,25 +274,35 @@ const AttendanceSystem = () => {
         }
       );
       const data = await response.json();
-
+  
+      // Başlıkları alın ve ilgili hafta sütununu bulun
       const headers = data.values[0];
-      const weekColumnIndex = headers.findIndex((header: string) => header === `Hafta-${selectedWeek}`);
-      if (weekColumnIndex === -1) throw new Error(`Hafta ${selectedWeek} için sütun bulunamadı.`);
+      const weekColumnIndex = headers.findIndex((header: string) => header.trim() === `Hafta-${selectedWeek}`);
+      if (weekColumnIndex === -1) {
+        throw new Error(`Hafta ${selectedWeek} için sütun bulunamadı.`);
+      }
       const weekColumn = String.fromCharCode(65 + weekColumnIndex);
-
+  
+      // Öğrenci satırını bulun
       const studentRow = data.values.findIndex((row: string[], index: number) => index > 0 && row[1] === studentId);
-      if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
-
-      
-      
-      
-      if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
-
-      
+      if (studentRow === -1) {
+        throw new Error('Öğrenci bulunamadı');
+      }
+  
+      // Hücre aralığını hesaplayın
       const cellRange = `${weekColumn}${studentRow + 1}`;
-
+  
+      console.log({
+        selectedWeek,
+        weekColumn,
+        weekColumnIndex,
+        studentRow,
+        cellRange,
+      });
+  
+      // Google Sheets'te güncelleme yapın
       const updateResponse = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}?valueInputOption=RAW`,
         {
           method: 'PUT',
           headers: {
@@ -302,17 +312,15 @@ const AttendanceSystem = () => {
           body: JSON.stringify({
             range: cellRange,
             values: [['VAR']],
-            majorDimension: "ROWS",
-            valueInputOption: "RAW"
           })
         }
       );
-
+  
       if (!updateResponse.ok) {
         const errorData = await updateResponse.json();
         throw new Error(errorData.error?.message || 'Güncelleme hatası');
       }
-
+  
       setStatus('✅ Yoklama kaydedildi');
       return true;
     } catch (error) {
@@ -323,6 +331,8 @@ const AttendanceSystem = () => {
       setIsLoading(false);
     }
   };
+  
+  
   const getLocation = () => {
     if (!navigator.geolocation) {
       setStatus('❌ Konum desteği yok');
