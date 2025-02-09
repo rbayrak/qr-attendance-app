@@ -19,7 +19,7 @@ console.log('ENV Check:', {
 });
 
 const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID;
-const MAX_DISTANCE = 0.1;
+const MAX_DISTANCE = 0.5;
 
 // Google Auth yardımcı fonksiyonları
 let tokenClient: any;
@@ -386,6 +386,8 @@ const AttendanceSystem = () => {
         scannedData.classLocation.lat,
         scannedData.classLocation.lng
       );
+
+      console.log('Mesafe:', distance, 'km'); // Bu satırı ekleyin
   
       if (distance > MAX_DISTANCE) {
         setStatus('❌ Sınıf konumunda değilsiniz');
