@@ -372,6 +372,7 @@ const AttendanceSystem = () => {
 
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
+  // handleQrScan fonksiyonu (page.tsx içinde):
   const handleQrScan = async (decodedText: string) => {
     try {
       const scannedData = JSON.parse(decodedText);
@@ -399,13 +400,8 @@ const AttendanceSystem = () => {
         scannedData.classLocation.lat,
         scannedData.classLocation.lng
       );
-
-      setDebugLogs(prev => [...prev, `
-        Öğrenci Konumu: ${location.lat}, ${location.lng}
-        Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
-        Mesafe: ${distance} km
-        Max İzin: ${MAX_DISTANCE} km
-      `]);
+  
+      console.log('Mesafe:', distance, 'km');
   
       if (distance > MAX_DISTANCE) {
         setStatus('❌ Sınıf konumunda değilsiniz');
@@ -424,9 +420,22 @@ const AttendanceSystem = () => {
         })
       });
   
+      const responseData = await response.json();
+  
+      // Debug loglarına API yanıtını ekleyelim
+      setDebugLogs(prev => [...prev, `
+        ----- Yoklama İşlemi Detayları -----
+          Öğrenci Konumu: ${location.lat}, ${location.lng}
+          Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
+          Mesafe: ${distance} km
+          Max İzin: ${MAX_DISTANCE} km
+  
+          API Yanıtı:
+          ${JSON.stringify(responseData, null, 2)}
+          `]);
+  
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Yoklama kaydedilemedi');
+        throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
   
       setStatus('✅ Yoklama kaydedildi');
