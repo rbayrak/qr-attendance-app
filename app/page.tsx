@@ -173,7 +173,29 @@ const AttendanceSystem = () => {
   const [validStudents, setValidStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [deviceBlocked, setDeviceBlocked] = useState<boolean>(false);
 
+  useEffect(() => {
+    if (mode === 'student') {
+      const lastAttendanceCheck = localStorage.getItem('lastAttendanceCheck');
+      if (lastAttendanceCheck) {
+        const checkData = JSON.parse(lastAttendanceCheck);
+        const now = new Date();
+        const checkTime = new Date(checkData.timestamp);
+        
+        // Aynı gün içinde kontrol
+        if (now.toDateString() === checkTime.toDateString()) {
+          setStudentId(checkData.studentId); // Önceki öğrenci numarasını otomatik doldur
+          setDeviceBlocked(true); // Cihazı blokla
+          setStatus('⚠️ Bu cihaz bugün zaten yoklama için kullanılmış');
+        } else {
+          // Gün değişmişse bloğu kaldır
+          localStorage.removeItem('lastAttendanceCheck');
+          setDeviceBlocked(false);
+        }
+      }
+    }
+  }, [mode]);
   
   const handleModeChange = () => {
     if (mode === 'student') {
@@ -435,6 +457,11 @@ const AttendanceSystem = () => {
           `]);
   
       if (!response.ok) {
+        // IP hatası kontrolü
+        if (responseData.blockedStudentId) {
+          setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
+          return;
+        }
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
   
@@ -518,11 +545,11 @@ const AttendanceSystem = () => {
   return (
     <div className="min-h-screen p-4 bg-gray-50">
       {/* Debug Panel */}
-    <div className="mb-4 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-40">
-      {debugLogs.map((log, i) => (
-        <div key={i} className="whitespace-pre-wrap">{log}</div>
-      ))}
-    </div>
+      <div className="mb-4 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-40">
+        {debugLogs.map((log, i) => (
+          <div key={i} className="whitespace-pre-wrap">{log}</div>
+        ))}
+      </div>
       {showPasswordModal && (
         <PasswordModal
           password={password}

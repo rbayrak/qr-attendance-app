@@ -1,4 +1,4 @@
-// attendance.ts dosyası:
+// attendance.ts
 import { google } from 'googleapis';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -6,7 +6,14 @@ type ResponseData = {
   success?: boolean;
   error?: string;
   debug?: any;
+  blockedStudentId?: string;
 };
+
+// IP ve öğrenci eşleştirmelerini tutmak için
+const ipAttendanceMap = new Map<string, {
+  studentId: string;
+  timestamp: number;
+}>();
 
 export default async function handler(
   req: NextApiRequest,
@@ -21,6 +28,42 @@ export default async function handler(
 
     if (!studentId || !week) {
       return res.status(400).json({ error: 'Öğrenci ID ve hafta bilgisi gerekli' });
+    }
+
+    // IP adresini al
+    const ip = req.headers['x-forwarded-for']?.toString() || 
+               req.socket.remoteAddress || 
+               'unknown';
+
+    // Bugünün başlangıç timestamp'i
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // IP kontrolü
+    const existingAttendance = ipAttendanceMap.get(ip);
+    if (existingAttendance) {
+      // Aynı gün kontrolü
+      if (existingAttendance.timestamp >= today.getTime()) {
+        // Aynı öğrenci mi kontrol et
+        if (existingAttendance.studentId !== studentId) {
+          return res.status(403).json({ 
+            error: 'Bu IP adresi bugün başka bir öğrenci için kullanılmış',
+            blockedStudentId: existingAttendance.studentId 
+          });
+        }
+      } else {
+        // Gün değişmiş, kaydı güncelle
+        ipAttendanceMap.set(ip, {
+          studentId,
+          timestamp: Date.now()
+        });
+      }
+    } else {
+      // İlk kez yoklama alınıyor
+      ipAttendanceMap.set(ip, {
+        studentId,
+        timestamp: Date.now()
+      });
     }
 
     // Debug bilgilerini hazırla
@@ -65,10 +108,10 @@ export default async function handler(
     const studentRow = studentRowIndex + 1;
 
     if (week < 1 || week > 16) {
-        return res.status(400).json({ error: 'Geçersiz hafta numarası' });
+      return res.status(400).json({ error: 'Geçersiz hafta numarası' });
     }
 
-    // Hafta sütununu belirle (C'den başlayarak)
+    // Hafta sütununu belirle (D'den başlayarak)
     const weekColumn = String.fromCharCode(68 + Number(week) - 1);
     
     // Güncelleme aralığını belirle
@@ -77,12 +120,12 @@ export default async function handler(
     // Operation detaylarını debug bilgilerine ekle
     Object.assign(debugInfo, {
       operationDetails: {
-        öğrenciNo: studentId,
-        bulunanSatır: studentRow,
-        sütun: weekColumn,
-        aralık: range,
+        ogrenciNo: studentId,
+        bulunanSatir: studentRow,
+        sutun: weekColumn,
+        aralik: range,
         weekNumber: week,
-        hesaplananASCII: 68 + Number(week) - 1
+        calculatedASCII: 68 + Number(week) - 1
       }
     });
 
@@ -101,7 +144,11 @@ export default async function handler(
       success: true,
       debug: {
         ...debugInfo,
-        updateResult: updateResult.data
+        updateResult: updateResult.data,
+        ipCheck: {
+          ip,
+          timestamp: Date.now()
+        }
       }
     });
 
