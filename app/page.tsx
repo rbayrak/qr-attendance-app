@@ -22,12 +22,13 @@ const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID;
 const MAX_DISTANCE = 0.1;
 
 // Google Auth yardımcı fonksiyonları
-// Google Auth yardımcı fonksiyonları
 let tokenClient: any;
 let accessToken: string | null = null;
 
-const initializeGoogleAuth = async () => {
-  return new Promise<void>((resolve, reject) => {
+const initializeGoogleAuth = () => {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') return;
+    
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
     if (!clientId) {
       reject(new Error('Client ID bulunamadı. Lütfen env değerlerini kontrol edin.'));
@@ -35,43 +36,59 @@ const initializeGoogleAuth = async () => {
     }
 
     try {
-      tokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
-        scope: 'https://www.googleapis.com/auth/spreadsheets',
-        callback: (tokenResponse: any) => {
-          if (tokenResponse.error) {
-            reject(new Error(`Token hatası: ${tokenResponse.error}`));
-            return;
-          }
-          accessToken = tokenResponse.access_token;
-          resolve();
-        },
+      window.gapi.load('client:auth2', async () => {
+        try {
+          await window.gapi.client.init({
+            apiKey: process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
+            clientId: clientId,
+            scope: 'https://www.googleapis.com/auth/spreadsheets',
+            plugin_name: 'qr-attendance'
+          });
+
+          tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: clientId,
+            scope: 'https://www.googleapis.com/auth/spreadsheets',
+            callback: (tokenResponse: any) => {
+              if (tokenResponse.error) {
+                reject(new Error(`Token hatası: ${tokenResponse.error}`));
+                return;
+              }
+              accessToken = tokenResponse.access_token;
+              resolve(accessToken);
+            },
+          });
+
+          // Token isteğini başlat
+          setTimeout(() => {
+            tokenClient.requestAccessToken({ prompt: 'consent' });
+          }, 1000);
+
+        } catch (error) {
+          console.error('GAPI init hatası:', error);
+          reject(error);
+        }
       });
     } catch (error) {
-      reject(new Error(`Google Auth başlatma hatası: ${error}`));
+      console.error('GAPI load hatası:', error);
+      reject(error);
     }
   });
 };
 
-const getAccessToken = async (): Promise<string> => {
+const getAccessToken = async () => {
   if (!accessToken) {
-    return new Promise((resolve, reject) => {
-      try {
-        tokenClient.requestAccessToken({ prompt: 'consent' });
-        const checkInterval = setInterval(() => {
-          if (accessToken) {
-            clearInterval(checkInterval);
-            resolve(accessToken);
-          }
-        }, 100);
-      } catch (error) {
-        reject(new Error(`Token alma hatası: ${error}`));
-      }
+    tokenClient.requestAccessToken();
+    return new Promise((resolve) => {
+      const checkToken = setInterval(() => {
+        if (accessToken) {
+          clearInterval(checkToken);
+          resolve(accessToken);
+        }
+      }, 100);
     });
   }
   return accessToken;
 };
-
 
 interface Student {
   studentId: string;
@@ -94,7 +111,7 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 };
 const AttendanceSystem = () => {
-  const [mode, setMode] = useState<'teacher' | 'student'>('student');
+  const [mode, setMode] = useState<'teacher' | 'student'>('teacher');
   const [selectedWeek, setSelectedWeek] = useState<number>(1);
   const [qrData, setQrData] = useState<string>('');
   const [location, setLocation] = useState<Location | null>(null);
@@ -107,104 +124,71 @@ const AttendanceSystem = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
-  // useEffect içindeki initialize fonksiyonunu değiştirin
   useEffect(() => {
     const initialize = async () => {
-      if (mode === 'teacher') { // Sadece öğretmen modunda yetkilendirme yap
-        try {
-          await initializeGoogleAuth();
-          setIsAuthenticated(true);
-          await fetchStudentList();
-        } catch (error) {
-          console.error('Google Auth hatası:', error);
-          setStatus('❌ Öğretmen girişi gerekiyor');
-        }
-      } else { // Öğrenci modunda direkt öğrenci listesini çek
-        try {
-          await fetchStudentListPublic();
-          setIsAuthenticated(true); // Öğrenciler için yetkilendirme gerekmez
-        } catch (error) {
-          setStatus('❌ Öğrenci listesi yüklenemedi');
-        }
+      try {
+        await initializeGoogleAuth();
+        setIsAuthenticated(true);
+        await fetchStudentList();
+      } catch (error) {
+        console.error('Google Auth başlatma hatası:', error);
+        setStatus('❌ Google yetkilendirme hatası: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'));
       }
     };
+  
+    initialize();
+  }, []);
 
-  initialize();
-}, [mode]);
-
-  // API key ile public erişim
-  const fetchStudentListPublic = async () => {
+  // Öğrenci listesini Google Sheets'ten çekme
+  const fetchStudentList = async () => {
     try {
+      const token = await getAccessToken();
       const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }
       );
       const data = await response.json();
+      
       const students = data.values.slice(1).map((row: string[]) => ({
         studentId: row[1]?.toString() || '',
         studentName: row[2]?.toString() || ''
       }));
-      setValidStudents(students);
-    } catch (error) {
-      setStatus('❌ Liste yüklenemedi');
-    }
-  };
-
-
-  // Öğrenci listesini Google Sheets'ten çekme
-  // Öğrenci listesini Google Sheets'ten çekme
-  const fetchStudentList = async (isPublic: boolean = false) => {
-    try {
-      const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C`;
-      const options: RequestInit = isPublic 
-        ? { headers: { 'X-Requested-With': 'XMLHttpRequest' } }
-        : { headers: { 'Authorization': `Bearer ${await getAccessToken()}` } };
-
-      const response = await fetch(url, options);
-      const data = await response.json();
       
-      // Veri validasyon ve normalleştirme
-      const students = (data.values || []).slice(1).map((row: string[]) => ({
-        studentId: (row[1]?.toString() || '').trim().padStart(10, '0'),
-        studentName: (row[2]?.toString() || '').trim()
-      })).filter((s: Student) => s.studentId && s.studentName);
-
       setValidStudents(students);
     } catch (error) {
-      throw new Error(`Öğrenci listesi çekme hatası: ${error}`);
+      console.error('Öğrenci listesi çekme hatası:', error);
+      setStatus('❌ Öğrenci listesi yüklenemedi');
     }
   };
-
 
   // Google Sheets'te yoklama güncelleme
   const updateAttendance = async (studentId: string) => {
     try {
       setIsLoading(true);
-      setStatus('⏳ Yoklama kaydediliyor...');
-  
-      // 1. Öğrenci kontrolü
-      const studentExists = validStudents.some(s => s.studentId === studentId);
-      if (!studentExists) throw new Error('Öğrenci bulunamadı');
-  
-      // 2. Token alımı
-      const token = await getAccessToken();
       
-      // 3. Sheet verilerini çek
-      const sheetResponse = await fetch(
+      const token = await getAccessToken();
+      const response = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z`,
-        { headers: { 'Authorization': `Bearer ${token}` } }
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }
       );
-      const sheetData = await sheetResponse.json();
-  
-      // 4. Hücre konumunu bul
-      const rowIndex = sheetData.values.findIndex(
-        (row: string[]) => row[1]?.trim() === studentId
-      );
-      if (rowIndex === -1) throw new Error('Öğrenci satırı bulunamadı');
-  
-      // 5. Hücreyi güncelle
-      const weekColumn = String.fromCharCode(67 + selectedWeek - 1); // C=3. hafta
+      const data = await response.json();
+      
+      const studentRow = data.values.findIndex((row: string[]) => row[1] === studentId);
+      if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
+
+      const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
+      const cellRange = `${weekColumn}${studentRow + 1}`;
+
       const updateResponse = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${weekColumn}${rowIndex + 1}`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
         {
           method: 'PUT',
           headers: {
@@ -212,31 +196,29 @@ const AttendanceSystem = () => {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            range: `${weekColumn}${rowIndex + 1}`,
+            range: cellRange,
             values: [['VAR']],
             majorDimension: "ROWS",
-            valueInputOption: "USER_ENTERED"
+            valueInputOption: "RAW"
           })
         }
       );
-  
+
       if (!updateResponse.ok) {
         const errorData = await updateResponse.json();
         throw new Error(errorData.error?.message || 'Güncelleme hatası');
       }
-  
-      setStatus('✅ Yoklama başarıyla kaydedildi');
+
+      setStatus('✅ Yoklama kaydedildi');
       return true;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-      setStatus(`❌ Hata: ${errorMessage}`);
+      console.error('Yoklama güncelleme hatası:', error);
+      setStatus(`❌ Yoklama kaydedilemedi: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
       return false;
     } finally {
       setIsLoading(false);
     }
   };
-  
-
   const getLocation = () => {
     if (!navigator.geolocation) {
       setStatus('❌ Konum desteği yok');
@@ -335,61 +317,31 @@ const AttendanceSystem = () => {
   };
 
   useEffect(() => {
-    const loadDependencies = async () => {
-      try {
-        if (mode === 'teacher') {
-          await initializeGoogleAuth();
-          await fetchStudentList();
-        } else {
-          await fetchStudentList(true); // Public erişim
-        }
-        setIsAuthenticated(true);
-      } catch (error) {
-        setStatus(`❌ ${error instanceof Error ? error.message : 'Sistem hatası'}`);
-      }
-    };
-  
-    // Google script yüklenmesini garantile
-    const script = document.createElement('script');
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.defer = true;
-    document.head.appendChild(script);
-  
-    script.onload = loadDependencies;
-    return () => {
-      document.head.removeChild(script);
-    };
-  }, [mode]);
-  
-  useEffect(() => {
-    let scanner: Html5Qrcode | null = null;
+    let scanner: Html5Qrcode;
     
     const initializeScanner = async () => {
       if (isScanning) {
         try {
           scanner = new Html5Qrcode("qr-reader");
           await scanner.start(
-            { facingMode: "environment" }, 
-            { fps: 10, qrbox: 250 }, 
+            { facingMode: "environment" },
+            { fps: 10, qrbox: 250 },
             handleQrScan,
-            undefined
+            () => {}
           );
+          setHtml5QrCode(scanner);
         } catch (error) {
-          setStatus('❌ Kamera erişimi reddedildi');
+          setStatus('❌ Kamera başlatılamadı');
           setIsScanning(false);
         }
       }
     };
-  
+
     initializeScanner();
     return () => {
-      if (scanner?.isScanning()) {
-        scanner.stop().catch(() => {});
-      }
+      if (scanner) scanner.stop().catch(() => {});
     };
   }, [isScanning]);
-  
   
   if (!isAuthenticated) {
     return (
