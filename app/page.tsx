@@ -369,38 +369,54 @@ const AttendanceSystem = () => {
         setStatus('❌ Öğrenci numarası listede bulunamadı');
         return;
       }
-
+  
       if (scannedData.validUntil < Date.now()) {
         setStatus('❌ QR kod süresi dolmuş');
         return;
       }
-
+  
       if (!location) {
         setStatus('❌ Önce konum alın');
         return;
       }
-
+  
       const distance = calculateDistance(
         location.lat,
         location.lng,
         scannedData.classLocation.lat,
         scannedData.classLocation.lng
       );
-
+  
       if (distance > MAX_DISTANCE) {
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
-
-      const success = await updateAttendance(studentId);
-      if (success) {
-        setIsScanning(false);
-        if (html5QrCode) {
-          await html5QrCode.stop();
-        }
+  
+      // Backend API'ye istek at
+      const response = await fetch('/api/attendance', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          studentId: studentId,
+          week: scannedData.week
+        })
+      });
+  
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Yoklama kaydedilemedi');
+      }
+  
+      setStatus('✅ Yoklama kaydedildi');
+      setIsScanning(false);
+      if (html5QrCode) {
+        await html5QrCode.stop();
       }
     } catch (error) {
-      setStatus('❌ Geçersiz QR kod');
+      console.error('QR okuma hatası:', error);
+      setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
     }
   };
 
