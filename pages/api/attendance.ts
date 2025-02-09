@@ -10,6 +10,11 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<ResponseData>
 ) {
+  console.log('ENV Check:', {
+   SPREADSHEET_ID: process.env.SPREADSHEET_ID,
+   PROJECT_ID: process.env.GOOGLE_PROJECT_ID,
+   CLIENT_EMAIL: process.env.GOOGLE_CLIENT_EMAIL
+  });  
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
