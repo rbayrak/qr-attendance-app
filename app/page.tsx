@@ -110,6 +110,47 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
     Math.sin(dLon/2) * Math.sin(dLon/2);
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 };
+
+const PasswordModal = ({ 
+  password, 
+  setPassword, 
+  onSubmit, 
+  onClose 
+}: {
+  password: string;
+  setPassword: (value: string) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+}) => (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+    <div className="bg-white rounded-xl p-6 w-full max-w-md space-y-4">
+      <h3 className="text-xl font-bold">Öğretmen Girişi</h3>
+      <input
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder="Şifre"
+        className="w-full p-3 border rounded-lg"
+        autoFocus
+      />
+      <div className="flex gap-2">
+        <button
+          onClick={onClose}
+          className="flex-1 p-3 bg-gray-500 text-white rounded-lg"
+        >
+          İptal
+        </button>
+        <button
+          onClick={onSubmit}
+          className="flex-1 p-3 bg-blue-600 text-white rounded-lg"
+        >
+          Giriş
+        </button>
+      </div>
+    </div>
+  </div>
+);
+
 const AttendanceSystem = () => {
   const [mode, setMode] = useState<'teacher' | 'student'>('student'); // Varsayılan olarak öğrenci modu
   const [showPasswordModal, setShowPasswordModal] = useState<boolean>(false);
@@ -127,8 +168,45 @@ const AttendanceSystem = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
+  
+  const handleModeChange = () => {
+    if (mode === 'student') {
+      setShowPasswordModal(true);
+    } else {
+      // Öğrenci moduna geçerken direkt geçiş yap
+      setMode('student');
+      setIsTeacherAuthenticated(false);
+    }
+  };
+
+
+  useEffect(() => {
+    const loadStudentList = async () => {
+      try {
+        if (mode === 'student') {
+          // Öğrenci modunda basit HTTP isteği ile listeyi al
+          const response = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
+          );
+          const data = await response.json();
+          
+          const students = data.values.slice(1).map((row: string[]) => ({
+            studentId: row[1]?.toString() || '',
+            studentName: row[2]?.toString() || ''
+          }));
+          
+          setValidStudents(students);
+        }
+      } catch (error) {
+        console.error('Öğrenci listesi yükleme hatası:', error);
+        setStatus('❌ Öğrenci listesi yüklenemedi');
+      }
+    };
+
+    loadStudentList();
+  }, [mode]);
+
   const handlePasswordSubmit = () => {
-    // Örnek şifre: "teacher123" (Gerçek uygulamada daha güvenli bir yöntem kullanılmalı)
     if (password === 'teacher123') {
       setIsTeacherAuthenticated(true);
       setMode('teacher');
@@ -144,60 +222,10 @@ const AttendanceSystem = () => {
     } else {
       setStatus('❌ Yanlış şifre');
     }
+    setPassword(''); // Şifreyi temizle
   };
 
-  const handleModeChange = () => {
-    if (mode === 'student') {
-      setShowPasswordModal(true);
-    } else {
-      // Öğrenci moduna geçerken direkt geçiş yap
-      setMode('student');
-      setIsTeacherAuthenticated(false);
-    }
-  };
-
-
-  useEffect(() => {
-    // Sadece öğretmen modunda ve henüz yetkilendirilmemişse Google Auth'u başlat
-    if (mode === 'teacher' && isTeacherAuthenticated && !isAuthenticated) {
-      initializeGoogleAuth().then(() => {
-        setIsAuthenticated(true);
-        fetchStudentList();
-      }).catch(error => {
-        console.error('Google Auth başlatma hatası:', error);
-        setStatus('❌ Google yetkilendirme hatası');
-      });
-    }
-  }, [mode, isTeacherAuthenticated]);
-
-  const PasswordModal = () => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl p-6 w-full max-w-md space-y-4">
-        <h3 className="text-xl font-bold">Öğretmen Girişi</h3>
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Şifre"
-          className="w-full p-3 border rounded-lg"
-        />
-        <div className="flex gap-2">
-          <button
-            onClick={() => setShowPasswordModal(false)}
-            className="flex-1 p-3 bg-gray-500 text-white rounded-lg"
-          >
-            İptal
-          </button>
-          <button
-            onClick={handlePasswordSubmit}
-            className="flex-1 p-3 bg-blue-600 text-white rounded-lg"
-          >
-            Giriş
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  
 
   // Öğrenci listesini Google Sheets'ten çekme
   const fetchStudentList = async () => {
@@ -444,7 +472,17 @@ const AttendanceSystem = () => {
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
-      {showPasswordModal && <PasswordModal />}
+      {showPasswordModal && (
+        <PasswordModal
+          password={password}
+          setPassword={setPassword}
+          onSubmit={handlePasswordSubmit}
+          onClose={() => {
+            setShowPasswordModal(false);
+            setPassword('');
+          }}
+        />
+      )}
       <div className="max-w-md mx-auto space-y-6">
         <button
           onClick={handleModeChange}
@@ -453,7 +491,7 @@ const AttendanceSystem = () => {
         >
           {mode === 'teacher' ? '📱 Öğrenci Modu' : '👨🏫 Öğretmen Modu'}
         </button>
-
+  
         {status && (
           <div className={`p-4 rounded-lg ${
             status.startsWith('❌') ? 'bg-red-100 text-red-800' :
@@ -463,7 +501,7 @@ const AttendanceSystem = () => {
             {status}
           </div>
         )}
-
+  
         {mode === 'teacher' ? (
           <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
             <h2 className="text-2xl font-bold">Öğretmen Paneli</h2>
@@ -481,7 +519,7 @@ const AttendanceSystem = () => {
                 ))}
               </select>
             </div>
-
+  
             <button
               onClick={getLocation}
               className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
@@ -489,7 +527,7 @@ const AttendanceSystem = () => {
             >
               <Camera size={18} /> Konum Al
             </button>
-
+  
             <button
               onClick={generateQR}
               className="w-full p-3 bg-purple-600 text-white rounded-lg disabled:opacity-50 hover:bg-purple-700"
@@ -497,7 +535,7 @@ const AttendanceSystem = () => {
             >
               QR Oluştur
             </button>
-
+  
             {qrData && (
               <div className="mt-4 text-center">
                 <img 
@@ -508,7 +546,7 @@ const AttendanceSystem = () => {
                 <p className="mt-2 text-sm text-gray-600">5 dakika geçerli</p>
               </div>
             )}
-
+  
             {attendance.length > 0 && (
               <div className="mt-4">
                 <h3 className="text-lg font-semibold mb-2">Yoklama Listesi</h3>
@@ -538,7 +576,7 @@ const AttendanceSystem = () => {
                 }`}
                 disabled={isLoading}
               />
-
+  
               {studentId && (
                 <p className={`text-sm ${
                   validStudents.some(s => s.studentId === studentId)
@@ -550,7 +588,7 @@ const AttendanceSystem = () => {
                     : '❌ Öğrenci numarası listede bulunamadı'}
                 </p>
               )}
-
+  
               <button
                 onClick={getLocation}
                 className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
@@ -558,7 +596,7 @@ const AttendanceSystem = () => {
               >
                 <Camera size={18} /> Konumu Doğrula
               </button>
-
+  
               <button
                 onClick={() => setIsScanning(!isScanning)}
                 className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
@@ -566,7 +604,7 @@ const AttendanceSystem = () => {
               >
                 {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
               </button>
-
+  
               {isScanning && (
                 <div className="relative aspect-square bg-gray-200 rounded-xl overflow-hidden">
                   <div id="qr-reader" className="w-full h-full"></div>
