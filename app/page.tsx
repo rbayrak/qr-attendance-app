@@ -405,9 +405,9 @@ const AttendanceSystem = () => {
   const handleQrScan = async (decodedText: string) => {
     try {
       const scannedData = JSON.parse(decodedText);
-  
+      
       // Öğrenci kontrolü
-      const isValidStudent = validStudents.some((s) => s.studentId === studentId);
+      const isValidStudent = validStudents.some(s => s.studentId === studentId);
       if (!isValidStudent) {
         setStatus('❌ Öğrenci numarası listede bulunamadı');
         return;
@@ -430,6 +430,8 @@ const AttendanceSystem = () => {
         scannedData.classLocation.lng
       );
   
+      console.log('Mesafe:', distance, 'km');
+  
       if (distance > MAX_DISTANCE) {
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
@@ -439,27 +441,27 @@ const AttendanceSystem = () => {
       const response = await fetch('/api/attendance', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           studentId: studentId,
-          week: scannedData.week,
-        }),
+          week: scannedData.week
+        })
       });
   
       const responseData = await response.json();
   
-      // Debug bilgilerinin loglanması
-      setDebugLogs((prev) => [
-        ...prev,
-        `----- Debug Bilgileri -----
-  Öğrenci ID: ${responseData.debug?.operationDetails?.studentId || 'Bilinmiyor'}
-  WeekColumn: ${responseData.debug?.operationDetails?.weekColumn || 'Bilinmiyor'}
-  Hücre: ${responseData.debug?.operationDetails?.range || 'Bilinmiyor'}
-  Başlıklar: ${JSON.stringify(responseData.debug?.tableHeaders || [])}
-  Error: ${responseData.debug?.error || 'Yok'}
-  -----------------------------`,
-      ]);
+      // Debug loglarına API yanıtını ekleyelim
+      setDebugLogs(prev => [...prev, `
+        ----- Yoklama İşlemi Detayları -----
+          Öğrenci Konumu: ${location.lat}, ${location.lng}
+          Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
+          Mesafe: ${distance} km
+          Max İzin: ${MAX_DISTANCE} km
+  
+          API Yanıtı:
+          ${JSON.stringify(responseData, null, 2)}
+          `]);
   
       if (!response.ok) {
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
@@ -475,7 +477,6 @@ const AttendanceSystem = () => {
       setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
     }
   };
-  
 
   useEffect(() => {
     let scanner: Html5Qrcode;
