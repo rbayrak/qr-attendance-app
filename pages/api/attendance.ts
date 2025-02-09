@@ -10,11 +10,6 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<ResponseData>
 ) {
-  console.log('ENV Check:', {
-   SPREADSHEET_ID: process.env.SPREADSHEET_ID,
-   PROJECT_ID: process.env.GOOGLE_PROJECT_ID,
-   CLIENT_EMAIL: process.env.GOOGLE_CLIENT_EMAIL
-  });  
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -41,7 +36,7 @@ export default async function handler(
 
     // Önce öğrenciyi bul
     const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.SPREADSHEET_ID,
+      spreadsheetId: process.env.NEXT_PUBLIC_SHEET_ID,
       range: 'A:C',
     });
 
@@ -50,16 +45,32 @@ export default async function handler(
       return res.status(404).json({ error: 'Veri bulunamadı' });
     }
 
-    const studentRow = rows.findIndex(row => row[1] === studentId);
-    if (studentRow === -1) {
+    // Öğrenciyi bul ve satır numarasını al (1'den başlayarak)
+    const studentRowIndex = rows.findIndex(row => row[1] === studentId);
+    if (studentRowIndex === -1) {
       return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
+    
+    // Gerçek satır numarası (1'den başlar)
+    const studentRow = studentRowIndex + 1;
+
+    // Hafta sütununu belirle (C'den başlayarak)
+    const weekColumn = String.fromCharCode(67 + Number(week) - 1);
+    
+    // Güncelleme aralığını belirle
+    const range = `${weekColumn}${studentRow}`;
+
+    console.log('Debug bilgisi:', {
+      öğrenciNo: studentId,
+      bulunanSatır: studentRow,
+      sütun: weekColumn,
+      aralık: range
+    });
 
     // Yoklamayı kaydet
-    const weekColumn = String.fromCharCode(67 + Number(week) - 1); // C'den başlayarak hafta sütununu bul
     await sheets.spreadsheets.values.update({
-      spreadsheetId: process.env.SPREADSHEET_ID,
-      range: `${weekColumn}${studentRow + 1}`,
+      spreadsheetId: process.env.NEXT_PUBLIC_SHEET_ID,
+      range: range,
       valueInputOption: 'RAW',
       requestBody: {
         values: [['VAR']]
