@@ -791,7 +791,14 @@ const AttendanceSystem = () => {
         ) : (
           <>
             <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
-              <h2 className="text-2xl font-bold text-gray-800">Öğrenci Paneli</h2>
+              <div className="flex items-center justify-center mb-6">
+                <h2 className="text-2xl font-bold text-gray-800 mr-4">Öğrenci Paneli</h2>
+                <img 
+                  src="/ytu-logo.png" 
+                  alt="YTÜ Logo" 
+                  className="w-12 h-12 object-contain"
+                />
+              </div>
               
               <div className="space-y-4">
                 <input
