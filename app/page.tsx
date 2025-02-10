@@ -375,7 +375,6 @@ const AttendanceSystem = () => {
         setLocation(currentLocation);
   
         if (mode === 'teacher') {
-          // Öğretmen konumunu API'ye kaydet
           try {
             const response = await fetch('/api/location', {
               method: 'POST',
@@ -395,7 +394,8 @@ const AttendanceSystem = () => {
             console.error('Konum kaydetme hatası:', error);
             setStatus('❌ Konum kaydedilemedi');
           }
-        } else {
+        }
+         else {
           // Öğrenci API'den konum alsın
           try {
             const response = await fetch('/api/location');
