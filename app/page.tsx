@@ -375,27 +375,19 @@ const AttendanceSystem = () => {
         setLocation(currentLocation);
   
         if (mode === 'teacher') {
+          // Öğretmen konumunu API'ye kaydet
           try {
-            const response = await fetch('/api/location', {
+            await fetch('/api/location', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(currentLocation)
             });
-            
-            if (!response.ok) {
-              throw new Error(await response.text());
-            }
-            
-            // LocalStorage'a kaydet
-            localStorage.setItem('classLocation', JSON.stringify(currentLocation));
             setClassLocation(currentLocation);
             setStatus('📍 Konum alındı');
           } catch (error) {
-            console.error('Konum kaydetme hatası:', error);
             setStatus('❌ Konum kaydedilemedi');
           }
-        }
-         else {
+        } else {
           // Öğrenci API'den konum alsın
           try {
             const response = await fetch('/api/location');
@@ -431,8 +423,7 @@ const AttendanceSystem = () => {
         setIsValidLocation(false);
       }
     );
-};
-
+  };
 
   // Diğer useEffect'lerin yanına ekleyin
   useEffect(() => {
