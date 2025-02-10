@@ -19,7 +19,7 @@ console.log('ENV Check:', {
 });
 
 const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID;
-const MAX_DISTANCE = 0.7;
+const MAX_DISTANCE = 0.8;
 
 // Google Auth yardımcı fonksiyonları
 let tokenClient: any;
