@@ -708,6 +708,7 @@ const AttendanceSystem = () => {
           <div key={i} className="whitespace-pre-wrap">{log}</div>
         ))}
       </div>
+  
       {showPasswordModal && (
         <PasswordModal
           password={password}
@@ -719,6 +720,7 @@ const AttendanceSystem = () => {
           }}
         />
       )}
+  
       <div className="max-w-md mx-auto space-y-6">
         {status && (
           <div className={`p-4 rounded-lg ${
@@ -732,7 +734,12 @@ const AttendanceSystem = () => {
   
         {mode === 'teacher' ? (
           <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
-            <h2 className="text-2xl font-bold">Öğretmen Paneli</h2>
+            <div className="flex items-center justify-center mb-6">
+              <h2 className="text-2xl font-bold text-gray-800 mr-4">Öğretmen Paneli</h2>
+              <div className="inline-block bg-red-600 text-white px-3 py-1 rounded-lg shadow-md">
+                <span className="text-2xl font-black tracking-wider">YTÜ</span>
+              </div>
+            </div>
             
             <div className="flex items-center gap-2">
               <Calendar size={20} />
@@ -791,7 +798,12 @@ const AttendanceSystem = () => {
         ) : (
           <>
             <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
-              <h2 className="text-2xl font-bold text-gray-800">Öğrenci Paneli</h2>
+              <div className="flex items-center justify-center mb-6">
+                <h2 className="text-2xl font-bold text-gray-800 mr-4">Öğrenci Paneli</h2>
+                <div className="inline-block bg-red-600 text-white px-3 py-1 rounded-lg shadow-md">
+                  <span className="text-2xl font-black tracking-wider">YTÜ</span>
+                </div>
+              </div>
               
               <div className="space-y-4">
                 <input
@@ -852,7 +864,6 @@ const AttendanceSystem = () => {
               </div>
             </div>
   
-            {/* Öğretmen modu butonu en alta taşındı ve stili değiştirildi */}
             <button
               onClick={handleModeChange}
               className="w-full p-3 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300 transition-colors mt-4"
