@@ -737,7 +737,7 @@ const AttendanceSystem = () => {
             <div className="flex items-center justify-center mb-6">
               <h2 className="text-2xl font-bold text-gray-800 mr-4">Öğretmen Paneli</h2>
               <img 
-                src={ytuLogo} 
+                src="/ytu-logo.png" 
                 alt="YTÜ Logo" 
                 className="w-12 h-12 object-contain"
               />
@@ -751,7 +751,7 @@ const AttendanceSystem = () => {
               <div className="flex items-center justify-center mb-6">
                 <h2 className="text-2xl font-bold text-gray-800 mr-4">Öğrenci Paneli</h2>
                 <img 
-                  src={ytuLogo} 
+                  src="/ytu-logo.png" 
                   alt="YTÜ Logo" 
                   className="w-12 h-12 object-contain"
                 />
