@@ -9,8 +9,9 @@ declare global {
 }
 
 import React, { useState, useEffect } from 'react';
-import { Camera, Calendar } from 'lucide-react';
+//import { Camera, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
+import { MapPin, Calendar } from 'lucide-react';
 
 console.log('ENV Check:', {
   SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID,
@@ -752,7 +753,7 @@ const AttendanceSystem = () => {
               className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
               disabled={isLoading}
             >
-              <Camera size={18} /> Konum Al
+              <MapPin size={18} /> Konum Al
             </button>
   
             <button
@@ -829,7 +830,7 @@ const AttendanceSystem = () => {
                   className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
                   disabled={isLoading}
                 >
-                  <Camera size={18} /> Konumu Doğrula
+                  <MapPin size={18} /> Konumu Doğrula
                 </button>
   
                 <button
