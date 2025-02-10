@@ -438,13 +438,24 @@ const AttendanceSystem = () => {
               classLoc.lat,
               classLoc.lng
             );
-            setDebugLogs(prev => [...prev, `
-              ----- Konum Doğrulama Detayları -----
-              Öğrenci Konumu: ${currentLocation.lat}, ${currentLocation.lng}
-              Sınıf Konumu: ${classLoc.lat}, ${classLoc.lng}
-              Mesafe: ${distance} km
-              Max İzin Mesafesi: ${MAX_DISTANCE} km
-            `]);
+
+            // Mevcut debug loglarını al
+            const savedLogs = localStorage.getItem('debugLogs');
+            const currentLogs = savedLogs ? JSON.parse(savedLogs) : [];
+            
+            // Yeni log mesajı
+            const logMessage = `
+            [${new Date().toLocaleTimeString('tr-TR')}] Konum Kontrolü
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            • Öğrenci No: ${studentId}
+            • Öğrenci Konumu: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}
+            • Öğretmen Konumu: ${classLoc.lat.toFixed(6)}, ${classLoc.lng.toFixed(6)}
+            • Uzaklık: ${distance.toFixed(3)} km ${distance <= MAX_DISTANCE ? '✅' : '❌'}`;
+
+            // Debug loglarını güncelle
+            const updatedLogs = [...currentLogs, logMessage];
+            localStorage.setItem('debugLogs', JSON.stringify(updatedLogs));
+
             if (distance > MAX_DISTANCE) {
               setIsValidLocation(false);
               setStatus('❌ Sınıf konumunda değilsiniz');
@@ -452,6 +463,8 @@ const AttendanceSystem = () => {
               setIsValidLocation(true);
               setStatus('✅ Konum doğrulandı');
             }
+
+            
           } catch (error) {
             setStatus('❌ Konum alınamadı');
             setDebugLogs(prev => [...prev, `
@@ -675,15 +688,23 @@ const AttendanceSystem = () => {
   
       // Başarılı yoklama log mesajı
       const successMessage = `
-  [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarılı ✅
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Öğrenci No: ${studentId}
-  • Öğrenci Adı: ${validStudent.studentName}
-  • Öğrenci Konumu: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
-  • Öğretmen Konumu: ${scannedData.classLocation.lat.toFixed(6)}, ${scannedData.classLocation.lng.toFixed(6)}
-  • Uzaklık: ${distance.toFixed(3)} km ✅
-  • IP Adresi: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
-  • Hafta: ${scannedData.week}`;
+      [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarılı ✅
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      • Öğrenci No: ${studentId}
+      • Öğrenci Adı: ${validStudent.studentName}
+      • Öğrenci Konumu: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
+      • Öğretmen Konumu: ${scannedData.classLocation.lat.toFixed(6)}, ${scannedData.classLocation.lng.toFixed(6)}
+      • Uzaklık: ${distance.toFixed(3)} km ${distance <= MAX_DISTANCE ? '✅' : '❌'}
+      • IP Adresi: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
+      • Hafta: ${scannedData.week}`;
+
+      // Mevcut debug loglarını al
+      const savedLogs = localStorage.getItem('debugLogs');
+      const currentLogs = savedLogs ? JSON.parse(savedLogs) : [];
+
+      // Debug loglarını güncelle
+      const updatedLogs = [...currentLogs, successMessage];
+      localStorage.setItem('debugLogs', JSON.stringify(updatedLogs));
   
       addDebugLog(successMessage);
       setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
@@ -780,12 +801,33 @@ const AttendanceSystem = () => {
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
-      {/* Debug Panel */}
-      <div className="mb-4 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-40">
-        {debugLogs.map((log, i) => (
-          <div key={i} className="whitespace-pre-wrap">{log}</div>
-        ))}
+
+    {mode === 'teacher' && (
+      <div className="mb-4 p-4 bg-gray-900 text-white rounded-lg text-xs font-mono overflow-auto max-h-96">
+        <div className="sticky top-0 bg-gray-900 pt-2 pb-4 border-b border-gray-700">
+          <div className="font-bold text-blue-400 mb-2">SINIF KONUMU:</div>
+          {classLocation ? (
+            <div className="pl-2 border-l-2 border-blue-400">
+              Enlem: {classLocation.lat.toFixed(6)}, Boylam: {classLocation.lng.toFixed(6)}
+            </div>
+          ) : (
+            <div className="pl-2 text-gray-400 italic">Henüz konum alınmadı</div>
+          )}
+        </div>
+        
+        <div className="mt-4">
+          <div className="font-bold text-green-400 mb-2">YOKLAMA KAYITLARI:</div>
+          <div className="space-y-4">
+            {debugLogs.map((log, i) => (
+              <div key={i} className="whitespace-pre-wrap pl-2 border-l-2 border-green-400">
+                {log}
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
+    )}
+      {/* Debug Panel */}
       {showPasswordModal && (
         <PasswordModal
           password={password}
