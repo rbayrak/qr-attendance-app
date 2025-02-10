@@ -410,22 +410,19 @@ const AttendanceSystem = () => {
           try {
             const response = await fetch('/api/location');
             if (!response.ok) {
-              // API'den konum alınamazsa
               setStatus('❌ Öğretmen henüz konum paylaşmamış');
               setDebugLogs(prev => [...prev, `
-                ----- Konum Kontrol Detayları -----
-                API Yanıtı: Konum bulunamadı
-                Mode: ${mode}
-                localStorage: ${localStorage.getItem('classLocation')}
-                sessionStorage: ${sessionStorage.getItem('classLocation')}
-              `]);
+            [${new Date().toLocaleTimeString('tr-TR')}] Konum Doğrulama Başarısız
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            • Öğrenci No: ${studentId}
+            • Durum: Öğretmen konumu bulunamadı ❌`]);
               return;
             }
             
             const classLoc = await response.json();
             setClassLocation(classLoc);
             
-            // API'den gelen konumu storage'lara kaydet
+            // Storage'a kaydet
             localStorage.setItem('classLocation', JSON.stringify(classLoc));
             sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
             
@@ -435,13 +432,15 @@ const AttendanceSystem = () => {
               classLoc.lat,
               classLoc.lng
             );
+        
+            // Konum doğrulama sonucunu debug loglara ekle
             setDebugLogs(prev => [...prev, `
-              ----- Konum Doğrulama Detayları -----
-              Öğrenci Konumu: ${currentLocation.lat}, ${currentLocation.lng}
-              Sınıf Konumu: ${classLoc.lat}, ${classLoc.lng}
-              Mesafe: ${distance} km
-              Max İzin Mesafesi: ${MAX_DISTANCE} km
-            `]);
+            [${new Date().toLocaleTimeString('tr-TR')}] Konum Doğrulama ${distance <= MAX_DISTANCE ? 'Başarılı ✅' : 'Başarısız ❌'}
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            • Öğrenci No: ${studentId}
+            • Öğrenci Konumu: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}
+            • Uzaklık: ${distance.toFixed(3)} km ${distance <= MAX_DISTANCE ? '✅' : '❌'}`]);
+        
             if (distance > MAX_DISTANCE) {
               setIsValidLocation(false);
               setStatus('❌ Sınıf konumunda değilsiniz');
@@ -452,9 +451,10 @@ const AttendanceSystem = () => {
           } catch (error) {
             setStatus('❌ Konum alınamadı');
             setDebugLogs(prev => [...prev, `
-              ----- Konum Alma Hatası -----
-              Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
-            `]);
+            [${new Date().toLocaleTimeString('tr-TR')}] Konum Doğrulama Hatası
+            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            • Öğrenci No: ${studentId}
+            • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`]);
           }
         }
       },
@@ -559,34 +559,56 @@ const AttendanceSystem = () => {
       // Öğrenci kontrolü
       const validStudent = validStudents.find(s => s.studentId === studentId);
       if (!validStudent) {
+        setDebugLogs(prev => [...prev, `
+      [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      • Öğrenci No: ${studentId}
+      • Durum: Öğrenci listede bulunamadı ❌`]);
         setStatus('❌ Öğrenci numarası listede bulunamadı');
         return;
       }
-    
+  
       if (scannedData.validUntil < Date.now()) {
+        setDebugLogs(prev => [...prev, `
+      [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      • Öğrenci No: ${studentId}
+      • Durum: QR kod süresi dolmuş ❌`]);
         setStatus('❌ QR kod süresi dolmuş');
         return;
       }
-    
+  
       if (!location) {
+        setDebugLogs(prev => [...prev, `
+      [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      • Öğrenci No: ${studentId}
+      • Durum: Konum bilgisi eksik ❌`]);
         setStatus('❌ Önce konum alın');
         return;
       }
-    
+  
       const distance = calculateDistance(
         location.lat,
         location.lng,
         scannedData.classLocation.lat,
         scannedData.classLocation.lng
       );
-    
+  
       console.log('Mesafe:', distance, 'km');
-    
+  
       if (distance > MAX_DISTANCE) {
+        setDebugLogs(prev => [...prev, `
+      [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      • Öğrenci No: ${studentId}
+      • Öğrenci Konumu: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
+      • Uzaklık: ${distance.toFixed(3)} km ❌
+      • Durum: Sınıf konumu dışında`]);
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
-    
+  
       // Backend API'ye istek at
       const response = await fetch('/api/attendance', {
         method: 'POST',
@@ -598,35 +620,61 @@ const AttendanceSystem = () => {
           week: scannedData.week
         })
       });
-    
+  
       const responseData = await response.json();
-    
-      // Debug log formatını güncelle
-      const timestamp = new Date().toLocaleTimeString('tr-TR');
-      setDebugLogs(prev => [...prev, `[${timestamp}] Yoklama Kaydı:
-        • Öğrenci No: ${studentId}
-        • IP: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
-        • Öğrenci Konumu: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
-        • Uzaklık: ${distance.toFixed(3)} km ${distance <= MAX_DISTANCE ? '✅' : '❌'}`]);
-    
+  
       if (!response.ok) {
         // IP hatası kontrolü
         if (responseData.blockedStudentId) {
+          setDebugLogs(prev => [...prev, `
+      [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      • Öğrenci No: ${studentId}
+      • IP Adresi: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
+      • Durum: Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış ❌`]);
           setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
           return;
         }
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
-    
+  
+      // Debug log formatını güncelle
+      const timestamp = new Date().toLocaleTimeString('tr-TR');
+      setDebugLogs(prev => [...prev, `
+      [${timestamp}] QR Okutma Başarılı ✅
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      • Öğrenci No: ${studentId}
+      • Öğrenci Adı: ${validStudent.studentName}
+      • IP Adresi: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
+      • Öğrenci Konumu: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
+      • Uzaklık: ${distance.toFixed(3)} km ${distance <= MAX_DISTANCE ? '✅' : '❌'}
+      • Hafta: ${scannedData.week}`]);
+  
       // Öğrencinin adını ve soyadını göster
       setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
       
+      // QR taramayı durdur
       setIsScanning(false);
       if (html5QrCode) {
         await html5QrCode.stop();
       }
+  
+      // Son yoklama kontrolünü localStorage'a kaydet
+      localStorage.setItem('lastAttendanceCheck', JSON.stringify({
+        studentId: studentId,
+        timestamp: new Date().toISOString()
+      }));
+  
+      // Cihazı blokla
+      setDeviceBlocked(true);
+  
     } catch (error) {
       console.error('QR okuma hatası:', error);
+      setDebugLogs(prev => [...prev, `
+      [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Hatası
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      • Öğrenci No: ${studentId}
+      • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`]);
       setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
     }
   };
