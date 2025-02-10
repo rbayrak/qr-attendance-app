@@ -798,10 +798,10 @@ const AttendanceSystem = () => {
                   value={studentId}
                   onChange={handleStudentIdChange}
                   placeholder="Öğrenci Numaranız"
-                  className={`w-full p-3 border rounded-lg focus:ring-2 ${
+                  className={`w-full p-3 border-2 rounded-lg text-lg font-bold tracking-wider focus:ring-2 ${
                     studentId && !validStudents.some(s => s.studentId === studentId)
-                      ? 'border-red-500 focus:ring-red-500'
-                      : 'focus:ring-blue-500'
+                      ? 'border-red-500 focus:ring-red-500 text-red-800'
+                      : 'border-blue-400 focus:ring-blue-500 text-blue-900'
                   }`}
                   disabled={isLoading || deviceBlocked}
                 />
