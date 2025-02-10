@@ -555,36 +555,36 @@ const AttendanceSystem = () => {
       const scannedData = JSON.parse(decodedText);
       
       // Öğrenci kontrolü
-      const isValidStudent = validStudents.some(s => s.studentId === studentId);
-      if (!isValidStudent) {
+      const validStudent = validStudents.find(s => s.studentId === studentId);
+      if (!validStudent) {
         setStatus('❌ Öğrenci numarası listede bulunamadı');
         return;
       }
-  
+    
       if (scannedData.validUntil < Date.now()) {
         setStatus('❌ QR kod süresi dolmuş');
         return;
       }
-  
+    
       if (!location) {
         setStatus('❌ Önce konum alın');
         return;
       }
-  
+    
       const distance = calculateDistance(
         location.lat,
         location.lng,
         scannedData.classLocation.lat,
         scannedData.classLocation.lng
       );
-  
+    
       console.log('Mesafe:', distance, 'km');
-  
+    
       if (distance > MAX_DISTANCE) {
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
-  
+    
       // Backend API'ye istek at
       const response = await fetch('/api/attendance', {
         method: 'POST',
@@ -596,9 +596,9 @@ const AttendanceSystem = () => {
           week: scannedData.week
         })
       });
-  
+    
       const responseData = await response.json();
-  
+    
       // Debug loglarına API yanıtını ekleyelim
       setDebugLogs(prev => [...prev, `
         ----- Yoklama İşlemi Detayları -----
@@ -610,7 +610,7 @@ const AttendanceSystem = () => {
           API Yanıtı:
           ${JSON.stringify(responseData, null, 2)}
           `]);
-  
+    
       if (!response.ok) {
         // IP hatası kontrolü
         if (responseData.blockedStudentId) {
@@ -619,8 +619,10 @@ const AttendanceSystem = () => {
         }
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
-  
-      setStatus('✅ Yoklama kaydedildi');
+    
+      // Öğrencinin adını ve soyadını göster
+      setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
+      
       setIsScanning(false);
       if (html5QrCode) {
         await html5QrCode.stop();
