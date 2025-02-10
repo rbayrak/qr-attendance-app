@@ -367,103 +367,130 @@ const AttendanceSystem = () => {
     }
   
     setStatus('📍 Konum alınıyor...');
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const currentLocation = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude
-        };
-        setLocation(currentLocation);
-  
-        if (mode === 'teacher') {
-          try {
-            // Sadece API'ye kaydet
-            await fetch('/api/location', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(currentLocation)
-            });
-            
-            // Local ve session storage'a kaydet
-            localStorage.setItem('classLocation', JSON.stringify(currentLocation));
-            sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
-            
-            setClassLocation(currentLocation);
-            setStatus('📍 Konum alındı');
-            
-            // Debug log ekle
-            setDebugLogs(prev => [...prev, `
-              ----- Öğretmen Konum Kaydı -----
-              Kaydedilen Konum: ${currentLocation.lat}, ${currentLocation.lng}
-              LocalStorage: ${localStorage.getItem('classLocation')}
-              SessionStorage: ${sessionStorage.getItem('classLocation')}
-            `]);
-  
-          } catch (error) {
-            setStatus('❌ Konum kaydedilemedi');
-            setDebugLogs(prev => [...prev, `
-              ----- Konum Kaydetme Hatası -----
-              Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
-            `]);
-          }
-        } else if (mode === 'student') {
-          try {
-            const response = await fetch('/api/location');
-            if (!response.ok) {
-              setStatus('❌ Öğretmen henüz konum paylaşmamış');
-              setDebugLogs(prev => [...prev, `
-            [${new Date().toLocaleTimeString('tr-TR')}] Konum Doğrulama Başarısız
-            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            • Öğrenci No: ${studentId}
-            • Durum: Öğretmen konumu bulunamadı ❌`]);
-              return;
-            }
-            
-            const classLoc = await response.json();
-            setClassLocation(classLoc);
-            
-            // Storage'a kaydet
-            localStorage.setItem('classLocation', JSON.stringify(classLoc));
-            sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
-            
-            const distance = calculateDistance(
-              currentLocation.lat,
-              currentLocation.lng,
-              classLoc.lat,
-              classLoc.lng
-            );
+    const getLocation = async () => {
+      if (!navigator.geolocation) {
+        const logMessage = `
+        [${new Date().toLocaleTimeString('tr-TR')}] Konum Hatası
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        • Durum: Tarayıcı konum desteği yok ❌`;
         
-            // Konum doğrulama sonucunu debug loglara ekle
-            setDebugLogs(prev => [...prev, `
-            [${new Date().toLocaleTimeString('tr-TR')}] Konum Doğrulama ${distance <= MAX_DISTANCE ? 'Başarılı ✅' : 'Başarısız ❌'}
-            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            • Öğrenci No: ${studentId}
-            • Öğrenci Konumu: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}
-            • Uzaklık: ${distance.toFixed(3)} km ${distance <= MAX_DISTANCE ? '✅' : '❌'}`]);
-        
-            if (distance > MAX_DISTANCE) {
-              setIsValidLocation(false);
-              setStatus('❌ Sınıf konumunda değilsiniz');
-            } else {
-              setIsValidLocation(true);
-              setStatus('✅ Konum doğrulandı');
-            }
-          } catch (error) {
-            setStatus('❌ Konum alınamadı');
-            setDebugLogs(prev => [...prev, `
-            [${new Date().toLocaleTimeString('tr-TR')}] Konum Doğrulama Hatası
-            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            • Öğrenci No: ${studentId}
-            • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`]);
-          }
-        }
-      },
-      (error) => {
-        setStatus(`❌ Konum hatası: ${error.message}`);
-        setIsValidLocation(false);
+        setDebugLogs(prev => [...prev, logMessage]);
+        setStatus('❌ Konum desteği yok');
+        return;
       }
-    );
-  };
+    
+      setStatus('📍 Konum alınıyor...');
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const currentLocation = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          };
+          setLocation(currentLocation);
+    
+          if (mode === 'teacher') {
+            try {
+              // API'ye kaydet
+              await fetch('/api/location', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(currentLocation)
+              });
+              
+              // Storage'a kaydet
+              localStorage.setItem('classLocation', JSON.stringify(currentLocation));
+              sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
+              
+              setClassLocation(currentLocation);
+              setStatus('📍 Konum alındı');
+              
+              // Öğretmen konum log mesajı
+              const logMessage = `
+        [${new Date().toLocaleTimeString('tr-TR')}] Öğretmen Konumu Güncellendi
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        • Konum: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)} ✅`;
+              
+              setDebugLogs(prev => [...prev, logMessage]);
+    
+            } catch (error) {
+              const logMessage = `
+        [${new Date().toLocaleTimeString('tr-TR')}] Konum Kaydetme Hatası
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`;
+              
+              setDebugLogs(prev => [...prev, logMessage]);
+              setStatus('❌ Konum kaydedilemedi');
+            }
+          } else if (mode === 'student') {
+            try {
+              const response = await fetch('/api/location');
+              if (!response.ok) {
+                const logMessage = `
+        [${new Date().toLocaleTimeString('tr-TR')}] Öğrenci Konum Kontrolü
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        • Öğrenci No: ${studentId}
+        • Durum: Öğretmen konumu bulunamadı ❌`;
+                
+                setDebugLogs(prev => [...prev, logMessage]);
+                setStatus('❌ Öğretmen henüz konum paylaşmamış');
+                return;
+              }
+              
+              const classLoc = await response.json();
+              setClassLocation(classLoc);
+              
+              // Storage'a kaydet
+              localStorage.setItem('classLocation', JSON.stringify(classLoc));
+              sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
+              
+              const distance = calculateDistance(
+                currentLocation.lat,
+                currentLocation.lng,
+                classLoc.lat,
+                classLoc.lng
+              );
+    
+              // Öğrenci konum kontrolü log mesajı
+              const logMessage = `
+        [${new Date().toLocaleTimeString('tr-TR')}] Öğrenci Konum Kontrolü
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        • Öğrenci No: ${studentId}
+        • Öğrenci Konumu: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}
+        • Uzaklık: ${distance.toFixed(3)} km ${distance <= MAX_DISTANCE ? '✅' : '❌'}`;
+              
+              setDebugLogs(prev => [...prev, logMessage]);
+    
+              if (distance > MAX_DISTANCE) {
+                setIsValidLocation(false);
+                setStatus('❌ Sınıf konumunda değilsiniz');
+              } else {
+                setIsValidLocation(true);
+                setStatus('✅ Konum doğrulandı');
+              }
+            } catch (error) {
+              const logMessage = `
+        [${new Date().toLocaleTimeString('tr-TR')}] Konum Hatası
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        • Öğrenci No: ${studentId}
+        • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`;
+              
+              setDebugLogs(prev => [...prev, logMessage]);
+              setStatus('❌ Konum alınamadı');
+            }
+          }
+        },
+        (error) => {
+          const logMessage = `
+        [${new Date().toLocaleTimeString('tr-TR')}] Konum Hatası
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        • Hata: ${error.message} ❌`;
+          
+          setDebugLogs(prev => [...prev, logMessage]);
+          setStatus(`❌ Konum hatası: ${error.message}`);
+          setIsValidLocation(false);
+        }
+      );
+    };
 
   // Diğer useEffect'lerin yanına ekleyin
   useEffect(() => {
@@ -555,35 +582,47 @@ const AttendanceSystem = () => {
   const handleQrScan = async (decodedText: string) => {
     try {
       const scannedData = JSON.parse(decodedText);
+      const timestamp = new Date().toLocaleTimeString('tr-TR');
       
       // Öğrenci kontrolü
       const validStudent = validStudents.find(s => s.studentId === studentId);
       if (!validStudent) {
-        setDebugLogs(prev => [...prev, `
-      [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+        const logMessage = `
+      [${timestamp}] Yoklama Girişimi
       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       • Öğrenci No: ${studentId}
-      • Durum: Öğrenci listede bulunamadı ❌`]);
+      • Durum: Öğrenci listede bulunamadı ❌`;
+        
+        localStorage.setItem('lastDebugLog', logMessage);
+        setDebugLogs(prev => [...prev, logMessage]);
         setStatus('❌ Öğrenci numarası listede bulunamadı');
         return;
       }
   
       if (scannedData.validUntil < Date.now()) {
-        setDebugLogs(prev => [...prev, `
-      [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+        const logMessage = `
+      [${timestamp}] Yoklama Girişimi
       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       • Öğrenci No: ${studentId}
-      • Durum: QR kod süresi dolmuş ❌`]);
+      • Öğrenci Adı: ${validStudent.studentName}
+      • Durum: QR kod süresi dolmuş ❌`;
+        
+        localStorage.setItem('lastDebugLog', logMessage);
+        setDebugLogs(prev => [...prev, logMessage]);
         setStatus('❌ QR kod süresi dolmuş');
         return;
       }
   
       if (!location) {
-        setDebugLogs(prev => [...prev, `
-      [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+        const logMessage = `
+      [${timestamp}] Yoklama Girişimi
       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       • Öğrenci No: ${studentId}
-      • Durum: Konum bilgisi eksik ❌`]);
+      • Öğrenci Adı: ${validStudent.studentName}
+      • Durum: Konum bilgisi eksik ❌`;
+        
+        localStorage.setItem('lastDebugLog', logMessage);
+        setDebugLogs(prev => [...prev, logMessage]);
         setStatus('❌ Önce konum alın');
         return;
       }
@@ -595,16 +634,18 @@ const AttendanceSystem = () => {
         scannedData.classLocation.lng
       );
   
-      console.log('Mesafe:', distance, 'km');
-  
       if (distance > MAX_DISTANCE) {
-        setDebugLogs(prev => [...prev, `
-      [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+        const logMessage = `
+      [${timestamp}] Yoklama Girişimi
       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       • Öğrenci No: ${studentId}
+      • Öğrenci Adı: ${validStudent.studentName}
       • Öğrenci Konumu: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
       • Uzaklık: ${distance.toFixed(3)} km ❌
-      • Durum: Sınıf konumu dışında`]);
+      • Durum: Sınıf konumu dışında`;
+        
+        localStorage.setItem('lastDebugLog', logMessage);
+        setDebugLogs(prev => [...prev, logMessage]);
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
@@ -624,57 +665,59 @@ const AttendanceSystem = () => {
       const responseData = await response.json();
   
       if (!response.ok) {
-        // IP hatası kontrolü
         if (responseData.blockedStudentId) {
-          setDebugLogs(prev => [...prev, `
-      [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+          const logMessage = `
+      [${timestamp}] Yoklama Girişimi
       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       • Öğrenci No: ${studentId}
+      • Öğrenci Adı: ${validStudent.studentName}
       • IP Adresi: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
-      • Durum: Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış ❌`]);
+      • Durum: Bu cihaz başka öğrenci için kullanılmış ❌`;
+          
+          localStorage.setItem('lastDebugLog', logMessage);
+          setDebugLogs(prev => [...prev, logMessage]);
           setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
           return;
         }
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
   
-      // Debug log formatını güncelle
-      const timestamp = new Date().toLocaleTimeString('tr-TR');
-      setDebugLogs(prev => [...prev, `
-      [${timestamp}] QR Okutma Başarılı ✅
+      // Başarılı yoklama log mesajı
+      const successMessage = `
+      [${timestamp}] Yoklama Başarılı ✅
       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       • Öğrenci No: ${studentId}
       • Öğrenci Adı: ${validStudent.studentName}
       • IP Adresi: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
       • Öğrenci Konumu: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
-      • Uzaklık: ${distance.toFixed(3)} km ${distance <= MAX_DISTANCE ? '✅' : '❌'}
-      • Hafta: ${scannedData.week}`]);
+      • Uzaklık: ${distance.toFixed(3)} km ✅
+      • Hafta: ${scannedData.week}`;
   
-      // Öğrencinin adını ve soyadını göster
+      localStorage.setItem('lastDebugLog', successMessage);
+      setDebugLogs(prev => [...prev, successMessage]);
       setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
       
-      // QR taramayı durdur
       setIsScanning(false);
       if (html5QrCode) {
         await html5QrCode.stop();
       }
   
-      // Son yoklama kontrolünü localStorage'a kaydet
       localStorage.setItem('lastAttendanceCheck', JSON.stringify({
         studentId: studentId,
         timestamp: new Date().toISOString()
       }));
   
-      // Cihazı blokla
       setDeviceBlocked(true);
   
     } catch (error) {
-      console.error('QR okuma hatası:', error);
-      setDebugLogs(prev => [...prev, `
-      [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Hatası
+      const errorMessage = `
+      [${new Date().toLocaleTimeString('tr-TR')}] Yoklama Hatası
       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       • Öğrenci No: ${studentId}
-      • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`]);
+      • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`;
+      
+      localStorage.setItem('lastDebugLog', errorMessage);
+      setDebugLogs(prev => [...prev, errorMessage]);
       setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
     }
   };
