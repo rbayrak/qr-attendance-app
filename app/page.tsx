@@ -200,10 +200,17 @@ const AttendanceSystem = () => {
   }, [mode]);
   
   const handleModeChange = () => {
+    setDebugLogs(prev => [...prev, `
+      ----- Mode Değişimi Başlıyor -----
+      Mevcut Mod: ${mode}
+      Hedef Mod: ${mode === 'student' ? 'teacher' : 'student'}
+      localStorage: ${localStorage.getItem('classLocation')}
+      sessionStorage: ${sessionStorage.getItem('classLocation')}
+    `]);
+  
     if (mode === 'student') {
       setShowPasswordModal(true);
     } else {
-      // Öğrenci moduna geçerken direkt geçiş yap
       setMode('student');
       setIsTeacherAuthenticated(false);
     }
@@ -433,13 +440,15 @@ const AttendanceSystem = () => {
 
   // Diğer useEffect'lerin yanına ekleyin
   useEffect(() => {
-    if (mode === 'teacher') {
-      // Öğretmen moduna geçince sıfırla
-      setIsValidLocation(false);
-      setClassLocation(null);
-    } else {
-      // Öğrenci moduna geçince localStorage'dan yükle
-      const savedClassLocation = localStorage.getItem('classLocation');
+    setDebugLogs(prev => [...prev, `
+      ----- Mode Değişimi -----
+      Yeni Mod: ${mode}
+      localStorage: ${localStorage.getItem('classLocation')}
+      sessionStorage: ${sessionStorage.getItem('classLocation')}
+    `]);
+  
+    if (mode === 'student') {
+      const savedClassLocation = localStorage.getItem('classLocation') || sessionStorage.getItem('classLocation');
       if (savedClassLocation) {
         setClassLocation(JSON.parse(savedClassLocation));
       }
