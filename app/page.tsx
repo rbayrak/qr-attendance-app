@@ -732,21 +732,28 @@ const AttendanceSystem = () => {
   
         {mode === 'teacher' ? (
           <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
-            <h2 className="text-2xl font-bold">Öğretmen Paneli</h2>
+            <div className="flex items-center justify-center mb-6">
+                <h2 className="text-xl font-bold text-gray-800 mr-2">Öğretmen Paneli</h2>
+                <img 
+                  src="/ytu-logo.png" 
+                  alt="YTÜ Logo" 
+                  className="w-14 h-14 object-contain ml-1"
+                />
+              </div>
             
-            <div className="flex items-center gap-2">
-              <Calendar size={20} />
-              <select 
-                value={selectedWeek}
-                onChange={(e) => setSelectedWeek(Number(e.target.value))}
-                className="p-2 border rounded-lg flex-1"
-                disabled={isLoading}
-              >
-                {[...Array(16)].map((_, i) => (
-                  <option key={i+1} value={i+1}>Hafta {i+1}</option>
-                ))}
-              </select>
-            </div>
+              <div className="flex items-center gap-2">
+                <Calendar size={24} className="text-blue-600" />
+                <select 
+                  value={selectedWeek}
+                  onChange={(e) => setSelectedWeek(Number(e.target.value))}
+                  className="p-3 border-2 border-gray-300 rounded-lg flex-1 text-lg font-medium text-gray-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 appearance-none"
+                  disabled={isLoading}
+                >
+                  {[...Array(16)].map((_, i) => (
+                    <option key={i+1} value={i+1}>Hafta {i+1}</option>
+                  ))}
+                </select>
+              </div>
   
             <button
               onClick={getLocation}
