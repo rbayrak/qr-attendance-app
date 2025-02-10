@@ -796,7 +796,7 @@ const AttendanceSystem = () => {
                 <img 
                   src="/ytu-logo.png" 
                   alt="YTÜ Logo" 
-                  className="w-16 h-16 object-contain"
+                  className="w-20 h-20 object-contain"
                 />
               </div>
               
