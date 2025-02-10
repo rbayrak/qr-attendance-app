@@ -606,8 +606,8 @@ const AttendanceSystem = () => {
       setDebugLogs(prev => [...prev, `[${timestamp}] Yoklama Kaydı:
         • Öğrenci No: ${studentId}
         • IP: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
-        • Öğrenci Konumu: ${location.lat}, ${location.lng}
-        • Mesafe: ${distance.toFixed(3)} km`]);
+        • Öğrenci Konumu: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
+        • Uzaklık: ${distance.toFixed(3)} km ${distance <= MAX_DISTANCE ? '✅' : '❌'}`]);
     
       if (!response.ok) {
         // IP hatası kontrolü
@@ -699,21 +699,30 @@ const AttendanceSystem = () => {
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
-      {/* Debug Panel - Sadece öğretmen modunda göster */}
+      {/* Debug Panel */}
       {mode === 'teacher' && (
-        <div className="mb-4 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-40">
-          <div className="font-bold mb-2 text-blue-400">SINIF KONUMU:</div>
-          {classLocation && (
-            <div className="mb-2 pl-2 border-l-2 border-blue-400">
-              Enlem: {classLocation.lat}, Boylam: {classLocation.lng}
+        <div className="mb-4 p-4 bg-gray-900 text-white rounded-lg text-xs font-mono overflow-auto max-h-96">
+          <div className="sticky top-0 bg-gray-900 pt-2 pb-4 border-b border-gray-700">
+            <div className="font-bold text-blue-400 mb-2">SINIF KONUMU:</div>
+            {classLocation ? (
+              <div className="pl-2 border-l-2 border-blue-400">
+                Enlem: {classLocation.lat.toFixed(6)}, Boylam: {classLocation.lng.toFixed(6)}
+              </div>
+            ) : (
+              <div className="pl-2 text-gray-400 italic">Henüz konum alınmadı</div>
+            )}
+          </div>
+          
+          <div className="mt-4">
+            <div className="font-bold text-green-400 mb-2">YOKLAMA KAYITLARI:</div>
+            <div className="space-y-4">
+              {debugLogs.map((log, i) => (
+                <div key={i} className="whitespace-pre-wrap pl-2 border-l-2 border-green-400">
+                  {log}
+                </div>
+              ))}
             </div>
-          )}
-          <div className="font-bold mb-2 text-green-400 mt-4">YOKLAMA KAYITLARI:</div>
-          {debugLogs.map((log, i) => (
-            <div key={i} className="whitespace-pre-wrap pl-2 border-l-2 border-green-400 mb-2">
-              {log}
-            </div>
-          ))}
+          </div>
         </div>
       )}
   
