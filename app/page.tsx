@@ -26,8 +26,6 @@ const MAX_DISTANCE = 0.8;
 let tokenClient: any;
 let accessToken: string | null = null;
 
-
-
 const initializeGoogleAuth = () => {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined') return;
@@ -179,7 +177,6 @@ const AttendanceSystem = () => {
   const [deviceBlocked, setDeviceBlocked] = useState<boolean>(false);
   const [isValidLocation, setIsValidLocation] = useState<boolean>(false);
   const [classLocation, setClassLocation] = useState<Location | null>(null);
-
 
   useEffect(() => {
     if (mode === 'student') {
@@ -438,24 +435,13 @@ const AttendanceSystem = () => {
               classLoc.lat,
               classLoc.lng
             );
-
-            // Mevcut debug loglarını al
-            const savedLogs = localStorage.getItem('debugLogs');
-            const currentLogs = savedLogs ? JSON.parse(savedLogs) : [];
-            
-            // Yeni log mesajı
-            const logMessage = `
-            [${new Date().toLocaleTimeString('tr-TR')}] Konum Kontrolü
-            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-            • Öğrenci No: ${studentId}
-            • Öğrenci Konumu: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}
-            • Öğretmen Konumu: ${classLoc.lat.toFixed(6)}, ${classLoc.lng.toFixed(6)}
-            • Uzaklık: ${distance.toFixed(3)} km ${distance <= MAX_DISTANCE ? '✅' : '❌'}`;
-
-            // Debug loglarını güncelle
-            const updatedLogs = [...currentLogs, logMessage];
-            localStorage.setItem('debugLogs', JSON.stringify(updatedLogs));
-
+            setDebugLogs(prev => [...prev, `
+              ----- Konum Doğrulama Detayları -----
+              Öğrenci Konumu: ${currentLocation.lat}, ${currentLocation.lng}
+              Sınıf Konumu: ${classLoc.lat}, ${classLoc.lng}
+              Mesafe: ${distance} km
+              Max İzin Mesafesi: ${MAX_DISTANCE} km
+            `]);
             if (distance > MAX_DISTANCE) {
               setIsValidLocation(false);
               setStatus('❌ Sınıf konumunda değilsiniz');
@@ -463,8 +449,6 @@ const AttendanceSystem = () => {
               setIsValidLocation(true);
               setStatus('✅ Konum doğrulandı');
             }
-
-            
           } catch (error) {
             setStatus('❌ Konum alınamadı');
             setDebugLogs(prev => [...prev, `
@@ -564,27 +548,7 @@ const AttendanceSystem = () => {
     }
   };
 
-  const [debugLogs, setDebugLogs] = useState<string[]>(() => {
-    if (typeof window !== 'undefined') {
-      const savedLogs = localStorage.getItem('debugLogs');
-      return savedLogs ? JSON.parse(savedLogs) : [];
-    }
-    return [];
-  });
-
-  // Yeni useEffect ekleyin
-  useEffect(() => {
-    localStorage.setItem('debugLogs', JSON.stringify(debugLogs));
-  }, [debugLogs]);
-
-  // Yeni addDebugLog fonksiyonu ekleyin
-  const addDebugLog = (logMessage: string) => {
-    setDebugLogs(prev => {
-      const newLogs = [...prev, logMessage];
-      localStorage.setItem('debugLogs', JSON.stringify(newLogs));
-      return newLogs;
-    });
-  };
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
   // handleQrScan fonksiyonu (page.tsx içinde):
   const handleQrScan = async (decodedText: string) => {
@@ -594,66 +558,34 @@ const AttendanceSystem = () => {
       // Öğrenci kontrolü
       const validStudent = validStudents.find(s => s.studentId === studentId);
       if (!validStudent) {
-        const logMessage = `
-  [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Öğrenci No: ${studentId}
-  • Durum: Öğrenci listede bulunamadı ❌`;
-        
-        addDebugLog(logMessage);
         setStatus('❌ Öğrenci numarası listede bulunamadı');
         return;
       }
-  
+    
       if (scannedData.validUntil < Date.now()) {
-        const logMessage = `
-  [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Öğrenci No: ${studentId}
-  • Öğrenci Adı: ${validStudent.studentName}
-  • Durum: QR kod süresi dolmuş ❌`;
-        
-        addDebugLog(logMessage);
         setStatus('❌ QR kod süresi dolmuş');
         return;
       }
-  
+    
       if (!location) {
-        const logMessage = `
-  [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Öğrenci No: ${studentId}
-  • Öğrenci Adı: ${validStudent.studentName}
-  • Durum: Konum bilgisi eksik ❌`;
-        
-        addDebugLog(logMessage);
         setStatus('❌ Önce konum alın');
         return;
       }
-  
+    
       const distance = calculateDistance(
         location.lat,
         location.lng,
         scannedData.classLocation.lat,
         scannedData.classLocation.lng
       );
-  
+    
+      console.log('Mesafe:', distance, 'km');
+    
       if (distance > MAX_DISTANCE) {
-        const logMessage = `
-  [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Öğrenci No: ${studentId}
-  • Öğrenci Adı: ${validStudent.studentName}
-  • Öğrenci Konumu: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
-  • Öğretmen Konumu: ${scannedData.classLocation.lat.toFixed(6)}, ${scannedData.classLocation.lng.toFixed(6)}
-  • Uzaklık: ${distance.toFixed(3)} km ❌
-  • Durum: Sınıf konumu dışında`;
-        
-        addDebugLog(logMessage);
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
-  
+    
       // Backend API'ye istek at
       const response = await fetch('/api/attendance', {
         method: 'POST',
@@ -665,70 +597,39 @@ const AttendanceSystem = () => {
           week: scannedData.week
         })
       });
-  
+    
       const responseData = await response.json();
+    
+      // Debug loglarına API yanıtını ekleyelim
+      setDebugLogs(prev => [...prev, `
+        ----- Yoklama İşlemi Detayları -----
+          Öğrenci Konumu: ${location.lat}, ${location.lng}
+          Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
+          Mesafe: ${distance} km
+          Max İzin: ${MAX_DISTANCE} km
   
+          API Yanıtı:
+          ${JSON.stringify(responseData, null, 2)}
+          `]);
+    
       if (!response.ok) {
         // IP hatası kontrolü
         if (responseData.blockedStudentId) {
-          const logMessage = `
-  [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Öğrenci No: ${studentId}
-  • Öğrenci Adı: ${validStudent.studentName}
-  • IP Adresi: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
-  • Durum: Bu cihaz başka öğrenci için kullanılmış ❌`;
-          
-          addDebugLog(logMessage);
           setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
           return;
         }
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
-  
-      // Başarılı yoklama log mesajı
-      const successMessage = `
-      [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarılı ✅
-      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      • Öğrenci No: ${studentId}
-      • Öğrenci Adı: ${validStudent.studentName}
-      • Öğrenci Konumu: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
-      • Öğretmen Konumu: ${scannedData.classLocation.lat.toFixed(6)}, ${scannedData.classLocation.lng.toFixed(6)}
-      • Uzaklık: ${distance.toFixed(3)} km ${distance <= MAX_DISTANCE ? '✅' : '❌'}
-      • IP Adresi: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
-      • Hafta: ${scannedData.week}`;
-
-      // Mevcut debug loglarını al
-      const savedLogs = localStorage.getItem('debugLogs');
-      const currentLogs = savedLogs ? JSON.parse(savedLogs) : [];
-
-      // Debug loglarını güncelle
-      const updatedLogs = [...currentLogs, successMessage];
-      localStorage.setItem('debugLogs', JSON.stringify(updatedLogs));
-  
-      addDebugLog(successMessage);
+    
+      // Öğrencinin adını ve soyadını göster
       setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
       
       setIsScanning(false);
       if (html5QrCode) {
         await html5QrCode.stop();
       }
-  
-      localStorage.setItem('lastAttendanceCheck', JSON.stringify({
-        studentId: studentId,
-        timestamp: new Date().toISOString()
-      }));
-  
-      setDeviceBlocked(true);
-  
     } catch (error) {
-      const errorMessage = `
-  [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Hatası
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Öğrenci No: ${studentId}
-  • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`;
-      
-      addDebugLog(errorMessage);
+      console.error('QR okuma hatası:', error);
       setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
     }
   };
@@ -801,33 +702,12 @@ const AttendanceSystem = () => {
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
-
-    {mode === 'teacher' && (
-      <div className="mb-4 p-4 bg-gray-900 text-white rounded-lg text-xs font-mono overflow-auto max-h-96">
-        <div className="sticky top-0 bg-gray-900 pt-2 pb-4 border-b border-gray-700">
-          <div className="font-bold text-blue-400 mb-2">SINIF KONUMU:</div>
-          {classLocation ? (
-            <div className="pl-2 border-l-2 border-blue-400">
-              Enlem: {classLocation.lat.toFixed(6)}, Boylam: {classLocation.lng.toFixed(6)}
-            </div>
-          ) : (
-            <div className="pl-2 text-gray-400 italic">Henüz konum alınmadı</div>
-          )}
-        </div>
-        
-        <div className="mt-4">
-          <div className="font-bold text-green-400 mb-2">YOKLAMA KAYITLARI:</div>
-          <div className="space-y-4">
-            {debugLogs.map((log, i) => (
-              <div key={i} className="whitespace-pre-wrap pl-2 border-l-2 border-green-400">
-                {log}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    )}
       {/* Debug Panel */}
+      <div className="mb-4 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-40">
+        {debugLogs.map((log, i) => (
+          <div key={i} className="whitespace-pre-wrap">{log}</div>
+        ))}
+      </div>
       {showPasswordModal && (
         <PasswordModal
           password={password}
