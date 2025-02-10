@@ -442,30 +442,32 @@ const AttendanceSystem = () => {
     }
   }, [mode]);
 
-  const generateQR = () => {
+  const generateQR = async () => {
     if (!location) {
       setStatus('❌ Önce konum alın');
       return;
     }
     
-    // Öğretmen konumunu localStorage'a kaydet
-    localStorage.setItem('classLocation', JSON.stringify({
-      lat: Number(location.lat),
-      lng: Number(location.lng)
-    }));
-    
-    const payload = {
-      timestamp: Date.now(),
-      classLocation: {
-        lat: Number(location.lat),
-        lng: Number(location.lng)
-      },
-      validUntil: Date.now() + 300000,
-      week: selectedWeek
-    };
-    
-    setQrData(JSON.stringify(payload));
-    setStatus('✅ QR kod oluşturuldu');
+    try {
+      // Sadece API'ye kaydet
+      await fetch('/api/location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(location)
+      });
+      
+      const payload = {
+        timestamp: Date.now(),
+        classLocation: location,
+        validUntil: Date.now() + 300000,
+        week: selectedWeek
+      };
+      
+      setQrData(JSON.stringify(payload));
+      setStatus('✅ QR kod oluşturuldu');
+    } catch (error) {
+      setStatus('❌ Konum kaydedilemedi');
+    }
   };
 
   const handleStudentIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
