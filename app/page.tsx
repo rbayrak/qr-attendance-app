@@ -362,136 +362,129 @@ const AttendanceSystem = () => {
   // getLocation fonksiyonunu güncelle (diğer fonksiyonların yanına):
   const getLocation = async () => {
     if (!navigator.geolocation) {
+      const logMessage = `
+  [${new Date().toLocaleTimeString('tr-TR')}] Konum Hatası
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Durum: Tarayıcı konum desteği yok ❌`;
+      
+      setDebugLogs(prev => [...prev, logMessage]);
       setStatus('❌ Konum desteği yok');
       return;
     }
   
     setStatus('📍 Konum alınıyor...');
-    const getLocation = async () => {
-      if (!navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const currentLocation = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude
+        };
+        setLocation(currentLocation);
+  
+        if (mode === 'teacher') {
+          try {
+            // API'ye kaydet
+            await fetch('/api/location', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(currentLocation)
+            });
+            
+            // Storage'a kaydet
+            localStorage.setItem('classLocation', JSON.stringify(currentLocation));
+            sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
+            
+            setClassLocation(currentLocation);
+            setStatus('📍 Konum alındı');
+            
+            // Öğretmen konum log mesajı
+            const logMessage = `
+  [${new Date().toLocaleTimeString('tr-TR')}] Öğretmen Konumu Güncellendi
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Konum: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)} ✅`;
+            
+            setDebugLogs(prev => [...prev, logMessage]);
+  
+          } catch (error) {
+            const logMessage = `
+  [${new Date().toLocaleTimeString('tr-TR')}] Konum Kaydetme Hatası
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`;
+            
+            setDebugLogs(prev => [...prev, logMessage]);
+            setStatus('❌ Konum kaydedilemedi');
+          }
+        } else if (mode === 'student') {
+          try {
+            const response = await fetch('/api/location');
+            if (!response.ok) {
+              const logMessage = `
+  [${new Date().toLocaleTimeString('tr-TR')}] Öğrenci Konum Kontrolü
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Öğrenci No: ${studentId}
+  • Durum: Öğretmen konumu bulunamadı ❌`;
+              
+              setDebugLogs(prev => [...prev, logMessage]);
+              setStatus('❌ Öğretmen henüz konum paylaşmamış');
+              return;
+            }
+            
+            const classLoc = await response.json();
+            setClassLocation(classLoc);
+            
+            // Storage'a kaydet
+            localStorage.setItem('classLocation', JSON.stringify(classLoc));
+            sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
+            
+            const distance = calculateDistance(
+              currentLocation.lat,
+              currentLocation.lng,
+              classLoc.lat,
+              classLoc.lng
+            );
+  
+            // Öğrenci konum kontrolü log mesajı
+            const logMessage = `
+  [${new Date().toLocaleTimeString('tr-TR')}] Öğrenci Konum Kontrolü
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Öğrenci No: ${studentId}
+  • Öğrenci Konumu: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}
+  • Uzaklık: ${distance.toFixed(3)} km ${distance <= MAX_DISTANCE ? '✅' : '❌'}`;
+            
+            setDebugLogs(prev => [...prev, logMessage]);
+  
+            if (distance > MAX_DISTANCE) {
+              setIsValidLocation(false);
+              setStatus('❌ Sınıf konumunda değilsiniz');
+            } else {
+              setIsValidLocation(true);
+              setStatus('✅ Konum doğrulandı');
+            }
+          } catch (error) {
+            const logMessage = `
+  [${new Date().toLocaleTimeString('tr-TR')}] Konum Hatası
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Öğrenci No: ${studentId}
+  • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`;
+            
+            setDebugLogs(prev => [...prev, logMessage]);
+            setStatus('❌ Konum alınamadı');
+          }
+        }
+      },
+      (error) => {
         const logMessage = `
-        [${new Date().toLocaleTimeString('tr-TR')}] Konum Hatası
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        • Durum: Tarayıcı konum desteği yok ❌`;
+  [${new Date().toLocaleTimeString('tr-TR')}] Konum Hatası
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Hata: ${error.message} ❌`;
         
         setDebugLogs(prev => [...prev, logMessage]);
-        setStatus('❌ Konum desteği yok');
-        return;
+        setStatus(`❌ Konum hatası: ${error.message}`);
+        setIsValidLocation(false);
       }
-    
-      setStatus('📍 Konum alınıyor...');
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const currentLocation = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          };
-          setLocation(currentLocation);
-    
-          if (mode === 'teacher') {
-            try {
-              // API'ye kaydet
-              await fetch('/api/location', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(currentLocation)
-              });
-              
-              // Storage'a kaydet
-              localStorage.setItem('classLocation', JSON.stringify(currentLocation));
-              sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
-              
-              setClassLocation(currentLocation);
-              setStatus('📍 Konum alındı');
-              
-              // Öğretmen konum log mesajı
-              const logMessage = `
-        [${new Date().toLocaleTimeString('tr-TR')}] Öğretmen Konumu Güncellendi
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        • Konum: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)} ✅`;
-              
-              setDebugLogs(prev => [...prev, logMessage]);
-    
-            } catch (error) {
-              const logMessage = `
-        [${new Date().toLocaleTimeString('tr-TR')}] Konum Kaydetme Hatası
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`;
-              
-              setDebugLogs(prev => [...prev, logMessage]);
-              setStatus('❌ Konum kaydedilemedi');
-            }
-          } else if (mode === 'student') {
-            try {
-              const response = await fetch('/api/location');
-              if (!response.ok) {
-                const logMessage = `
-        [${new Date().toLocaleTimeString('tr-TR')}] Öğrenci Konum Kontrolü
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        • Öğrenci No: ${studentId}
-        • Durum: Öğretmen konumu bulunamadı ❌`;
-                
-                setDebugLogs(prev => [...prev, logMessage]);
-                setStatus('❌ Öğretmen henüz konum paylaşmamış');
-                return;
-              }
-              
-              const classLoc = await response.json();
-              setClassLocation(classLoc);
-              
-              // Storage'a kaydet
-              localStorage.setItem('classLocation', JSON.stringify(classLoc));
-              sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
-              
-              const distance = calculateDistance(
-                currentLocation.lat,
-                currentLocation.lng,
-                classLoc.lat,
-                classLoc.lng
-              );
-    
-              // Öğrenci konum kontrolü log mesajı
-              const logMessage = `
-        [${new Date().toLocaleTimeString('tr-TR')}] Öğrenci Konum Kontrolü
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        • Öğrenci No: ${studentId}
-        • Öğrenci Konumu: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}
-        • Uzaklık: ${distance.toFixed(3)} km ${distance <= MAX_DISTANCE ? '✅' : '❌'}`;
-              
-              setDebugLogs(prev => [...prev, logMessage]);
-    
-              if (distance > MAX_DISTANCE) {
-                setIsValidLocation(false);
-                setStatus('❌ Sınıf konumunda değilsiniz');
-              } else {
-                setIsValidLocation(true);
-                setStatus('✅ Konum doğrulandı');
-              }
-            } catch (error) {
-              const logMessage = `
-        [${new Date().toLocaleTimeString('tr-TR')}] Konum Hatası
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        • Öğrenci No: ${studentId}
-        • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`;
-              
-              setDebugLogs(prev => [...prev, logMessage]);
-              setStatus('❌ Konum alınamadı');
-            }
-          }
-        },
-        (error) => {
-          const logMessage = `
-        [${new Date().toLocaleTimeString('tr-TR')}] Konum Hatası
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        • Hata: ${error.message} ❌`;
-          
-          setDebugLogs(prev => [...prev, logMessage]);
-          setStatus(`❌ Konum hatası: ${error.message}`);
-          setIsValidLocation(false);
-        }
-      );
-    };
-
+    );
+  };
+  
   // Diğer useEffect'lerin yanına ekleyin
   useEffect(() => {
     setDebugLogs(prev => [...prev, `
