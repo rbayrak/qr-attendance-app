@@ -175,6 +175,7 @@ const AttendanceSystem = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [deviceBlocked, setDeviceBlocked] = useState<boolean>(false);
   const [isValidLocation, setIsValidLocation] = useState<boolean>(false);
+  const [classLocation, setClassLocation] = useState<Location | null>(null);
 
   useEffect(() => {
     if (mode === 'student') {
@@ -343,7 +344,7 @@ const AttendanceSystem = () => {
       setStatus('❌ Konum desteği yok');
       return;
     }
-
+  
     setStatus('📍 Konum alınıyor...');
     navigator.geolocation.getCurrentPosition(
       (position) => {
@@ -352,24 +353,31 @@ const AttendanceSystem = () => {
           lng: position.coords.longitude
         };
         setLocation(currentLocation);
-
+  
         // Sadece öğrenci modunda konum kontrolü yap
-        if (mode === 'student' && scannedData?.classLocation) {
-          const distance = calculateDistance(
-            currentLocation.lat,
-            currentLocation.lng,
-            scannedData.classLocation.lat,
-            scannedData.classLocation.lng
-          );
-
-          console.log('Mesafe:', distance, 'km');
-
-          if (distance > MAX_DISTANCE) {
-            setIsValidLocation(false);
-            setStatus('❌ Sınıf konumunda değilsiniz');
+        if (mode === 'student') {
+          const savedClassLocation = localStorage.getItem('classLocation');
+          if (savedClassLocation) {
+            const classLoc = JSON.parse(savedClassLocation);
+            const distance = calculateDistance(
+              currentLocation.lat,
+              currentLocation.lng,
+              classLoc.lat,
+              classLoc.lng
+            );
+  
+            console.log('Mesafe:', distance, 'km');
+  
+            if (distance > MAX_DISTANCE) {
+              setIsValidLocation(false);
+              setStatus('❌ Sınıf konumunda değilsiniz');
+            } else {
+              setIsValidLocation(true);
+              setStatus('✅ Konum doğrulandı');
+            }
           } else {
-            setIsValidLocation(true);
-            setStatus('✅ Konum doğrulandı');
+            setStatus('❌ Henüz sınıf konumu belirlenmemiş');
+            setIsValidLocation(false);
           }
         } else {
           setStatus('📍 Konum alındı');
@@ -388,18 +396,22 @@ const AttendanceSystem = () => {
       return;
     }
     
+    // Öğretmen konumunu localStorage'a kaydet
+    localStorage.setItem('classLocation', JSON.stringify({
+      lat: Number(location.lat),
+      lng: Number(location.lng)
+    }));
+    
     const payload = {
       timestamp: Date.now(),
       classLocation: {
-        lat: Number(location.lat), // Number'a çevirdiğimizden emin olalım
+        lat: Number(location.lat),
         lng: Number(location.lng)
       },
       validUntil: Date.now() + 300000,
       week: selectedWeek
     };
     
-    console.log('QR payload:', payload); // QR içeriğini kontrol edelim
-
     setQrData(JSON.stringify(payload));
     setStatus('✅ QR kod oluşturuldu');
   };
