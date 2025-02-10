@@ -26,6 +26,8 @@ const MAX_DISTANCE = 0.8;
 let tokenClient: any;
 let accessToken: string | null = null;
 
+
+
 const initializeGoogleAuth = () => {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined') return;
@@ -177,6 +179,7 @@ const AttendanceSystem = () => {
   const [deviceBlocked, setDeviceBlocked] = useState<boolean>(false);
   const [isValidLocation, setIsValidLocation] = useState<boolean>(false);
   const [classLocation, setClassLocation] = useState<Location | null>(null);
+
 
   useEffect(() => {
     if (mode === 'student') {
@@ -548,7 +551,27 @@ const AttendanceSystem = () => {
     }
   };
 
-  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [debugLogs, setDebugLogs] = useState<string[]>(() => {
+    if (typeof window !== 'undefined') {
+      const savedLogs = localStorage.getItem('debugLogs');
+      return savedLogs ? JSON.parse(savedLogs) : [];
+    }
+    return [];
+  });
+
+  // Yeni useEffect ekleyin
+  useEffect(() => {
+    localStorage.setItem('debugLogs', JSON.stringify(debugLogs));
+  }, [debugLogs]);
+
+  // Yeni addDebugLog fonksiyonu ekleyin
+  const addDebugLog = (logMessage: string) => {
+    setDebugLogs(prev => {
+      const newLogs = [...prev, logMessage];
+      localStorage.setItem('debugLogs', JSON.stringify(newLogs));
+      return newLogs;
+    });
+  };
 
   // handleQrScan fonksiyonu (page.tsx içinde):
   const handleQrScan = async (decodedText: string) => {
@@ -558,34 +581,66 @@ const AttendanceSystem = () => {
       // Öğrenci kontrolü
       const validStudent = validStudents.find(s => s.studentId === studentId);
       if (!validStudent) {
+        const logMessage = `
+  [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Öğrenci No: ${studentId}
+  • Durum: Öğrenci listede bulunamadı ❌`;
+        
+        addDebugLog(logMessage);
         setStatus('❌ Öğrenci numarası listede bulunamadı');
         return;
       }
-    
+  
       if (scannedData.validUntil < Date.now()) {
+        const logMessage = `
+  [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Öğrenci No: ${studentId}
+  • Öğrenci Adı: ${validStudent.studentName}
+  • Durum: QR kod süresi dolmuş ❌`;
+        
+        addDebugLog(logMessage);
         setStatus('❌ QR kod süresi dolmuş');
         return;
       }
-    
+  
       if (!location) {
+        const logMessage = `
+  [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Öğrenci No: ${studentId}
+  • Öğrenci Adı: ${validStudent.studentName}
+  • Durum: Konum bilgisi eksik ❌`;
+        
+        addDebugLog(logMessage);
         setStatus('❌ Önce konum alın');
         return;
       }
-    
+  
       const distance = calculateDistance(
         location.lat,
         location.lng,
         scannedData.classLocation.lat,
         scannedData.classLocation.lng
       );
-    
-      console.log('Mesafe:', distance, 'km');
-    
+  
       if (distance > MAX_DISTANCE) {
+        const logMessage = `
+  [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Öğrenci No: ${studentId}
+  • Öğrenci Adı: ${validStudent.studentName}
+  • Öğrenci Konumu: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
+  • Öğretmen Konumu: ${scannedData.classLocation.lat.toFixed(6)}, ${scannedData.classLocation.lng.toFixed(6)}
+  • Uzaklık: ${distance.toFixed(3)} km ❌
+  • Durum: Sınıf konumu dışında`;
+        
+        addDebugLog(logMessage);
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
-    
+  
       // Backend API'ye istek at
       const response = await fetch('/api/attendance', {
         method: 'POST',
@@ -597,39 +652,62 @@ const AttendanceSystem = () => {
           week: scannedData.week
         })
       });
-    
-      const responseData = await response.json();
-    
-      // Debug loglarına API yanıtını ekleyelim
-      setDebugLogs(prev => [...prev, `
-        ----- Yoklama İşlemi Detayları -----
-          Öğrenci Konumu: ${location.lat}, ${location.lng}
-          Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
-          Mesafe: ${distance} km
-          Max İzin: ${MAX_DISTANCE} km
   
-          API Yanıtı:
-          ${JSON.stringify(responseData, null, 2)}
-          `]);
-    
+      const responseData = await response.json();
+  
       if (!response.ok) {
         // IP hatası kontrolü
         if (responseData.blockedStudentId) {
+          const logMessage = `
+  [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarısız
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Öğrenci No: ${studentId}
+  • Öğrenci Adı: ${validStudent.studentName}
+  • IP Adresi: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
+  • Durum: Bu cihaz başka öğrenci için kullanılmış ❌`;
+          
+          addDebugLog(logMessage);
           setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
           return;
         }
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
-    
-      // Öğrencinin adını ve soyadını göster
+  
+      // Başarılı yoklama log mesajı
+      const successMessage = `
+  [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Başarılı ✅
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Öğrenci No: ${studentId}
+  • Öğrenci Adı: ${validStudent.studentName}
+  • Öğrenci Konumu: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
+  • Öğretmen Konumu: ${scannedData.classLocation.lat.toFixed(6)}, ${scannedData.classLocation.lng.toFixed(6)}
+  • Uzaklık: ${distance.toFixed(3)} km ✅
+  • IP Adresi: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
+  • Hafta: ${scannedData.week}`;
+  
+      addDebugLog(successMessage);
       setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
       
       setIsScanning(false);
       if (html5QrCode) {
         await html5QrCode.stop();
       }
+  
+      localStorage.setItem('lastAttendanceCheck', JSON.stringify({
+        studentId: studentId,
+        timestamp: new Date().toISOString()
+      }));
+  
+      setDeviceBlocked(true);
+  
     } catch (error) {
-      console.error('QR okuma hatası:', error);
+      const errorMessage = `
+  [${new Date().toLocaleTimeString('tr-TR')}] QR Okutma Hatası
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  • Öğrenci No: ${studentId}
+  • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`;
+      
+      addDebugLog(errorMessage);
       setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
     }
   };
