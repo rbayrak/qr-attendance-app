@@ -383,7 +383,21 @@ const AttendanceSystem = () => {
               body: JSON.stringify(currentLocation)
             });
             setClassLocation(currentLocation);
+            
+            // Local ve session storage'a kaydet
+            localStorage.setItem('classLocation', JSON.stringify(currentLocation));
+            sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
+            
             setStatus('📍 Konum alındı');
+
+            // Debug log ekle
+            setDebugLogs(prev => [...prev, `
+              ----- Öğretmen Konum Kaydı -----
+              Kaydedilen Konum: ${currentLocation.lat}, ${currentLocation.lng}
+              LocalStorage: ${localStorage.getItem('classLocation')}
+              SessionStorage: ${sessionStorage.getItem('classLocation')}
+            `]);
+
           } catch (error) {
             setStatus('❌ Konum kaydedilemedi');
           }
@@ -406,6 +420,17 @@ const AttendanceSystem = () => {
               classLoc.lng
             );
   
+            // Debug log ekle
+            setDebugLogs(prev => [...prev, `
+              ----- Konum Doğrulama Detayları -----
+              Öğrenci Konumu: ${currentLocation.lat}, ${currentLocation.lng}
+              Sınıf Konumu: ${classLoc.lat}, ${classLoc.lng}
+              Mesafe: ${distance} km
+              Max İzin Mesafesi: ${MAX_DISTANCE} km
+              LocalStorage Değeri: ${localStorage.getItem('classLocation')}
+              SessionStorage Değeri: ${sessionStorage.getItem('classLocation')}
+            `]);
+
             if (distance > MAX_DISTANCE) {
               setIsValidLocation(false);
               setStatus('❌ Sınıf konumunda değilsiniz');
@@ -434,11 +459,34 @@ const AttendanceSystem = () => {
       sessionStorage: ${sessionStorage.getItem('classLocation')}
     `]);
   
-    if (mode === 'student') {
-      const savedClassLocation = localStorage.getItem('classLocation') || sessionStorage.getItem('classLocation');
-      if (savedClassLocation) {
-        setClassLocation(JSON.parse(savedClassLocation));
+    // Her iki storage'dan da konum bilgisini al
+    const savedClassLocation = localStorage.getItem('classLocation') || 
+                                sessionStorage.getItem('classLocation');
+  
+    if (savedClassLocation) {
+      try {
+        const parsedLocation = JSON.parse(savedClassLocation);
+        setClassLocation(parsedLocation);
+        
+        // Debug için ekstra bilgi
+        setDebugLogs(prev => [...prev, `
+          ----- Konum Bilgisi -----
+          Kaydedilen Konum: ${parsedLocation.lat}, ${parsedLocation.lng}
+          Storage Kaynağı: ${localStorage.getItem('classLocation') ? 'localStorage' : 'sessionStorage'}
+        `]);
+      } catch (error) {
+        console.error('Konum parse hatası:', error);
+        setDebugLogs(prev => [...prev, `
+          ----- Konum Parse Hatası -----
+          Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
+        `]);
       }
+    } else {
+      // Hiç konum kaydedilmemişse
+      setDebugLogs(prev => [...prev, `
+        ----- Konum Bilgisi Bulunamadı -----
+        localStorage ve sessionStorage boş
+      `]);
     }
   }, [mode]);
 
