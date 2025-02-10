@@ -174,6 +174,7 @@ const AttendanceSystem = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [deviceBlocked, setDeviceBlocked] = useState<boolean>(false);
+  const [isValidLocation, setIsValidLocation] = useState<boolean>(false);
 
   useEffect(() => {
     if (mode === 'student') {
@@ -335,6 +336,8 @@ const AttendanceSystem = () => {
       setIsLoading(false);
     }
   };
+  
+  // getLocation fonksiyonunu güncelle (diğer fonksiyonların yanına):
   const getLocation = () => {
     if (!navigator.geolocation) {
       setStatus('❌ Konum desteği yok');
@@ -344,14 +347,37 @@ const AttendanceSystem = () => {
     setStatus('📍 Konum alınıyor...');
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setLocation({
+        const currentLocation = {
           lat: position.coords.latitude,
           lng: position.coords.longitude
-        });
-        setStatus('📍 Konum alındı');
+        };
+        setLocation(currentLocation);
+
+        // Sadece öğrenci modunda konum kontrolü yap
+        if (mode === 'student' && scannedData?.classLocation) {
+          const distance = calculateDistance(
+            currentLocation.lat,
+            currentLocation.lng,
+            scannedData.classLocation.lat,
+            scannedData.classLocation.lng
+          );
+
+          console.log('Mesafe:', distance, 'km');
+
+          if (distance > MAX_DISTANCE) {
+            setIsValidLocation(false);
+            setStatus('❌ Sınıf konumunda değilsiniz');
+          } else {
+            setIsValidLocation(true);
+            setStatus('✅ Konum doğrulandı');
+          }
+        } else {
+          setStatus('📍 Konum alındı');
+        }
       },
       (error) => {
         setStatus(`❌ Konum hatası: ${error.message}`);
+        setIsValidLocation(false);
       }
     );
   };
@@ -678,7 +704,7 @@ const AttendanceSystem = () => {
                 <button
                   onClick={() => setIsScanning(!isScanning)}
                   className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-                  disabled={!location || !studentId || !validStudents.some(s => s.studentId === studentId) || isLoading}
+                  disabled={!location || !studentId || !validStudents.some(s => s.studentId === studentId) || !isValidLocation || isLoading}
                 >
                   {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
                 </button>
