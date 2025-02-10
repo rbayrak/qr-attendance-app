@@ -354,8 +354,13 @@ const AttendanceSystem = () => {
         };
         setLocation(currentLocation);
   
-        // Sadece öğrenci modunda konum kontrolü yap
-        if (mode === 'student') {
+        // Öğretmen modunda konumu direkt kaydet
+        if (mode === 'teacher') {
+          localStorage.setItem('classLocation', JSON.stringify(currentLocation));
+          setStatus('📍 Konum alındı');
+        } 
+        // Öğrenci modunda konum kontrolü yap
+        else {
           const savedClassLocation = localStorage.getItem('classLocation');
           if (savedClassLocation) {
             const classLoc = JSON.parse(savedClassLocation);
@@ -379,8 +384,6 @@ const AttendanceSystem = () => {
             setStatus('❌ Henüz sınıf konumu belirlenmemiş');
             setIsValidLocation(false);
           }
-        } else {
-          setStatus('📍 Konum alındı');
         }
       },
       (error) => {
