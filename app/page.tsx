@@ -377,29 +377,52 @@ const AttendanceSystem = () => {
         if (mode === 'teacher') {
           // Öğretmen konumunu API'ye kaydet
           try {
-            await fetch('/api/location', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(currentLocation)
-            });
-            setClassLocation(currentLocation);
-            setStatus('📍 Konum alındı');
-          } catch (error) {
-            setStatus('❌ Konum kaydedilemedi');
-          }
-        } else {
-          // Öğrenci API'den konum alsın
-          try {
             const response = await fetch('/api/location', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(currentLocation)
             });
-            if (!response.ok) throw new Error('Konum kaydedilemedi');
+            
+            if (!response.ok) {
+              throw new Error(await response.text());
+            }
+            
+            // LocalStorage'a kaydet
+            localStorage.setItem('classLocation', JSON.stringify(currentLocation));
             setClassLocation(currentLocation);
             setStatus('📍 Konum alındı');
           } catch (error) {
+            console.error('Konum kaydetme hatası:', error);
             setStatus('❌ Konum kaydedilemedi');
+          }
+        } else {
+          // Öğrenci API'den konum alsın
+          try {
+            const response = await fetch('/api/location');
+            if (!response.ok) {
+              setStatus('❌ Öğretmen henüz konum paylaşmamış');
+              return;
+            }
+            
+            const classLoc = await response.json();
+            setClassLocation(classLoc);
+            
+            const distance = calculateDistance(
+              currentLocation.lat,
+              currentLocation.lng,
+              classLoc.lat,
+              classLoc.lng
+            );
+  
+            if (distance > MAX_DISTANCE) {
+              setIsValidLocation(false);
+              setStatus('❌ Sınıf konumunda değilsiniz');
+            } else {
+              setIsValidLocation(true);
+              setStatus('✅ Konum doğrulandı');
+            }
+          } catch (error) {
+            setStatus('❌ Konum alınamadı');
           }
         }
       },
@@ -408,7 +431,8 @@ const AttendanceSystem = () => {
         setIsValidLocation(false);
       }
     );
-  };
+};
+
 
   // Diğer useEffect'lerin yanına ekleyin
   useEffect(() => {
