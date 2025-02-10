@@ -1,27 +1,23 @@
-// Örnek: Dosya sistemi ile kalıcı depolama
-import fs from 'fs/promises';
-import path from 'path';
+// pages/api/location.ts
+import type { NextApiRequest, NextApiResponse } from 'next';
 
-const LOCATION_FILE = path.join(process.cwd(), 'data/location.json');
+let classLocation: any = null;
 
-export default async function handler(
+export default function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
   if (req.method === 'POST') {
-    try {
-      await fs.writeFile(LOCATION_FILE, JSON.stringify(req.body));
-      return res.status(200).json({ success: true });
-    } catch (error) {
-      return res.status(500).json({ error: 'Konum kaydedilemedi' });
-    }
+    // Öğretmen konumu kaydediyor
+    classLocation = req.body;
+    return res.status(200).json({ success: true });
   } else if (req.method === 'GET') {
-    try {
-      const data = await fs.readFile(LOCATION_FILE, 'utf8');
-      return res.status(200).json(JSON.parse(data));
-    } catch (error) {
+    // Öğrenci konumu alıyor
+    if (!classLocation) {
       return res.status(404).json({ error: 'Konum bulunamadı' });
     }
+    return res.status(200).json(classLocation);
   }
+  
   return res.status(405).json({ error: 'Method not allowed' });
 }
