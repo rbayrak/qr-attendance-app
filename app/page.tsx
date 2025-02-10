@@ -562,14 +562,6 @@ const AttendanceSystem = () => {
         />
       )}
       <div className="max-w-md mx-auto space-y-6">
-        <button
-          onClick={handleModeChange}
-          className="w-full p-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
-          disabled={isLoading}
-        >
-          {mode === 'teacher' ? '📱 Öğrenci Modu' : '👨🏫 Öğretmen Modu'}
-        </button>
-  
         {status && (
           <div className={`p-4 rounded-lg ${
             status.startsWith('❌') ? 'bg-red-100 text-red-800' :
@@ -639,60 +631,78 @@ const AttendanceSystem = () => {
             )}
           </div>
         ) : (
-          <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
-            <h2 className="text-2xl font-bold">Öğrenci Paneli</h2>
-            
-            <div className="space-y-4">
-              <input
-                value={studentId}
-                onChange={handleStudentIdChange}
-                placeholder="Öğrenci Numaranız"
-                className={`w-full p-3 border rounded-lg focus:ring-2 ${
-                  studentId && !validStudents.some(s => s.studentId === studentId)
-                    ? 'border-red-500 focus:ring-red-500'
-                    : 'focus:ring-blue-500'
-                }`}
-                disabled={isLoading}
-              />
+          <>
+            <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
+              <h2 className="text-2xl font-bold text-gray-800">Öğrenci Paneli</h2>
+              
+              <div className="space-y-4">
+                <input
+                  value={studentId}
+                  onChange={handleStudentIdChange}
+                  placeholder="Öğrenci Numaranız"
+                  className={`w-full p-3 border rounded-lg focus:ring-2 ${
+                    studentId && !validStudents.some(s => s.studentId === studentId)
+                      ? 'border-red-500 focus:ring-red-500'
+                      : 'focus:ring-blue-500'
+                  }`}
+                  disabled={isLoading || deviceBlocked}
+                />
   
-              {studentId && (
-                <p className={`text-sm ${
-                  validStudents.some(s => s.studentId === studentId)
-                    ? 'text-green-600'
-                    : 'text-red-600'
-                }`}>
-                  {validStudents.some(s => s.studentId === studentId)
-                    ? '✅ Öğrenci numarası doğrulandı'
-                    : '❌ Öğrenci numarası listede bulunamadı'}
-                </p>
-              )}
+                {studentId && (
+                  <p className={`text-sm ${
+                    validStudents.some(s => s.studentId === studentId)
+                      ? 'text-green-600'
+                      : 'text-red-600'
+                  }`}>
+                    {validStudents.some(s => s.studentId === studentId)
+                      ? '✅ Öğrenci numarası doğrulandı'
+                      : '❌ Öğrenci numarası listede bulunamadı'}
+                  </p>
+                )}
   
-              <button
-                onClick={getLocation}
-                className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
-                disabled={isLoading}
-              >
-                <Camera size={18} /> Konumu Doğrula
-              </button>
-  
-              <button
-                onClick={() => setIsScanning(!isScanning)}
-                className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-                disabled={!location || !studentId || !validStudents.some(s => s.studentId === studentId) || isLoading}
-              >
-                {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
-              </button>
-  
-              {isScanning && (
-                <div className="relative aspect-square bg-gray-200 rounded-xl overflow-hidden">
-                  <div id="qr-reader" className="w-full h-full"></div>
-                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-sm">
-                    QR kodu kameraya gösterin
+                {deviceBlocked && (
+                  <div className="mt-2 p-3 bg-yellow-100 text-yellow-800 rounded-lg">
+                    <p className="text-sm">Bu cihaz bugün {studentId} numaralı öğrenci için kullanılmış.</p>
+                    <p className="text-xs mt-1">Her cihaz günde sadece bir öğrenci için yoklama yapabilir.</p>
                   </div>
-                </div>
-              )}
+                )}
+  
+                <button
+                  onClick={getLocation}
+                  className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
+                  disabled={isLoading}
+                >
+                  <Camera size={18} /> Konumu Doğrula
+                </button>
+  
+                <button
+                  onClick={() => setIsScanning(!isScanning)}
+                  className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                  disabled={!location || !studentId || !validStudents.some(s => s.studentId === studentId) || isLoading}
+                >
+                  {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
+                </button>
+  
+                {isScanning && (
+                  <div className="relative aspect-square bg-gray-200 rounded-xl overflow-hidden">
+                    <div id="qr-reader" className="w-full h-full"></div>
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-sm">
+                      QR kodu kameraya gösterin
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+  
+            {/* Öğretmen modu butonu en alta taşındı ve stili değiştirildi */}
+            <button
+              onClick={handleModeChange}
+              className="w-full p-3 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300 transition-colors mt-4"
+              disabled={isLoading}
+            >
+              👨🏫 Öğretmen Moduna Geç
+            </button>
+          </>
         )}
       </div>
     </div>
