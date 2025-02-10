@@ -356,25 +356,33 @@ const AttendanceSystem = () => {
   
         // Öğretmen modunda konumu direkt kaydet
         if (mode === 'teacher') {
-          // Öğretmen konumunu localStorage'a kaydet
           localStorage.setItem('classLocation', JSON.stringify(currentLocation));
-          setClassLocation(currentLocation); // state'e de kaydet
-          console.log('Öğretmen konumu kaydedildi:', {
-            localStorage: localStorage.getItem('classLocation'),
-            state: currentLocation
-          });
+          setClassLocation(currentLocation);
+          
+          // Debug log ekle
+          setDebugLogs(prev => [...prev, `
+            ----- Öğretmen Konumu Kaydedildi -----
+            Konum: ${JSON.stringify(currentLocation, null, 2)}
+            localStorage: ${localStorage.getItem('classLocation')}
+          `]);
+          
           setStatus('📍 Konum alındı');
-        }
+        } 
         // Öğrenci modunda konum kontrolü yap
         else {
           const savedClassLocation = localStorage.getItem('classLocation');
-          console.log('Öğrenci modunda localStorage kontrolü:', {
-          savedClassLocation,
-          exists: !!savedClassLocation
-          });
+          
+          // Debug log ekle
+          setDebugLogs(prev => [...prev, `
+            ----- Öğrenci Konum Kontrolü -----
+            Öğrenci Konumu: ${JSON.stringify(currentLocation, null, 2)}
+            Kayıtlı Sınıf Konumu: ${savedClassLocation}
+            localStorage Kontrolü: ${!!savedClassLocation}
+          `]);
+  
           if (savedClassLocation) {
             const classLoc = JSON.parse(savedClassLocation);
-            setClassLocation(classLoc); // state'e kaydet
+            setClassLocation(classLoc);
             
             const distance = calculateDistance(
               currentLocation.lat,
@@ -383,9 +391,12 @@ const AttendanceSystem = () => {
               classLoc.lng
             );
   
-            console.log('Mesafe:', distance, 'km');
-            console.log('Öğrenci Konumu:', currentLocation);
-            console.log('Sınıf Konumu:', classLoc);
+            // Mesafe debug log
+            setDebugLogs(prev => [...prev, `
+              ----- Mesafe Hesaplama -----
+              Mesafe: ${distance} km
+              MAX_DISTANCE: ${MAX_DISTANCE} km
+            `]);
   
             if (distance > MAX_DISTANCE) {
               setIsValidLocation(false);
@@ -403,6 +414,12 @@ const AttendanceSystem = () => {
       (error) => {
         setStatus(`❌ Konum hatası: ${error.message}`);
         setIsValidLocation(false);
+        
+        // Hata debug log
+        setDebugLogs(prev => [...prev, `
+          ----- Konum Hatası -----
+          Hata: ${error.message}
+        `]);
       }
     );
   };
