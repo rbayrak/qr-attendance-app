@@ -356,7 +356,9 @@ const AttendanceSystem = () => {
   
         // Öğretmen modunda konumu direkt kaydet
         if (mode === 'teacher') {
+          // Öğretmen konumunu localStorage'a kaydet
           localStorage.setItem('classLocation', JSON.stringify(currentLocation));
+          setClassLocation(currentLocation); // state'e de kaydet
           setStatus('📍 Konum alındı');
         } 
         // Öğrenci modunda konum kontrolü yap
@@ -364,6 +366,8 @@ const AttendanceSystem = () => {
           const savedClassLocation = localStorage.getItem('classLocation');
           if (savedClassLocation) {
             const classLoc = JSON.parse(savedClassLocation);
+            setClassLocation(classLoc); // state'e kaydet
+            
             const distance = calculateDistance(
               currentLocation.lat,
               currentLocation.lng,
@@ -372,6 +376,8 @@ const AttendanceSystem = () => {
             );
   
             console.log('Mesafe:', distance, 'km');
+            console.log('Öğrenci Konumu:', currentLocation);
+            console.log('Sınıf Konumu:', classLoc);
   
             if (distance > MAX_DISTANCE) {
               setIsValidLocation(false);
@@ -381,8 +387,8 @@ const AttendanceSystem = () => {
               setStatus('✅ Konum doğrulandı');
             }
           } else {
-            setStatus('❌ Henüz sınıf konumu belirlenmemiş');
             setIsValidLocation(false);
+            setStatus('❌ Öğretmen henüz konum paylaşmamış');
           }
         }
       },
@@ -392,6 +398,14 @@ const AttendanceSystem = () => {
       }
     );
   };
+
+  // Diğer useEffect'lerin yanına ekleyin
+  useEffect(() => {
+    const savedClassLocation = localStorage.getItem('classLocation');
+    if (savedClassLocation) {
+      setClassLocation(JSON.parse(savedClassLocation));
+    }
+  }, []);
 
   const generateQR = () => {
     if (!location) {
