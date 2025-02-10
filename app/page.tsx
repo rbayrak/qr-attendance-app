@@ -551,6 +551,7 @@ const AttendanceSystem = () => {
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
   // handleQrScan fonksiyonu (page.tsx içinde):
+  // HandleQrScan fonksiyonu
   const handleQrScan = async (decodedText: string) => {
     try {
       const scannedData = JSON.parse(decodedText);
@@ -600,17 +601,13 @@ const AttendanceSystem = () => {
     
       const responseData = await response.json();
     
-      // Debug loglarına API yanıtını ekleyelim
-      setDebugLogs(prev => [...prev, `
-        ----- Yoklama İşlemi Detayları -----
-          Öğrenci Konumu: ${location.lat}, ${location.lng}
-          Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
-          Mesafe: ${distance} km
-          Max İzin: ${MAX_DISTANCE} km
-  
-          API Yanıtı:
-          ${JSON.stringify(responseData, null, 2)}
-          `]);
+      // Debug log formatını güncelle
+      const timestamp = new Date().toLocaleTimeString('tr-TR');
+      setDebugLogs(prev => [...prev, `[${timestamp}] Yoklama Kaydı:
+        • Öğrenci No: ${studentId}
+        • IP: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
+        • Öğrenci Konumu: ${location.lat}, ${location.lng}
+        • Mesafe: ${distance.toFixed(3)} km`]);
     
       if (!response.ok) {
         // IP hatası kontrolü
@@ -702,12 +699,24 @@ const AttendanceSystem = () => {
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
-      {/* Debug Panel */}
-      <div className="mb-4 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-40">
-        {debugLogs.map((log, i) => (
-          <div key={i} className="whitespace-pre-wrap">{log}</div>
-        ))}
-      </div>
+      {/* Debug Panel - Sadece öğretmen modunda göster */}
+      {mode === 'teacher' && (
+        <div className="mb-4 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-40">
+          <div className="font-bold mb-2 text-blue-400">SINIF KONUMU:</div>
+          {classLocation && (
+            <div className="mb-2 pl-2 border-l-2 border-blue-400">
+              Enlem: {classLocation.lat}, Boylam: {classLocation.lng}
+            </div>
+          )}
+          <div className="font-bold mb-2 text-green-400 mt-4">YOKLAMA KAYITLARI:</div>
+          {debugLogs.map((log, i) => (
+            <div key={i} className="whitespace-pre-wrap pl-2 border-l-2 border-green-400 mb-2">
+              {log}
+            </div>
+          ))}
+        </div>
+      )}
+  
       {showPasswordModal && (
         <PasswordModal
           password={password}
@@ -719,6 +728,7 @@ const AttendanceSystem = () => {
           }}
         />
       )}
+  
       <div className="max-w-md mx-auto space-y-6">
         {status && (
           <div className={`p-4 rounded-lg ${
@@ -733,27 +743,27 @@ const AttendanceSystem = () => {
         {mode === 'teacher' ? (
           <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
             <div className="flex items-center justify-center mb-6">
-                <h2 className="text-xl font-bold text-gray-800 mr-2">Öğretmen Paneli</h2>
-                <img 
-                  src="/ytu-logo.png" 
-                  alt="YTÜ Logo" 
-                  className="w-14 h-14 object-contain ml-1"
-                />
-              </div>
+              <h2 className="text-xl font-bold text-gray-800 mr-2">Öğretmen Paneli</h2>
+              <img 
+                src="/ytu-logo.png" 
+                alt="YTÜ Logo" 
+                className="w-14 h-14 object-contain ml-1"
+              />
+            </div>
             
-              <div className="flex items-center gap-2">
-                <Calendar size={24} className="text-blue-600" />
-                <select 
-                  value={selectedWeek}
-                  onChange={(e) => setSelectedWeek(Number(e.target.value))}
-                  className="p-3 border-2 border-gray-300 rounded-lg flex-1 text-lg font-medium text-gray-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 appearance-none"
-                  disabled={isLoading}
-                >
-                  {[...Array(16)].map((_, i) => (
-                    <option key={i+1} value={i+1}>Hafta {i+1}</option>
-                  ))}
-                </select>
-              </div>
+            <div className="flex items-center gap-2">
+              <Calendar size={24} className="text-blue-600" />
+              <select 
+                value={selectedWeek}
+                onChange={(e) => setSelectedWeek(Number(e.target.value))}
+                className="p-3 border-2 border-gray-300 rounded-lg flex-1 text-lg font-medium text-gray-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 appearance-none"
+                disabled={isLoading}
+              >
+                {[...Array(16)].map((_, i) => (
+                  <option key={i+1} value={i+1}>Hafta {i+1}</option>
+                ))}
+              </select>
+            </div>
   
             <button
               onClick={getLocation}
@@ -866,7 +876,7 @@ const AttendanceSystem = () => {
               </div>
             </div>
   
-            {/* Öğretmen modu butonu en alta taşındı ve stili değiştirildi */}
+            {/* Öğretmen modu butonu */}
             <button
               onClick={handleModeChange}
               className="w-full p-3 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300 transition-colors mt-4"
