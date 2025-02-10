@@ -374,44 +374,28 @@ const AttendanceSystem = () => {
         };
         setLocation(currentLocation);
   
-        if (mode === 'teacher') {
-          // Öğretmen konumunu API'ye kaydet
-          try {
-            await fetch('/api/location', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(currentLocation)
-            });
-            setClassLocation(currentLocation);
-            
-            // Local ve session storage'a kaydet
-            localStorage.setItem('classLocation', JSON.stringify(currentLocation));
-            sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
-            
-            setStatus('📍 Konum alındı');
-
-            // Debug log ekle
-            setDebugLogs(prev => [...prev, `
-              ----- Öğretmen Konum Kaydı -----
-              Kaydedilen Konum: ${currentLocation.lat}, ${currentLocation.lng}
-              LocalStorage: ${localStorage.getItem('classLocation')}
-              SessionStorage: ${sessionStorage.getItem('classLocation')}
-            `]);
-
-          } catch (error) {
-            setStatus('❌ Konum kaydedilemedi');
-          }
-        } else {
-          // Öğrenci API'den konum alsın
+        if (mode === 'student') {
           try {
             const response = await fetch('/api/location');
             if (!response.ok) {
+              // API'den konum alınamazsa
               setStatus('❌ Öğretmen henüz konum paylaşmamış');
+              setDebugLogs(prev => [...prev, `
+                ----- Konum Kontrol Detayları -----
+                API Yanıtı: Konum bulunamadı
+                Mode: ${mode}
+                localStorage: ${localStorage.getItem('classLocation')}
+                sessionStorage: ${sessionStorage.getItem('classLocation')}
+              `]);
               return;
             }
             
             const classLoc = await response.json();
             setClassLocation(classLoc);
+            
+            // API'den gelen konumu storage'lara kaydet
+            localStorage.setItem('classLocation', JSON.stringify(classLoc));
+            sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
             
             const distance = calculateDistance(
               currentLocation.lat,
@@ -420,17 +404,14 @@ const AttendanceSystem = () => {
               classLoc.lng
             );
   
-            // Debug log ekle
             setDebugLogs(prev => [...prev, `
               ----- Konum Doğrulama Detayları -----
               Öğrenci Konumu: ${currentLocation.lat}, ${currentLocation.lng}
               Sınıf Konumu: ${classLoc.lat}, ${classLoc.lng}
               Mesafe: ${distance} km
               Max İzin Mesafesi: ${MAX_DISTANCE} km
-              LocalStorage Değeri: ${localStorage.getItem('classLocation')}
-              SessionStorage Değeri: ${sessionStorage.getItem('classLocation')}
             `]);
-
+  
             if (distance > MAX_DISTANCE) {
               setIsValidLocation(false);
               setStatus('❌ Sınıf konumunda değilsiniz');
@@ -440,6 +421,10 @@ const AttendanceSystem = () => {
             }
           } catch (error) {
             setStatus('❌ Konum alınamadı');
+            setDebugLogs(prev => [...prev, `
+              ----- Konum Alma Hatası -----
+              Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
+            `]);
           }
         }
       },
@@ -459,34 +444,35 @@ const AttendanceSystem = () => {
       sessionStorage: ${sessionStorage.getItem('classLocation')}
     `]);
   
-    // Her iki storage'dan da konum bilgisini al
-    const savedClassLocation = localStorage.getItem('classLocation') || 
-                                sessionStorage.getItem('classLocation');
-  
-    if (savedClassLocation) {
+    const fetchClassLocation = async () => {
       try {
-        const parsedLocation = JSON.parse(savedClassLocation);
-        setClassLocation(parsedLocation);
-        
-        // Debug için ekstra bilgi
-        setDebugLogs(prev => [...prev, `
-          ----- Konum Bilgisi -----
-          Kaydedilen Konum: ${parsedLocation.lat}, ${parsedLocation.lng}
-          Storage Kaynağı: ${localStorage.getItem('classLocation') ? 'localStorage' : 'sessionStorage'}
-        `]);
+        const response = await fetch('/api/location');
+        if (response.ok) {
+          const classLoc = await response.json();
+          
+          // API'den gelen konumu storage'lara kaydet
+          localStorage.setItem('classLocation', JSON.stringify(classLoc));
+          sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
+          
+          setClassLocation(classLoc);
+          
+          setDebugLogs(prev => [...prev, `
+            ----- API'den Konum Bilgisi Alındı -----
+            Sınıf Konumu: ${classLoc.lat}, ${classLoc.lng}
+            localStorage: ${localStorage.getItem('classLocation')}
+            sessionStorage: ${sessionStorage.getItem('classLocation')}
+          `]);
+        }
       } catch (error) {
-        console.error('Konum parse hatası:', error);
         setDebugLogs(prev => [...prev, `
-          ----- Konum Parse Hatası -----
+          ----- API Konum Alma Hatası -----
           Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
         `]);
       }
-    } else {
-      // Hiç konum kaydedilmemişse
-      setDebugLogs(prev => [...prev, `
-        ----- Konum Bilgisi Bulunamadı -----
-        localStorage ve sessionStorage boş
-      `]);
+    };
+  
+    if (mode === 'student') {
+      fetchClassLocation();
     }
   }, [mode]);
 
