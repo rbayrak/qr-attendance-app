@@ -274,26 +274,8 @@ const AttendanceSystem = () => {
     loadStudentList();
   }, [mode]);
 
-  const handlePasswordSubmit = () => {
-    if (password === 'teacher123') {
-      setIsTeacherAuthenticated(true);
-      setMode('teacher');
-      setShowPasswordModal(false);
-      // Öğretmen moduna geçince Google yetkilendirmesini başlat
-      initializeGoogleAuth().then(() => {
-        setIsAuthenticated(true);
-        fetchStudentList();
-      }).catch(error => {
-        console.error('Google Auth başlatma hatası:', error);
-        setStatus('❌ Google yetkilendirme hatası');
-      });
-    } else {
-      setStatus('❌ Yanlış şifre');
-    }
-    setPassword(''); // Şifreyi temizle
-  };
-
   
+
 
   // Öğrenci listesini Google Sheets'ten çekme
   const fetchStudentList = async () => {
