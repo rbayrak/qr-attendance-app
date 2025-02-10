@@ -362,12 +362,6 @@ const AttendanceSystem = () => {
   // getLocation fonksiyonunu güncelle (diğer fonksiyonların yanına):
   const getLocation = async () => {
     if (!navigator.geolocation) {
-      const logMessage = `
-  [${new Date().toLocaleTimeString('tr-TR')}] Konum Hatası
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Durum: Tarayıcı konum desteği yok ❌`;
-      
-      setDebugLogs(prev => [...prev, logMessage]);
       setStatus('❌ Konum desteği yok');
       return;
     }
@@ -383,56 +377,55 @@ const AttendanceSystem = () => {
   
         if (mode === 'teacher') {
           try {
-            // API'ye kaydet
+            // Sadece API'ye kaydet
             await fetch('/api/location', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(currentLocation)
             });
             
-            // Storage'a kaydet
+            // Local ve session storage'a kaydet
             localStorage.setItem('classLocation', JSON.stringify(currentLocation));
             sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
             
             setClassLocation(currentLocation);
             setStatus('📍 Konum alındı');
             
-            // Öğretmen konum log mesajı
-            const logMessage = `
-  [${new Date().toLocaleTimeString('tr-TR')}] Öğretmen Konumu Güncellendi
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Konum: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)} ✅`;
-            
-            setDebugLogs(prev => [...prev, logMessage]);
+            // Debug log ekle
+            setDebugLogs(prev => [...prev, `
+              ----- Öğretmen Konum Kaydı -----
+              Kaydedilen Konum: ${currentLocation.lat}, ${currentLocation.lng}
+              LocalStorage: ${localStorage.getItem('classLocation')}
+              SessionStorage: ${sessionStorage.getItem('classLocation')}
+            `]);
   
           } catch (error) {
-            const logMessage = `
-  [${new Date().toLocaleTimeString('tr-TR')}] Konum Kaydetme Hatası
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`;
-            
-            setDebugLogs(prev => [...prev, logMessage]);
             setStatus('❌ Konum kaydedilemedi');
+            setDebugLogs(prev => [...prev, `
+              ----- Konum Kaydetme Hatası -----
+              Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
+            `]);
           }
         } else if (mode === 'student') {
           try {
             const response = await fetch('/api/location');
             if (!response.ok) {
-              const logMessage = `
-  [${new Date().toLocaleTimeString('tr-TR')}] Öğrenci Konum Kontrolü
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Öğrenci No: ${studentId}
-  • Durum: Öğretmen konumu bulunamadı ❌`;
-              
-              setDebugLogs(prev => [...prev, logMessage]);
+              // API'den konum alınamazsa
               setStatus('❌ Öğretmen henüz konum paylaşmamış');
+              setDebugLogs(prev => [...prev, `
+                ----- Konum Kontrol Detayları -----
+                API Yanıtı: Konum bulunamadı
+                Mode: ${mode}
+                localStorage: ${localStorage.getItem('classLocation')}
+                sessionStorage: ${sessionStorage.getItem('classLocation')}
+              `]);
               return;
             }
             
             const classLoc = await response.json();
             setClassLocation(classLoc);
             
-            // Storage'a kaydet
+            // API'den gelen konumu storage'lara kaydet
             localStorage.setItem('classLocation', JSON.stringify(classLoc));
             sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
             
@@ -442,17 +435,13 @@ const AttendanceSystem = () => {
               classLoc.lat,
               classLoc.lng
             );
-  
-            // Öğrenci konum kontrolü log mesajı
-            const logMessage = `
-  [${new Date().toLocaleTimeString('tr-TR')}] Öğrenci Konum Kontrolü
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Öğrenci No: ${studentId}
-  • Öğrenci Konumu: ${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}
-  • Uzaklık: ${distance.toFixed(3)} km ${distance <= MAX_DISTANCE ? '✅' : '❌'}`;
-            
-            setDebugLogs(prev => [...prev, logMessage]);
-  
+            setDebugLogs(prev => [...prev, `
+              ----- Konum Doğrulama Detayları -----
+              Öğrenci Konumu: ${currentLocation.lat}, ${currentLocation.lng}
+              Sınıf Konumu: ${classLoc.lat}, ${classLoc.lng}
+              Mesafe: ${distance} km
+              Max İzin Mesafesi: ${MAX_DISTANCE} km
+            `]);
             if (distance > MAX_DISTANCE) {
               setIsValidLocation(false);
               setStatus('❌ Sınıf konumunda değilsiniz');
@@ -461,30 +450,21 @@ const AttendanceSystem = () => {
               setStatus('✅ Konum doğrulandı');
             }
           } catch (error) {
-            const logMessage = `
-  [${new Date().toLocaleTimeString('tr-TR')}] Konum Hatası
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Öğrenci No: ${studentId}
-  • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`;
-            
-            setDebugLogs(prev => [...prev, logMessage]);
             setStatus('❌ Konum alınamadı');
+            setDebugLogs(prev => [...prev, `
+              ----- Konum Alma Hatası -----
+              Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
+            `]);
           }
         }
       },
       (error) => {
-        const logMessage = `
-  [${new Date().toLocaleTimeString('tr-TR')}] Konum Hatası
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  • Hata: ${error.message} ❌`;
-        
-        setDebugLogs(prev => [...prev, logMessage]);
         setStatus(`❌ Konum hatası: ${error.message}`);
         setIsValidLocation(false);
       }
     );
   };
-  
+
   // Diğer useEffect'lerin yanına ekleyin
   useEffect(() => {
     setDebugLogs(prev => [...prev, `
@@ -571,78 +551,41 @@ const AttendanceSystem = () => {
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
   // handleQrScan fonksiyonu (page.tsx içinde):
-  // HandleQrScan fonksiyonu
   const handleQrScan = async (decodedText: string) => {
     try {
       const scannedData = JSON.parse(decodedText);
-      const timestamp = new Date().toLocaleTimeString('tr-TR');
       
       // Öğrenci kontrolü
       const validStudent = validStudents.find(s => s.studentId === studentId);
       if (!validStudent) {
-        const logMessage = `
-      [${timestamp}] Yoklama Girişimi
-      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      • Öğrenci No: ${studentId}
-      • Durum: Öğrenci listede bulunamadı ❌`;
-        
-        localStorage.setItem('lastDebugLog', logMessage);
-        setDebugLogs(prev => [...prev, logMessage]);
         setStatus('❌ Öğrenci numarası listede bulunamadı');
         return;
       }
-  
+    
       if (scannedData.validUntil < Date.now()) {
-        const logMessage = `
-      [${timestamp}] Yoklama Girişimi
-      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      • Öğrenci No: ${studentId}
-      • Öğrenci Adı: ${validStudent.studentName}
-      • Durum: QR kod süresi dolmuş ❌`;
-        
-        localStorage.setItem('lastDebugLog', logMessage);
-        setDebugLogs(prev => [...prev, logMessage]);
         setStatus('❌ QR kod süresi dolmuş');
         return;
       }
-  
+    
       if (!location) {
-        const logMessage = `
-      [${timestamp}] Yoklama Girişimi
-      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      • Öğrenci No: ${studentId}
-      • Öğrenci Adı: ${validStudent.studentName}
-      • Durum: Konum bilgisi eksik ❌`;
-        
-        localStorage.setItem('lastDebugLog', logMessage);
-        setDebugLogs(prev => [...prev, logMessage]);
         setStatus('❌ Önce konum alın');
         return;
       }
-  
+    
       const distance = calculateDistance(
         location.lat,
         location.lng,
         scannedData.classLocation.lat,
         scannedData.classLocation.lng
       );
-  
+    
+      console.log('Mesafe:', distance, 'km');
+    
       if (distance > MAX_DISTANCE) {
-        const logMessage = `
-      [${timestamp}] Yoklama Girişimi
-      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      • Öğrenci No: ${studentId}
-      • Öğrenci Adı: ${validStudent.studentName}
-      • Öğrenci Konumu: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
-      • Uzaklık: ${distance.toFixed(3)} km ❌
-      • Durum: Sınıf konumu dışında`;
-        
-        localStorage.setItem('lastDebugLog', logMessage);
-        setDebugLogs(prev => [...prev, logMessage]);
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
-  
+    
       // Backend API'ye istek at
       const response = await fetch('/api/attendance', {
         method: 'POST',
@@ -654,63 +597,39 @@ const AttendanceSystem = () => {
           week: scannedData.week
         })
       });
-  
+    
       const responseData = await response.json();
+    
+      // Debug loglarına API yanıtını ekleyelim
+      setDebugLogs(prev => [...prev, `
+        ----- Yoklama İşlemi Detayları -----
+          Öğrenci Konumu: ${location.lat}, ${location.lng}
+          Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
+          Mesafe: ${distance} km
+          Max İzin: ${MAX_DISTANCE} km
   
+          API Yanıtı:
+          ${JSON.stringify(responseData, null, 2)}
+          `]);
+    
       if (!response.ok) {
+        // IP hatası kontrolü
         if (responseData.blockedStudentId) {
-          const logMessage = `
-      [${timestamp}] Yoklama Girişimi
-      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      • Öğrenci No: ${studentId}
-      • Öğrenci Adı: ${validStudent.studentName}
-      • IP Adresi: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
-      • Durum: Bu cihaz başka öğrenci için kullanılmış ❌`;
-          
-          localStorage.setItem('lastDebugLog', logMessage);
-          setDebugLogs(prev => [...prev, logMessage]);
           setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
           return;
         }
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
-  
-      // Başarılı yoklama log mesajı
-      const successMessage = `
-      [${timestamp}] Yoklama Başarılı ✅
-      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      • Öğrenci No: ${studentId}
-      • Öğrenci Adı: ${validStudent.studentName}
-      • IP Adresi: ${responseData.debug?.ipCheck?.ip || 'Bilinmiyor'}
-      • Öğrenci Konumu: ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}
-      • Uzaklık: ${distance.toFixed(3)} km ✅
-      • Hafta: ${scannedData.week}`;
-  
-      localStorage.setItem('lastDebugLog', successMessage);
-      setDebugLogs(prev => [...prev, successMessage]);
+    
+      // Öğrencinin adını ve soyadını göster
       setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
       
       setIsScanning(false);
       if (html5QrCode) {
         await html5QrCode.stop();
       }
-  
-      localStorage.setItem('lastAttendanceCheck', JSON.stringify({
-        studentId: studentId,
-        timestamp: new Date().toISOString()
-      }));
-  
-      setDeviceBlocked(true);
-  
     } catch (error) {
-      const errorMessage = `
-      [${new Date().toLocaleTimeString('tr-TR')}] Yoklama Hatası
-      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      • Öğrenci No: ${studentId}
-      • Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'} ❌`;
-      
-      localStorage.setItem('lastDebugLog', errorMessage);
-      setDebugLogs(prev => [...prev, errorMessage]);
+      console.error('QR okuma hatası:', error);
       setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
     }
   };
@@ -784,32 +703,11 @@ const AttendanceSystem = () => {
   return (
     <div className="min-h-screen p-4 bg-gray-50">
       {/* Debug Panel */}
-      {mode === 'teacher' && (
-        <div className="mb-4 p-4 bg-gray-900 text-white rounded-lg text-xs font-mono overflow-auto max-h-96">
-          <div className="sticky top-0 bg-gray-900 pt-2 pb-4 border-b border-gray-700">
-            <div className="font-bold text-blue-400 mb-2">SINIF KONUMU:</div>
-            {classLocation ? (
-              <div className="pl-2 border-l-2 border-blue-400">
-                Enlem: {classLocation.lat.toFixed(6)}, Boylam: {classLocation.lng.toFixed(6)}
-              </div>
-            ) : (
-              <div className="pl-2 text-gray-400 italic">Henüz konum alınmadı</div>
-            )}
-          </div>
-          
-          <div className="mt-4">
-            <div className="font-bold text-green-400 mb-2">YOKLAMA KAYITLARI:</div>
-            <div className="space-y-4">
-              {debugLogs.map((log, i) => (
-                <div key={i} className="whitespace-pre-wrap pl-2 border-l-2 border-green-400">
-                  {log}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-  
+      <div className="mb-4 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-40">
+        {debugLogs.map((log, i) => (
+          <div key={i} className="whitespace-pre-wrap">{log}</div>
+        ))}
+      </div>
       {showPasswordModal && (
         <PasswordModal
           password={password}
@@ -821,7 +719,6 @@ const AttendanceSystem = () => {
           }}
         />
       )}
-  
       <div className="max-w-md mx-auto space-y-6">
         {status && (
           <div className={`p-4 rounded-lg ${
@@ -836,27 +733,27 @@ const AttendanceSystem = () => {
         {mode === 'teacher' ? (
           <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
             <div className="flex items-center justify-center mb-6">
-              <h2 className="text-xl font-bold text-gray-800 mr-2">Öğretmen Paneli</h2>
-              <img 
-                src="/ytu-logo.png" 
-                alt="YTÜ Logo" 
-                className="w-14 h-14 object-contain ml-1"
-              />
-            </div>
+                <h2 className="text-xl font-bold text-gray-800 mr-2">Öğretmen Paneli</h2>
+                <img 
+                  src="/ytu-logo.png" 
+                  alt="YTÜ Logo" 
+                  className="w-14 h-14 object-contain ml-1"
+                />
+              </div>
             
-            <div className="flex items-center gap-2">
-              <Calendar size={24} className="text-blue-600" />
-              <select 
-                value={selectedWeek}
-                onChange={(e) => setSelectedWeek(Number(e.target.value))}
-                className="p-3 border-2 border-gray-300 rounded-lg flex-1 text-lg font-medium text-gray-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 appearance-none"
-                disabled={isLoading}
-              >
-                {[...Array(16)].map((_, i) => (
-                  <option key={i+1} value={i+1}>Hafta {i+1}</option>
-                ))}
-              </select>
-            </div>
+              <div className="flex items-center gap-2">
+                <Calendar size={24} className="text-blue-600" />
+                <select 
+                  value={selectedWeek}
+                  onChange={(e) => setSelectedWeek(Number(e.target.value))}
+                  className="p-3 border-2 border-gray-300 rounded-lg flex-1 text-lg font-medium text-gray-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 appearance-none"
+                  disabled={isLoading}
+                >
+                  {[...Array(16)].map((_, i) => (
+                    <option key={i+1} value={i+1}>Hafta {i+1}</option>
+                  ))}
+                </select>
+              </div>
   
             <button
               onClick={getLocation}
@@ -969,7 +866,7 @@ const AttendanceSystem = () => {
               </div>
             </div>
   
-            {/* Öğretmen modu butonu */}
+            {/* Öğretmen modu butonu en alta taşındı ve stili değiştirildi */}
             <button
               onClick={handleModeChange}
               className="w-full p-3 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300 transition-colors mt-4"
