@@ -388,7 +388,7 @@ const AttendanceSystem = () => {
             sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
             
             setClassLocation(currentLocation);
-            setStatus('📍 Konum alındı'); // Burayı ekledik
+            setStatus('📍 Konum alındı');
             
             // Debug log ekle
             setDebugLogs(prev => [...prev, `
@@ -405,11 +405,56 @@ const AttendanceSystem = () => {
               Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
             `]);
           }
-        }
-        
-        // Öğrenci modu için mevcut kod devam eder
-        if (mode === 'student') {
-          // ... (mevcut öğrenci modu kodu)
+        } else if (mode === 'student') {
+          try {
+            const response = await fetch('/api/location');
+            if (!response.ok) {
+              // API'den konum alınamazsa
+              setStatus('❌ Öğretmen henüz konum paylaşmamış');
+              setDebugLogs(prev => [...prev, `
+                ----- Konum Kontrol Detayları -----
+                API Yanıtı: Konum bulunamadı
+                Mode: ${mode}
+                localStorage: ${localStorage.getItem('classLocation')}
+                sessionStorage: ${sessionStorage.getItem('classLocation')}
+              `]);
+              return;
+            }
+            
+            const classLoc = await response.json();
+            setClassLocation(classLoc);
+            
+            // API'den gelen konumu storage'lara kaydet
+            localStorage.setItem('classLocation', JSON.stringify(classLoc));
+            sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
+            
+            const distance = calculateDistance(
+              currentLocation.lat,
+              currentLocation.lng,
+              classLoc.lat,
+              classLoc.lng
+            );
+            setDebugLogs(prev => [...prev, `
+              ----- Konum Doğrulama Detayları -----
+              Öğrenci Konumu: ${currentLocation.lat}, ${currentLocation.lng}
+              Sınıf Konumu: ${classLoc.lat}, ${classLoc.lng}
+              Mesafe: ${distance} km
+              Max İzin Mesafesi: ${MAX_DISTANCE} km
+            `]);
+            if (distance > MAX_DISTANCE) {
+              setIsValidLocation(false);
+              setStatus('❌ Sınıf konumunda değilsiniz');
+            } else {
+              setIsValidLocation(true);
+              setStatus('✅ Konum doğrulandı');
+            }
+          } catch (error) {
+            setStatus('❌ Konum alınamadı');
+            setDebugLogs(prev => [...prev, `
+              ----- Konum Alma Hatası -----
+              Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
+            `]);
+          }
         }
       },
       (error) => {
