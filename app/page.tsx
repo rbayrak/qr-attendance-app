@@ -211,9 +211,40 @@ const AttendanceSystem = () => {
     if (mode === 'student') {
       setShowPasswordModal(true);
     } else {
+      // Sayfa yenilemeden mode değiştir
       setMode('student');
       setIsTeacherAuthenticated(false);
+      // Storage'ı koruyalım, temizlemeyelim
+      const savedClassLocation = localStorage.getItem('classLocation');
+      if (savedClassLocation) {
+        setClassLocation(JSON.parse(savedClassLocation));
+      }
     }
+  };
+  
+  // handlePasswordSubmit fonksiyonunu da güncelleyelim
+  const handlePasswordSubmit = () => {
+    if (password === 'teacher123') {
+      setIsTeacherAuthenticated(true);
+      setMode('teacher');
+      setShowPasswordModal(false);
+      // Storage'ı koruyalım
+      const savedClassLocation = localStorage.getItem('classLocation');
+      if (savedClassLocation) {
+        setClassLocation(JSON.parse(savedClassLocation));
+      }
+      // Google yetkilendirmesini başlat
+      initializeGoogleAuth().then(() => {
+        setIsAuthenticated(true);
+        fetchStudentList();
+      }).catch(error => {
+        console.error('Google Auth başlatma hatası:', error);
+        setStatus('❌ Google yetkilendirme hatası');
+      });
+    } else {
+      setStatus('❌ Yanlış şifre');
+    }
+    setPassword('');
   };
 
 
