@@ -359,11 +359,19 @@ const AttendanceSystem = () => {
           // Öğretmen konumunu localStorage'a kaydet
           localStorage.setItem('classLocation', JSON.stringify(currentLocation));
           setClassLocation(currentLocation); // state'e de kaydet
+          console.log('Öğretmen konumu kaydedildi:', {
+            localStorage: localStorage.getItem('classLocation'),
+            state: currentLocation
+          });
           setStatus('📍 Konum alındı');
-        } 
+        }
         // Öğrenci modunda konum kontrolü yap
         else {
           const savedClassLocation = localStorage.getItem('classLocation');
+          console.log('Öğrenci modunda localStorage kontrolü:', {
+          savedClassLocation,
+          exists: !!savedClassLocation
+          });
           if (savedClassLocation) {
             const classLoc = JSON.parse(savedClassLocation);
             setClassLocation(classLoc); // state'e kaydet
@@ -401,11 +409,18 @@ const AttendanceSystem = () => {
 
   // Diğer useEffect'lerin yanına ekleyin
   useEffect(() => {
-    const savedClassLocation = localStorage.getItem('classLocation');
-    if (savedClassLocation) {
-      setClassLocation(JSON.parse(savedClassLocation));
+    if (mode === 'teacher') {
+      // Öğretmen moduna geçince sıfırla
+      setIsValidLocation(false);
+      setClassLocation(null);
+    } else {
+      // Öğrenci moduna geçince localStorage'dan yükle
+      const savedClassLocation = localStorage.getItem('classLocation');
+      if (savedClassLocation) {
+        setClassLocation(JSON.parse(savedClassLocation));
+      }
     }
-  }, []);
+  }, [mode]);
 
   const generateQR = () => {
     if (!location) {
