@@ -357,27 +357,28 @@ const AttendanceSystem = () => {
         // Öğretmen modunda konumu direkt kaydet
         if (mode === 'teacher') {
           localStorage.setItem('classLocation', JSON.stringify(currentLocation));
+          sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
           setClassLocation(currentLocation);
           
-          // Debug log ekle
           setDebugLogs(prev => [...prev, `
             ----- Öğretmen Konumu Kaydedildi -----
             Konum: ${JSON.stringify(currentLocation, null, 2)}
             localStorage: ${localStorage.getItem('classLocation')}
+            sessionStorage: ${sessionStorage.getItem('classLocation')}
           `]);
           
           setStatus('📍 Konum alındı');
         } 
         // Öğrenci modunda konum kontrolü yap
         else {
-          const savedClassLocation = localStorage.getItem('classLocation');
+          const savedClassLocation = localStorage.getItem('classLocation') || sessionStorage.getItem('classLocation');
           
-          // Debug log ekle
           setDebugLogs(prev => [...prev, `
             ----- Öğrenci Konum Kontrolü -----
             Öğrenci Konumu: ${JSON.stringify(currentLocation, null, 2)}
-            Kayıtlı Sınıf Konumu: ${savedClassLocation}
-            localStorage Kontrolü: ${!!savedClassLocation}
+            localStorage: ${localStorage.getItem('classLocation')}
+            sessionStorage: ${sessionStorage.getItem('classLocation')}
+            Kayıtlı Konum Var mı: ${!!savedClassLocation}
           `]);
   
           if (savedClassLocation) {
@@ -391,11 +392,11 @@ const AttendanceSystem = () => {
               classLoc.lng
             );
   
-            // Mesafe debug log
             setDebugLogs(prev => [...prev, `
               ----- Mesafe Hesaplama -----
               Mesafe: ${distance} km
               MAX_DISTANCE: ${MAX_DISTANCE} km
+              Konumlar Arası Fark: ${distance <= MAX_DISTANCE ? 'Uygun' : 'Çok Uzak'}
             `]);
   
             if (distance > MAX_DISTANCE) {
@@ -408,6 +409,12 @@ const AttendanceSystem = () => {
           } else {
             setIsValidLocation(false);
             setStatus('❌ Öğretmen henüz konum paylaşmamış');
+            
+            setDebugLogs(prev => [...prev, `
+              ----- Konum Bulunamadı -----
+              localStorage boş: ${localStorage.getItem('classLocation') === null}
+              sessionStorage boş: ${sessionStorage.getItem('classLocation') === null}
+            `]);
           }
         }
       },
@@ -415,10 +422,10 @@ const AttendanceSystem = () => {
         setStatus(`❌ Konum hatası: ${error.message}`);
         setIsValidLocation(false);
         
-        // Hata debug log
         setDebugLogs(prev => [...prev, `
           ----- Konum Hatası -----
           Hata: ${error.message}
+          Mod: ${mode}
         `]);
       }
     );
