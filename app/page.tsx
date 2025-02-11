@@ -625,11 +625,6 @@ const AttendanceSystem = () => {
           // Eğer yeni giren öğrenci numarası, daha önce yoklama alan öğrenci numarasından farklıysa engelle
           setStatus(`❌ Bu cihazda zaten ${checkData.studentId} numaralı öğrenci yoklaması alınmış. Aynı cihazda birden fazla öğrencinin yoklaması alınamaz`);
           return;
-        } else {
-          // Aynı öğrenci tekrar aynı numarayla giriş yaparsa sorun yok
-          setStatus('✅ Öğrenci numarası doğrulandı');
-          setIsValidLocation(true);
-          return;
         }
       }
     }
@@ -710,6 +705,12 @@ const AttendanceSystem = () => {
         }
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
+    
+      // Yoklama başarılıysa local storage'a kaydet
+      localStorage.setItem('lastAttendanceCheck', JSON.stringify({
+        studentId: studentId,
+        timestamp: new Date().toISOString()
+      }));
     
       // Öğrencinin adını ve soyadını göster
       setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
