@@ -174,7 +174,7 @@ const AttendanceSystem = () => {
   const [validStudents, setValidStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [deviceBlocked, setDeviceBlocked] = useState<boolean>(false);
+  //const [deviceBlocked, setDeviceBlocked] = useState<boolean>(false);
   const [isValidLocation, setIsValidLocation] = useState<boolean>(false);
   const [classLocation, setClassLocation] = useState<Location | null>(null);
 
@@ -183,19 +183,8 @@ const AttendanceSystem = () => {
       const lastAttendanceCheck = localStorage.getItem('lastAttendanceCheck');
       if (lastAttendanceCheck) {
         const checkData = JSON.parse(lastAttendanceCheck);
-        const now = new Date();
-        const checkTime = new Date(checkData.timestamp);
-        
-        // Aynı gün içinde kontrol
-        if (now.toDateString() === checkTime.toDateString()) {
-          setStudentId(checkData.studentId); // Önceki öğrenci numarasını otomatik doldur
-          setDeviceBlocked(true); // Cihazı blokla
-          setStatus('⚠️ Bu cihaz bugün zaten yoklama için kullanılmış');
-        } else {
-          // Gün değişmişse bloğu kaldır
-          localStorage.removeItem('lastAttendanceCheck');
-          setDeviceBlocked(false);
-        }
+        // Sadece son yoklama alınan öğrenci numarasını state'e set edelim
+        setStudentId(checkData.studentId);
       }
     }
   }, [mode]);
@@ -545,7 +534,7 @@ const AttendanceSystem = () => {
         setIsValidLocation(false);
         return;
       }
-
+  
       // O gün için daha önce kullanılmış bir cihaz kontrolü
       const lastAttendanceCheck = localStorage.getItem('lastAttendanceCheck');
       if (lastAttendanceCheck) {
@@ -563,7 +552,7 @@ const AttendanceSystem = () => {
       }
       
       setStatus('✅ Öğrenci numarası doğrulandı');
-      setIsValidLocation(true); // Eğer tüm kontroller geçildiyse konum doğrulamayı aktif et
+      setIsValidLocation(true);
     }
   };
 
@@ -836,7 +825,7 @@ const AttendanceSystem = () => {
                       ? 'border-red-500 focus:ring-red-500 text-red-800'
                       : 'border-blue-400 focus:ring-blue-500 text-blue-900'
                   }`}
-                  disabled={isLoading || deviceBlocked}
+                  disabled={isLoading}
                 />
   
                 {studentId && (
@@ -851,12 +840,6 @@ const AttendanceSystem = () => {
                   </p>
                 )}
   
-                {deviceBlocked && (
-                  <div className="mt-2 p-3 bg-yellow-100 text-yellow-800 rounded-lg">
-                    <p className="text-sm">Bu cihaz bugün {studentId} numaralı öğrenci için kullanılmış.</p>
-                    <p className="text-xs mt-1">Her cihaz günde sadece bir öğrenci için yoklama yapabilir.</p>
-                  </div>
-                )}
   
                 <button
                   onClick={getLocation}
