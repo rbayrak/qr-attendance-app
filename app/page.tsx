@@ -590,48 +590,46 @@ const AttendanceSystem = () => {
     const newId = e.target.value;
     setStudentId(newId);
     
-    if (newId && validStudents.length > 0) {
-      // Önce öğrenci listesinde var mı kontrol et
-      const isValid = validStudents.some(s => s.studentId === newId);
-      if (!isValid) {
-        setStatus('⚠️ Bu öğrenci numarası listede yok');
-        setIsValidLocation(false);
-        return;
-      }
-  
-      // O gün için daha önce kullanılmış bir cihaz kontrolü
-      const lastAttendanceCheck = localStorage.getItem('lastAttendanceCheck');
-      if (lastAttendanceCheck) {
-        const checkData = JSON.parse(lastAttendanceCheck);
-        const now = new Date();
-        const checkTime = new Date(checkData.timestamp);
-        
-        if (now.toDateString() === checkTime.toDateString()) {
-          if (checkData.studentId !== newId) {
-            const previousStudent = validStudents.find(s => s.studentId === checkData.studentId);
-            if (previousStudent) {
-              setStatus(`❌ Bu cihazda zaten ${checkData.studentId} numaralı öğrenci yoklaması alınmış. Aynı cihazda birden fazla öğrencinin yoklaması alınamaz`);
-              setIsValidLocation(false);
-              return;
-            }
-          } else {
-            // Aynı öğrenci tekrar giriş yapıyor
-            setStatus('✅ Öğrenci numarası doğrulandı');
-            setIsValidLocation(true);
-            return;
-          }
-        }
-      } else {
-        // Hiç yoklama alınmamış
-        setStatus('✅ Öğrenci numarası doğrulandı');
-        setIsValidLocation(true);
-        return;
-      }
-    } else {
-      // Öğrenci numarası girilmemiş veya liste yüklenmemiş
-      setIsValidLocation(false);
+    // Buton durumlarını resetle
+    setIsValidLocation(false);
+    
+    if (!newId) {
       setStatus('');
+      return;
     }
+    
+    if (validStudents.length === 0) {
+      setStatus('⚠️ Öğrenci listesi henüz yüklenmedi');
+      return;
+    }
+    
+    // Öğrenciyi listede kontrol et
+    const validStudent = validStudents.find(s => s.studentId === newId);
+    
+    if (!validStudent) {
+      setStatus('⚠️ Bu öğrenci numarası listede yok');
+      return;
+    }
+    
+    // O gün için daha önce kullanılmış bir cihaz kontrolü
+    const lastAttendanceCheck = localStorage.getItem('lastAttendanceCheck');
+    
+    if (lastAttendanceCheck) {
+      const checkData = JSON.parse(lastAttendanceCheck);
+      const now = new Date();
+      const checkTime = new Date(checkData.timestamp);
+      
+      // Aynı gün içinde başka bir öğrenci numarası ile yoklama alınmış mı?
+      if (now.toDateString() === checkTime.toDateString()) {
+        if (checkData.studentId !== newId) {
+          setStatus(`❌ Bu cihazda zaten ${checkData.studentId} numaralı öğrenci yoklaması alınmış. Aynı cihazda birden fazla öğrencinin yoklaması alınamaz`);
+          return;
+        }
+      }
+    }
+    
+    // Tüm kontrolleri geçtiyse
+    setStatus('✅ Öğrenci numarası doğrulandı');
   };
 
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
@@ -921,12 +919,12 @@ const AttendanceSystem = () => {
   
                 <button
                   onClick={getLocation}
-                  className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 disabled:opacity-50"
+                  className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={
                     isLoading || 
                     !studentId || 
-                    !validStudents.some(s => s.studentId === studentId) || 
-                    status.includes('❌ Bu cihazda zaten') // ❌ ile başlayanları kontrol et
+                    status.startsWith('❌') ||
+                    !validStudents.some(s => s.studentId === studentId)
                   }
                 >
                   <MapPin size={18} /> Konumu Doğrula
@@ -934,14 +932,14 @@ const AttendanceSystem = () => {
   
                 <button
                   onClick={() => setIsScanning(!isScanning)}
-                  className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                  className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={
                     !location || 
                     !studentId || 
+                    status.startsWith('❌') ||
                     !validStudents.some(s => s.studentId === studentId) || 
                     !isValidLocation ||
-                    isLoading ||
-                    status.includes('Bu cihazda zaten')
+                    isLoading
                   }
                 >
                   {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
