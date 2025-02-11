@@ -592,25 +592,19 @@ const AttendanceSystem = () => {
         
         if (now.toDateString() === checkTime.toDateString()) {
           if (checkData.studentId !== newId) {
-            // checkData.studentId numarasına sahip öğrenciyi bul
             const previousStudent = validStudents.find(s => s.studentId === checkData.studentId);
             if (previousStudent) {
               setStatus(`❌ Bu cihazda zaten ${checkData.studentId} numaralı öğrenci yoklaması alınmış. Aynı cihazda birden fazla öğrencinin yoklaması alınamaz`);
               setIsValidLocation(false);
               return;
             }
-          } else {
-            // Aynı öğrenci tekrar giriş yapıyor
-            setStatus('✅ Öğrenci numarası doğrulandı');
-            setIsValidLocation(false); // QR tarama butonu hala deaktif kalsın
-            return;
           }
         }
       }
       
-      // Hiç yoklama alınmamış veya farklı günde
+      // Hiç yoklama alınmamış, farklı gün veya aynı öğrenci tekrar giriş yapıyor
       setStatus('✅ Öğrenci numarası doğrulandı');
-      setIsValidLocation(false); // QR tarama butonu hala deaktif kalsın
+      setIsValidLocation(true); // Burayı true yaptık ki konum doğrulaması yapılabilsin
     } else {
       // Öğrenci numarası girilmemiş veya liste yüklenmemiş
       setIsValidLocation(false);
@@ -906,7 +900,12 @@ const AttendanceSystem = () => {
                 <button
                   onClick={getLocation}
                   className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 disabled:opacity-50"
-                  disabled={isLoading || !studentId || !validStudents.some(s => s.studentId === studentId) || status.includes('Bu cihazda zaten')}
+                  disabled={
+                    isLoading || 
+                    !studentId || 
+                    !validStudents.some(s => s.studentId === studentId) || 
+                    status.includes('❌ Bu cihazda zaten') // ❌ ile başlayanları kontrol et
+                  }
                 >
                   <MapPin size={18} /> Konumu Doğrula
                 </button>
