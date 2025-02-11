@@ -467,19 +467,17 @@ const AttendanceSystem = () => {
       try {
         const response = await fetch('/api/location');
         if (response.ok) {
-          // Başarılı yoklama durumunda localStorage'a kaydet
-          localStorage.setItem('lastAttendanceCheck', JSON.stringify({
-            timestamp: new Date().toISOString(),
-            studentId: studentId
-          }));
+          const classLoc = await response.json();
+          setClassLocation(classLoc);
           
-          // Öğrencinin adını göster
-          const student = validStudents.find(s => s.studentId === studentId);
-          setStatus(`✅ Sn. ${student?.studentName}, yoklamanız başarıyla kaydedildi`);
-          setIsScanning(false);
-          if (html5QrCode) {
-            await html5QrCode.stop();
-          }
+          // Storage'lara kaydet
+          localStorage.setItem('classLocation', JSON.stringify(classLoc));
+          sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
+    
+          setDebugLogs(prev => [...prev, `
+            ----- Sınıf Konumu Alındı -----
+            Konum: ${JSON.stringify(classLoc)}
+          `]);
         }
       } catch (error) {
         setDebugLogs(prev => [...prev, `
