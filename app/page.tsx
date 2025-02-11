@@ -478,20 +478,19 @@ const AttendanceSystem = () => {
       try {
         const response = await fetch('/api/location');
         if (response.ok) {
-          const classLoc = await response.json();
+          // Başarılı yoklama durumunda localStorage'a kaydet
+          localStorage.setItem('lastAttendanceCheck', JSON.stringify({
+            timestamp: new Date().toISOString(),
+            studentId: studentId
+          }));
           
-          // API'den gelen konumu storage'lara kaydet
-          localStorage.setItem('classLocation', JSON.stringify(classLoc));
-          sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
-          
-          setClassLocation(classLoc);
-          
-          setDebugLogs(prev => [...prev, `
-            ----- API'den Konum Bilgisi Alındı -----
-            Sınıf Konumu: ${classLoc.lat}, ${classLoc.lng}
-            localStorage: ${localStorage.getItem('classLocation')}
-            sessionStorage: ${sessionStorage.getItem('classLocation')}
-          `]);
+          // Öğrencinin adını göster
+          const student = validStudents.find(s => s.studentId === studentId);
+          setStatus(`✅ Sn. ${student?.studentName}, yoklamanız başarıyla kaydedildi`);
+          setIsScanning(false);
+          if (html5QrCode) {
+            await html5QrCode.stop();
+          }
         }
       } catch (error) {
         setDebugLogs(prev => [...prev, `
@@ -539,12 +538,30 @@ const AttendanceSystem = () => {
     setStudentId(newId);
     
     if (newId) {
+      // Önce öğrenci listesinde var mı kontrol et
       const isValid = validStudents.some(s => s.studentId === newId);
       if (!isValid) {
         setStatus('⚠️ Bu öğrenci numarası listede yok');
-      } else {
-        setStatus('✅ Öğrenci numarası doğrulandı');
+        return;
       }
+  
+      // O gün için daha önce kullanılmış bir öğrenci numarası mı kontrol et
+      const lastAttendanceCheck = localStorage.getItem('lastAttendanceCheck');
+      if (lastAttendanceCheck) {
+        const checkData = JSON.parse(lastAttendanceCheck);
+        const now = new Date();
+        const checkTime = new Date(checkData.timestamp);
+        
+        if (now.toDateString() === checkTime.toDateString()) {
+          if (checkData.studentId !== newId) {
+            setStatus(`⚠️ Bu cihazdan bugün ${checkData.studentId} numaralı öğrenci için yoklama alınmış`);
+            setIsValidLocation(false); // QR taramayı engelle
+            return;
+          }
+        }
+      }
+      
+      setStatus('✅ Öğrenci numarası doğrulandı');
     }
   };
 
@@ -732,21 +749,28 @@ const AttendanceSystem = () => {
   
         {mode === 'teacher' ? (
           <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
-            <h2 className="text-2xl font-bold">Öğretmen Paneli</h2>
+            <div className="flex items-center justify-center mb-6">
+                <h2 className="text-xl font-bold text-gray-800 mr-2">Öğretmen Paneli</h2>
+                <img 
+                  src="/ytu-logo.png" 
+                  alt="YTÜ Logo" 
+                  className="w-14 h-14 object-contain ml-1"
+                />
+              </div>
             
-            <div className="flex items-center gap-2">
-              <Calendar size={20} />
-              <select 
-                value={selectedWeek}
-                onChange={(e) => setSelectedWeek(Number(e.target.value))}
-                className="p-2 border rounded-lg flex-1"
-                disabled={isLoading}
-              >
-                {[...Array(16)].map((_, i) => (
-                  <option key={i+1} value={i+1}>Hafta {i+1}</option>
-                ))}
-              </select>
-            </div>
+              <div className="flex items-center gap-2">
+                <Calendar size={24} className="text-blue-600" />
+                <select 
+                  value={selectedWeek}
+                  onChange={(e) => setSelectedWeek(Number(e.target.value))}
+                  className="p-3 border-2 border-gray-300 rounded-lg flex-1 text-lg font-medium text-gray-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 appearance-none"
+                  disabled={isLoading}
+                >
+                  {[...Array(16)].map((_, i) => (
+                    <option key={i+1} value={i+1}>Hafta {i+1}</option>
+                  ))}
+                </select>
+              </div>
   
             <button
               onClick={getLocation}
@@ -792,11 +816,11 @@ const AttendanceSystem = () => {
           <>
             <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
               <div className="flex items-center justify-center mb-6">
-                <h2 className="text-2xl font-bold text-gray-800 mr-4">Öğrenci Paneli</h2>
+                <h2 className="text-xl font-bold text-gray-800 mr-2">Öğrenci Yoklaması</h2>
                 <img 
                   src="/ytu-logo.png" 
                   alt="YTÜ Logo" 
-                  className="w-12 h-12 object-contain"
+                  className="w-14 h-14 object-contain ml-1"
                 />
               </div>
               
@@ -843,7 +867,14 @@ const AttendanceSystem = () => {
                 <button
                   onClick={() => setIsScanning(!isScanning)}
                   className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-                  disabled={!location || !studentId || !validStudents.some(s => s.studentId === studentId) || !isValidLocation || isLoading}
+                  disabled={
+                    !location || 
+                    !studentId || 
+                    !validStudents.some(s => s.studentId === studentId) || 
+                    !isValidLocation ||
+                    isLoading ||
+                    status.includes('Bu cihazdan bugün') // Yeni kontrol
+                  }
                 >
                   {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
                 </button>
