@@ -365,7 +365,36 @@ const AttendanceSystem = () => {
         setLocation(currentLocation);
   
         if (mode === 'teacher') {
-          // Öğretmen modu kodları aynı kalacak...
+          try {
+            // Sadece API'ye kaydet
+            await fetch('/api/location', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(currentLocation)
+            });
+            
+            // Local ve session storage'a kaydet
+            localStorage.setItem('classLocation', JSON.stringify(currentLocation));
+            sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
+            
+            setClassLocation(currentLocation);
+            setStatus('📍 Konum alındı');
+            
+            // Debug log ekle
+            setDebugLogs(prev => [...prev, `
+              ----- Öğretmen Konum Kaydı -----
+              Kaydedilen Konum: ${currentLocation.lat}, ${currentLocation.lng}
+              LocalStorage: ${localStorage.getItem('classLocation')}
+              SessionStorage: ${sessionStorage.getItem('classLocation')}
+            `]);
+  
+          } catch (error) {
+            setStatus('❌ Konum kaydedilemedi');
+            setDebugLogs(prev => [...prev, `
+              ----- Konum Kaydetme Hatası -----
+              Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
+            `]);
+          }
         } else if (mode === 'student') {
           // Önce localStorage'dan kontrol et
           const savedClassLocation = localStorage.getItem('classLocation');
@@ -545,7 +574,7 @@ const AttendanceSystem = () => {
     const newId = e.target.value;
     setStudentId(newId);
     
-    if (newId) {
+    if (newId && validStudents.length > 0) {
       // Önce öğrenci listesinde var mı kontrol et
       const isValid = validStudents.some(s => s.studentId === newId);
       if (!isValid) {
@@ -562,12 +591,14 @@ const AttendanceSystem = () => {
         const checkTime = new Date(checkData.timestamp);
         
         if (now.toDateString() === checkTime.toDateString()) {
-          // checkData.studentId numarasına sahip öğrencinin adını bulalım
-          const previousStudent = validStudents.find(s => s.studentId === checkData.studentId);
           if (checkData.studentId !== newId) {
-            setStatus(`⚠️ Bu cihazdan bugün ${previousStudent?.studentName} (${checkData.studentId}) numaralı öğrenci için yoklama alınmış`);
-            setIsValidLocation(false); // QR taramayı engelle
-            return;
+            // checkData.studentId numarasına sahip öğrenciyi bul
+            const previousStudent = validStudents.find(s => s.studentId === checkData.studentId);
+            if (previousStudent) {
+              setStatus(`⚠️ Bu cihazdan bugün ${previousStudent.studentName} (${checkData.studentId}) numaralı öğrenci için yoklama alınmış`);
+              setIsValidLocation(false);
+              return;
+            }
           }
         }
       }
