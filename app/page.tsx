@@ -542,10 +542,11 @@ const AttendanceSystem = () => {
       const isValid = validStudents.some(s => s.studentId === newId);
       if (!isValid) {
         setStatus('⚠️ Bu öğrenci numarası listede yok');
+        setIsValidLocation(false);
         return;
       }
-  
-      // O gün için daha önce kullanılmış bir öğrenci numarası mı kontrol et
+
+      // O gün için daha önce kullanılmış bir cihaz kontrolü
       const lastAttendanceCheck = localStorage.getItem('lastAttendanceCheck');
       if (lastAttendanceCheck) {
         const checkData = JSON.parse(lastAttendanceCheck);
@@ -562,6 +563,7 @@ const AttendanceSystem = () => {
       }
       
       setStatus('✅ Öğrenci numarası doğrulandı');
+      setIsValidLocation(true); // Eğer tüm kontroller geçildiyse konum doğrulamayı aktif et
     }
   };
 
