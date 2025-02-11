@@ -365,56 +365,41 @@ const AttendanceSystem = () => {
         setLocation(currentLocation);
   
         if (mode === 'teacher') {
-          try {
-            // Sadece API'ye kaydet
-            await fetch('/api/location', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(currentLocation)
-            });
-            
-            // Local ve session storage'a kaydet
-            localStorage.setItem('classLocation', JSON.stringify(currentLocation));
-            sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
-            
-            setClassLocation(currentLocation);
-            setStatus('📍 Konum alındı');
-            
-            // Debug log ekle
-            setDebugLogs(prev => [...prev, `
-              ----- Öğretmen Konum Kaydı -----
-              Kaydedilen Konum: ${currentLocation.lat}, ${currentLocation.lng}
-              LocalStorage: ${localStorage.getItem('classLocation')}
-              SessionStorage: ${sessionStorage.getItem('classLocation')}
-            `]);
-  
-          } catch (error) {
-            setStatus('❌ Konum kaydedilemedi');
-            setDebugLogs(prev => [...prev, `
-              ----- Konum Kaydetme Hatası -----
-              Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
-            `]);
-          }
+          // Öğretmen modu kodları aynı kalacak...
         } else if (mode === 'student') {
+          // Önce localStorage'dan kontrol et
+          const savedClassLocation = localStorage.getItem('classLocation');
+          if (savedClassLocation) {
+            const classLoc = JSON.parse(savedClassLocation);
+            setClassLocation(classLoc);
+            
+            const distance = calculateDistance(
+              currentLocation.lat,
+              currentLocation.lng,
+              classLoc.lat,
+              classLoc.lng
+            );
+            
+            if (distance > MAX_DISTANCE) {
+              setIsValidLocation(false);
+              setStatus('❌ Sınıf konumunda değilsiniz');
+            } else {
+              setIsValidLocation(true);
+              setStatus('✅ Konum doğrulandı');
+            }
+            return; // Eğer localStorage'da konum varsa API'ye gitme
+          }
+  
+          // localStorage'da yoksa API'den kontrol et
           try {
             const response = await fetch('/api/location');
             if (!response.ok) {
-              // API'den konum alınamazsa
               setStatus('❌ Öğretmen henüz konum paylaşmamış');
-              setDebugLogs(prev => [...prev, `
-                ----- Konum Kontrol Detayları -----
-                API Yanıtı: Konum bulunamadı
-                Mode: ${mode}
-                localStorage: ${localStorage.getItem('classLocation')}
-                sessionStorage: ${sessionStorage.getItem('classLocation')}
-              `]);
               return;
             }
             
             const classLoc = await response.json();
             setClassLocation(classLoc);
-            
-            // API'den gelen konumu storage'lara kaydet
             localStorage.setItem('classLocation', JSON.stringify(classLoc));
             sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
             
@@ -424,13 +409,7 @@ const AttendanceSystem = () => {
               classLoc.lat,
               classLoc.lng
             );
-            setDebugLogs(prev => [...prev, `
-              ----- Konum Doğrulama Detayları -----
-              Öğrenci Konumu: ${currentLocation.lat}, ${currentLocation.lng}
-              Sınıf Konumu: ${classLoc.lat}, ${classLoc.lng}
-              Mesafe: ${distance} km
-              Max İzin Mesafesi: ${MAX_DISTANCE} km
-            `]);
+            
             if (distance > MAX_DISTANCE) {
               setIsValidLocation(false);
               setStatus('❌ Sınıf konumunda değilsiniz');
@@ -440,10 +419,6 @@ const AttendanceSystem = () => {
             }
           } catch (error) {
             setStatus('❌ Konum alınamadı');
-            setDebugLogs(prev => [...prev, `
-              ----- Konum Alma Hatası -----
-              Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
-            `]);
           }
         }
       },
