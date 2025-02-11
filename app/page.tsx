@@ -822,12 +822,11 @@ const AttendanceSystem = () => {
   
             <button
               onClick={getLocation}
-              className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 disabled:opacity-50"
-              disabled={isLoading || !studentId || !validStudents.some(s => s.studentId === studentId)} // Öğrenci no kontrolü ekledik
+              className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
+              disabled={isLoading}
             >
-              <MapPin size={18} /> Konumu Doğrula
+              <MapPin size={18} /> Konum Al
             </button>
-
   
             <button
               onClick={generateQR}
@@ -901,8 +900,8 @@ const AttendanceSystem = () => {
   
                 <button
                   onClick={getLocation}
-                  className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
-                  disabled={isLoading}
+                  className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 disabled:opacity-50"
+                  disabled={isLoading || !studentId || !validStudents.some(s => s.studentId === studentId) || status.includes('Bu cihazda zaten')}
                 >
                   <MapPin size={18} /> Konumu Doğrula
                 </button>
@@ -916,7 +915,7 @@ const AttendanceSystem = () => {
                     !validStudents.some(s => s.studentId === studentId) || 
                     !isValidLocation ||
                     isLoading ||
-                    status.includes('Bu cihazdan bugün')
+                    status.includes('Bu cihazda zaten')
                   }
                 >
                   {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
