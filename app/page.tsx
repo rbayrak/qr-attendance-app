@@ -562,8 +562,10 @@ const AttendanceSystem = () => {
         const checkTime = new Date(checkData.timestamp);
         
         if (now.toDateString() === checkTime.toDateString()) {
+          // checkData.studentId numarasına sahip öğrencinin adını bulalım
+          const previousStudent = validStudents.find(s => s.studentId === checkData.studentId);
           if (checkData.studentId !== newId) {
-            setStatus(`⚠️ Bu cihazdan bugün ${checkData.studentId} numaralı öğrenci için yoklama alınmış`);
+            setStatus(`⚠️ Bu cihazdan bugün ${previousStudent?.studentName} (${checkData.studentId}) numaralı öğrenci için yoklama alınmış`);
             setIsValidLocation(false); // QR taramayı engelle
             return;
           }
