@@ -254,35 +254,15 @@ const AttendanceSystem = () => {
           }));
           
           setValidStudents(students);
-  
-          // Liste yüklendikten sonra mevcut öğrenci numarasını kontrol et
-          if (studentId) {
-            const lastAttendanceCheck = localStorage.getItem('lastAttendanceCheck');
-            if (lastAttendanceCheck) {
-              const checkData = JSON.parse(lastAttendanceCheck);
-              const now = new Date();
-              const checkTime = new Date(checkData.timestamp);
-              
-              if (now.toDateString() === checkTime.toDateString()) {
-                if (checkData.studentId !== studentId) {
-                  const previousStudent = students.find(s => s.studentId === checkData.studentId);
-                  if (previousStudent) {
-                    setStatus(`⚠️ Bu cihazdan bugün ${previousStudent.studentName} (${checkData.studentId}) numaralı öğrenci için yoklama alınmış`);
-                    setIsValidLocation(false);
-                  }
-                }
-              }
-            }
-          }
         }
       } catch (error) {
         console.error('Öğrenci listesi yükleme hatası:', error);
         setStatus('❌ Öğrenci listesi yüklenemedi');
       }
     };
-  
+
     loadStudentList();
-  }, [mode, studentId]); // studentId'yi dependency olarak ekledik
+  }, [mode]);
 
   
 
@@ -615,7 +595,7 @@ const AttendanceSystem = () => {
             // checkData.studentId numarasına sahip öğrenciyi bul
             const previousStudent = validStudents.find(s => s.studentId === checkData.studentId);
             if (previousStudent) {
-              setStatus(`⚠️ Bu cihazdan bugün ${previousStudent.studentName} (${checkData.studentId}) numaralı öğrenci için yoklama alınmış`);
+              setStatus(`❌ Bu cihazda zaten ${checkData.studentId} numaralı öğrenci yoklaması alınmış. Aynı cihazda birden fazla öğrencinin yoklaması alınamaz`);
               setIsValidLocation(false);
               return;
             }
@@ -623,8 +603,13 @@ const AttendanceSystem = () => {
         }
       }
       
+      // Tüm kontroller geçildi, öğrenci numarası doğrulandı
       setStatus('✅ Öğrenci numarası doğrulandı');
-      setIsValidLocation(true);
+      setIsValidLocation(false); // QR tarama butonu hala deaktif kalsın
+    } else {
+      // Öğrenci numarası girilmemiş veya liste yüklenmemiş
+      setIsValidLocation(false);
+      setStatus('');
     }
   };
 
@@ -837,11 +822,12 @@ const AttendanceSystem = () => {
   
             <button
               onClick={getLocation}
-              className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
-              disabled={isLoading}
+              className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 disabled:opacity-50"
+              disabled={isLoading || !studentId || !validStudents.some(s => s.studentId === studentId)} // Öğrenci no kontrolü ekledik
             >
-              <MapPin size={18} /> Konum Al
+              <MapPin size={18} /> Konumu Doğrula
             </button>
+
   
             <button
               onClick={generateQR}
@@ -930,7 +916,7 @@ const AttendanceSystem = () => {
                     !validStudents.some(s => s.studentId === studentId) || 
                     !isValidLocation ||
                     isLoading ||
-                    status.includes('Bu cihazdan bugün') // Yeni kontrol
+                    status.includes('Bu cihazdan bugün')
                   }
                 >
                   {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
