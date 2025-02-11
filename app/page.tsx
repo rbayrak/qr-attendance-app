@@ -254,15 +254,35 @@ const AttendanceSystem = () => {
           }));
           
           setValidStudents(students);
+  
+          // Liste yüklendikten sonra mevcut öğrenci numarasını kontrol et
+          if (studentId) {
+            const lastAttendanceCheck = localStorage.getItem('lastAttendanceCheck');
+            if (lastAttendanceCheck) {
+              const checkData = JSON.parse(lastAttendanceCheck);
+              const now = new Date();
+              const checkTime = new Date(checkData.timestamp);
+              
+              if (now.toDateString() === checkTime.toDateString()) {
+                if (checkData.studentId !== studentId) {
+                  const previousStudent = students.find(s => s.studentId === checkData.studentId);
+                  if (previousStudent) {
+                    setStatus(`⚠️ Bu cihazdan bugün ${previousStudent.studentName} (${checkData.studentId}) numaralı öğrenci için yoklama alınmış`);
+                    setIsValidLocation(false);
+                  }
+                }
+              }
+            }
+          }
         }
       } catch (error) {
         console.error('Öğrenci listesi yükleme hatası:', error);
         setStatus('❌ Öğrenci listesi yüklenemedi');
       }
     };
-
+  
     loadStudentList();
-  }, [mode]);
+  }, [mode, studentId]); // studentId'yi dependency olarak ekledik
 
   
 
