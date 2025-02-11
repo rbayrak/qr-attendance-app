@@ -7,11 +7,10 @@ declare global {
     google: any;
   }
 }
-import ytuLogo from '/ytu-logo.png';
+
 import React, { useState, useEffect } from 'react';
-//import { Camera, Calendar } from 'lucide-react';
+import { Camera, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { MapPin, Calendar } from 'lucide-react';
 
 console.log('ENV Check:', {
   SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID,
@@ -20,7 +19,7 @@ console.log('ENV Check:', {
 });
 
 const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID;
-const MAX_DISTANCE = 0.8;
+const MAX_DISTANCE = 0.7;
 
 // Google Auth yardımcı fonksiyonları
 let tokenClient: any;
@@ -175,8 +174,6 @@ const AttendanceSystem = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [deviceBlocked, setDeviceBlocked] = useState<boolean>(false);
-  const [isValidLocation, setIsValidLocation] = useState<boolean>(false);
-  const [classLocation, setClassLocation] = useState<Location | null>(null);
 
   useEffect(() => {
     if (mode === 'student') {
@@ -201,51 +198,13 @@ const AttendanceSystem = () => {
   }, [mode]);
   
   const handleModeChange = () => {
-    setDebugLogs(prev => [...prev, `
-      ----- Mode Değişimi Başlıyor -----
-      Mevcut Mod: ${mode}
-      Hedef Mod: ${mode === 'student' ? 'teacher' : 'student'}
-      localStorage: ${localStorage.getItem('classLocation')}
-      sessionStorage: ${sessionStorage.getItem('classLocation')}
-    `]);
-  
     if (mode === 'student') {
       setShowPasswordModal(true);
     } else {
-      // Sayfa yenilemeden mode değiştir
+      // Öğrenci moduna geçerken direkt geçiş yap
       setMode('student');
       setIsTeacherAuthenticated(false);
-      // Storage'ı koruyalım, temizlemeyelim
-      const savedClassLocation = localStorage.getItem('classLocation');
-      if (savedClassLocation) {
-        setClassLocation(JSON.parse(savedClassLocation));
-      }
     }
-  };
-  
-  // handlePasswordSubmit fonksiyonunu da güncelleyelim
-  const handlePasswordSubmit = () => {
-    if (password === 'teacher123') {
-      setIsTeacherAuthenticated(true);
-      setMode('teacher');
-      setShowPasswordModal(false);
-      // Storage'ı koruyalım
-      const savedClassLocation = localStorage.getItem('classLocation');
-      if (savedClassLocation) {
-        setClassLocation(JSON.parse(savedClassLocation));
-      }
-      // Google yetkilendirmesini başlat
-      initializeGoogleAuth().then(() => {
-        setIsAuthenticated(true);
-        fetchStudentList();
-      }).catch(error => {
-        console.error('Google Auth başlatma hatası:', error);
-        setStatus('❌ Google yetkilendirme hatası');
-      });
-    } else {
-      setStatus('❌ Yanlış şifre');
-    }
-    setPassword('');
   };
 
 
@@ -275,8 +234,26 @@ const AttendanceSystem = () => {
     loadStudentList();
   }, [mode]);
 
-  
+  const handlePasswordSubmit = () => {
+    if (password === 'teacher123') {
+      setIsTeacherAuthenticated(true);
+      setMode('teacher');
+      setShowPasswordModal(false);
+      // Öğretmen moduna geçince Google yetkilendirmesini başlat
+      initializeGoogleAuth().then(() => {
+        setIsAuthenticated(true);
+        fetchStudentList();
+      }).catch(error => {
+        console.error('Google Auth başlatma hatası:', error);
+        setStatus('❌ Google yetkilendirme hatası');
+      });
+    } else {
+      setStatus('❌ Yanlış şifre');
+    }
+    setPassword(''); // Şifreyi temizle
+  };
 
+  
 
   // Öğrenci listesini Google Sheets'ten çekme
   const fetchStudentList = async () => {
@@ -358,180 +335,47 @@ const AttendanceSystem = () => {
       setIsLoading(false);
     }
   };
-  
-  // getLocation fonksiyonunu güncelle (diğer fonksiyonların yanına):
-  const getLocation = async () => {
+  const getLocation = () => {
     if (!navigator.geolocation) {
       setStatus('❌ Konum desteği yok');
       return;
     }
-  
+
     setStatus('📍 Konum alınıyor...');
     navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const currentLocation = {
+      (position) => {
+        setLocation({
           lat: position.coords.latitude,
           lng: position.coords.longitude
-        };
-        setLocation(currentLocation);
-  
-        if (mode === 'teacher') {
-          try {
-            // Sadece API'ye kaydet
-            await fetch('/api/location', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(currentLocation)
-            });
-            
-            // Local ve session storage'a kaydet
-            localStorage.setItem('classLocation', JSON.stringify(currentLocation));
-            sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
-            
-            setClassLocation(currentLocation);
-            setStatus('📍 Konum alındı');
-            
-            // Debug log ekle
-            setDebugLogs(prev => [...prev, `
-              ----- Öğretmen Konum Kaydı -----
-              Kaydedilen Konum: ${currentLocation.lat}, ${currentLocation.lng}
-              LocalStorage: ${localStorage.getItem('classLocation')}
-              SessionStorage: ${sessionStorage.getItem('classLocation')}
-            `]);
-  
-          } catch (error) {
-            setStatus('❌ Konum kaydedilemedi');
-            setDebugLogs(prev => [...prev, `
-              ----- Konum Kaydetme Hatası -----
-              Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
-            `]);
-          }
-        } else if (mode === 'student') {
-          try {
-            const response = await fetch('/api/location');
-            if (!response.ok) {
-              // API'den konum alınamazsa
-              setStatus('❌ Öğretmen henüz konum paylaşmamış');
-              setDebugLogs(prev => [...prev, `
-                ----- Konum Kontrol Detayları -----
-                API Yanıtı: Konum bulunamadı
-                Mode: ${mode}
-                localStorage: ${localStorage.getItem('classLocation')}
-                sessionStorage: ${sessionStorage.getItem('classLocation')}
-              `]);
-              return;
-            }
-            
-            const classLoc = await response.json();
-            setClassLocation(classLoc);
-            
-            // API'den gelen konumu storage'lara kaydet
-            localStorage.setItem('classLocation', JSON.stringify(classLoc));
-            sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
-            
-            const distance = calculateDistance(
-              currentLocation.lat,
-              currentLocation.lng,
-              classLoc.lat,
-              classLoc.lng
-            );
-            setDebugLogs(prev => [...prev, `
-              ----- Konum Doğrulama Detayları -----
-              Öğrenci Konumu: ${currentLocation.lat}, ${currentLocation.lng}
-              Sınıf Konumu: ${classLoc.lat}, ${classLoc.lng}
-              Mesafe: ${distance} km
-              Max İzin Mesafesi: ${MAX_DISTANCE} km
-            `]);
-            if (distance > MAX_DISTANCE) {
-              setIsValidLocation(false);
-              setStatus('❌ Sınıf konumunda değilsiniz');
-            } else {
-              setIsValidLocation(true);
-              setStatus('✅ Konum doğrulandı');
-            }
-          } catch (error) {
-            setStatus('❌ Konum alınamadı');
-            setDebugLogs(prev => [...prev, `
-              ----- Konum Alma Hatası -----
-              Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
-            `]);
-          }
-        }
+        });
+        setStatus('📍 Konum alındı');
       },
       (error) => {
         setStatus(`❌ Konum hatası: ${error.message}`);
-        setIsValidLocation(false);
       }
     );
   };
 
-  // Diğer useEffect'lerin yanına ekleyin
-  useEffect(() => {
-    setDebugLogs(prev => [...prev, `
-      ----- Mode Değişimi -----
-      Yeni Mod: ${mode}
-      localStorage: ${localStorage.getItem('classLocation')}
-      sessionStorage: ${sessionStorage.getItem('classLocation')}
-    `]);
-  
-    const fetchClassLocation = async () => {
-      try {
-        const response = await fetch('/api/location');
-        if (response.ok) {
-          const classLoc = await response.json();
-          
-          // API'den gelen konumu storage'lara kaydet
-          localStorage.setItem('classLocation', JSON.stringify(classLoc));
-          sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
-          
-          setClassLocation(classLoc);
-          
-          setDebugLogs(prev => [...prev, `
-            ----- API'den Konum Bilgisi Alındı -----
-            Sınıf Konumu: ${classLoc.lat}, ${classLoc.lng}
-            localStorage: ${localStorage.getItem('classLocation')}
-            sessionStorage: ${sessionStorage.getItem('classLocation')}
-          `]);
-        }
-      } catch (error) {
-        setDebugLogs(prev => [...prev, `
-          ----- API Konum Alma Hatası -----
-          Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
-        `]);
-      }
-    };
-  
-    if (mode === 'student') {
-      fetchClassLocation();
-    }
-  }, [mode]);
-
-  const generateQR = async () => {
+  const generateQR = () => {
     if (!location) {
       setStatus('❌ Önce konum alın');
       return;
     }
     
-    try {
-      // Sadece API'ye kaydet
-      await fetch('/api/location', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(location)
-      });
-      
-      const payload = {
-        timestamp: Date.now(),
-        classLocation: location,
-        validUntil: Date.now() + 300000,
-        week: selectedWeek
-      };
-      
-      setQrData(JSON.stringify(payload));
-      setStatus('✅ QR kod oluşturuldu');
-    } catch (error) {
-      setStatus('❌ Konum kaydedilemedi');
-    }
+    const payload = {
+      timestamp: Date.now(),
+      classLocation: {
+        lat: Number(location.lat), // Number'a çevirdiğimizden emin olalım
+        lng: Number(location.lng)
+      },
+      validUntil: Date.now() + 300000,
+      week: selectedWeek
+    };
+    
+    console.log('QR payload:', payload); // QR içeriğini kontrol edelim
+
+    setQrData(JSON.stringify(payload));
+    setStatus('✅ QR kod oluşturuldu');
   };
 
   const handleStudentIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -556,36 +400,36 @@ const AttendanceSystem = () => {
       const scannedData = JSON.parse(decodedText);
       
       // Öğrenci kontrolü
-      const validStudent = validStudents.find(s => s.studentId === studentId);
-      if (!validStudent) {
+      const isValidStudent = validStudents.some(s => s.studentId === studentId);
+      if (!isValidStudent) {
         setStatus('❌ Öğrenci numarası listede bulunamadı');
         return;
       }
-    
+  
       if (scannedData.validUntil < Date.now()) {
         setStatus('❌ QR kod süresi dolmuş');
         return;
       }
-    
+  
       if (!location) {
         setStatus('❌ Önce konum alın');
         return;
       }
-    
+  
       const distance = calculateDistance(
         location.lat,
         location.lng,
         scannedData.classLocation.lat,
         scannedData.classLocation.lng
       );
-    
+  
       console.log('Mesafe:', distance, 'km');
-    
+  
       if (distance > MAX_DISTANCE) {
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
-    
+  
       // Backend API'ye istek at
       const response = await fetch('/api/attendance', {
         method: 'POST',
@@ -597,9 +441,9 @@ const AttendanceSystem = () => {
           week: scannedData.week
         })
       });
-    
+  
       const responseData = await response.json();
-    
+  
       // Debug loglarına API yanıtını ekleyelim
       setDebugLogs(prev => [...prev, `
         ----- Yoklama İşlemi Detayları -----
@@ -611,7 +455,7 @@ const AttendanceSystem = () => {
           API Yanıtı:
           ${JSON.stringify(responseData, null, 2)}
           `]);
-    
+  
       if (!response.ok) {
         // IP hatası kontrolü
         if (responseData.blockedStudentId) {
@@ -620,10 +464,8 @@ const AttendanceSystem = () => {
         }
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
-    
-      // Öğrencinin adını ve soyadını göster
-      setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
-      
+  
+      setStatus('✅ Yoklama kaydedildi');
       setIsScanning(false);
       if (html5QrCode) {
         await html5QrCode.stop();
@@ -720,6 +562,14 @@ const AttendanceSystem = () => {
         />
       )}
       <div className="max-w-md mx-auto space-y-6">
+        <button
+          onClick={handleModeChange}
+          className="w-full p-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+          disabled={isLoading}
+        >
+          {mode === 'teacher' ? '📱 Öğrenci Modu' : '👨🏫 Öğretmen Modu'}
+        </button>
+  
         {status && (
           <div className={`p-4 rounded-lg ${
             status.startsWith('❌') ? 'bg-red-100 text-red-800' :
@@ -732,35 +582,28 @@ const AttendanceSystem = () => {
   
         {mode === 'teacher' ? (
           <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
-            <div className="flex items-center justify-center mb-6">
-                <h2 className="text-xl font-bold text-gray-800 mr-2">Öğretmen Paneli</h2>
-                <img 
-                  src="/ytu-logo.png" 
-                  alt="YTÜ Logo" 
-                  className="w-14 h-14 object-contain ml-1"
-                />
-              </div>
+            <h2 className="text-2xl font-bold">Öğretmen Paneli</h2>
             
-              <div className="flex items-center gap-2">
-                <Calendar size={24} className="text-blue-600" />
-                <select 
-                  value={selectedWeek}
-                  onChange={(e) => setSelectedWeek(Number(e.target.value))}
-                  className="p-3 border-2 border-gray-300 rounded-lg flex-1 text-lg font-medium text-gray-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 appearance-none"
-                  disabled={isLoading}
-                >
-                  {[...Array(16)].map((_, i) => (
-                    <option key={i+1} value={i+1}>Hafta {i+1}</option>
-                  ))}
-                </select>
-              </div>
+            <div className="flex items-center gap-2">
+              <Calendar size={20} />
+              <select 
+                value={selectedWeek}
+                onChange={(e) => setSelectedWeek(Number(e.target.value))}
+                className="p-2 border rounded-lg flex-1"
+                disabled={isLoading}
+              >
+                {[...Array(16)].map((_, i) => (
+                  <option key={i+1} value={i+1}>Hafta {i+1}</option>
+                ))}
+              </select>
+            </div>
   
             <button
               onClick={getLocation}
               className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
               disabled={isLoading}
             >
-              <MapPin size={18} /> Konum Al
+              <Camera size={18} /> Konum Al
             </button>
   
             <button
@@ -796,85 +639,60 @@ const AttendanceSystem = () => {
             )}
           </div>
         ) : (
-          <>
-            <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
-              <div className="flex items-center justify-center mb-6">
-                <h2 className="text-xl font-bold text-gray-800 mr-2">Öğrenci Yoklaması</h2>
-                <img 
-                  src="/ytu-logo.png" 
-                  alt="YTÜ Logo" 
-                  className="w-14 h-14 object-contain ml-1"
-                />
-              </div>
-              
-              <div className="space-y-4">
-                <input
-                  value={studentId}
-                  onChange={handleStudentIdChange}
-                  placeholder="Öğrenci Numaranız"
-                  className={`w-full p-3 border-2 rounded-lg text-lg font-bold tracking-wider focus:ring-2 ${
-                    studentId && !validStudents.some(s => s.studentId === studentId)
-                      ? 'border-red-500 focus:ring-red-500 text-red-800'
-                      : 'border-blue-400 focus:ring-blue-500 text-blue-900'
-                  }`}
-                  disabled={isLoading || deviceBlocked}
-                />
+          <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
+            <h2 className="text-2xl font-bold">Öğrenci Paneli</h2>
+            
+            <div className="space-y-4">
+              <input
+                value={studentId}
+                onChange={handleStudentIdChange}
+                placeholder="Öğrenci Numaranız"
+                className={`w-full p-3 border rounded-lg focus:ring-2 ${
+                  studentId && !validStudents.some(s => s.studentId === studentId)
+                    ? 'border-red-500 focus:ring-red-500'
+                    : 'focus:ring-blue-500'
+                }`}
+                disabled={isLoading}
+              />
   
-                {studentId && (
-                  <p className={`text-sm ${
-                    validStudents.some(s => s.studentId === studentId)
-                      ? 'text-green-600'
-                      : 'text-red-600'
-                  }`}>
-                    {validStudents.some(s => s.studentId === studentId)
-                      ? '✅ Öğrenci numarası doğrulandı'
-                      : '❌ Öğrenci numarası listede bulunamadı'}
-                  </p>
-                )}
+              {studentId && (
+                <p className={`text-sm ${
+                  validStudents.some(s => s.studentId === studentId)
+                    ? 'text-green-600'
+                    : 'text-red-600'
+                }`}>
+                  {validStudents.some(s => s.studentId === studentId)
+                    ? '✅ Öğrenci numarası doğrulandı'
+                    : '❌ Öğrenci numarası listede bulunamadı'}
+                </p>
+              )}
   
-                {deviceBlocked && (
-                  <div className="mt-2 p-3 bg-yellow-100 text-yellow-800 rounded-lg">
-                    <p className="text-sm">Bu cihaz bugün {studentId} numaralı öğrenci için kullanılmış.</p>
-                    <p className="text-xs mt-1">Her cihaz günde sadece bir öğrenci için yoklama yapabilir.</p>
+              <button
+                onClick={getLocation}
+                className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
+                disabled={isLoading}
+              >
+                <Camera size={18} /> Konumu Doğrula
+              </button>
+  
+              <button
+                onClick={() => setIsScanning(!isScanning)}
+                className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                disabled={!location || !studentId || !validStudents.some(s => s.studentId === studentId) || isLoading}
+              >
+                {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
+              </button>
+  
+              {isScanning && (
+                <div className="relative aspect-square bg-gray-200 rounded-xl overflow-hidden">
+                  <div id="qr-reader" className="w-full h-full"></div>
+                  <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-sm">
+                    QR kodu kameraya gösterin
                   </div>
-                )}
-  
-                <button
-                  onClick={getLocation}
-                  className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
-                  disabled={isLoading}
-                >
-                  <MapPin size={18} /> Konumu Doğrula
-                </button>
-  
-                <button
-                  onClick={() => setIsScanning(!isScanning)}
-                  className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-                  disabled={!location || !studentId || !validStudents.some(s => s.studentId === studentId) || !isValidLocation || isLoading}
-                >
-                  {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
-                </button>
-  
-                {isScanning && (
-                  <div className="relative aspect-square bg-gray-200 rounded-xl overflow-hidden">
-                    <div id="qr-reader" className="w-full h-full"></div>
-                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-sm">
-                      QR kodu kameraya gösterin
-                    </div>
-                  </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
-  
-            {/* Öğretmen modu butonu en alta taşındı ve stili değiştirildi */}
-            <button
-              onClick={handleModeChange}
-              className="w-full p-3 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300 transition-colors mt-4"
-              disabled={isLoading}
-            >
-              👨🏫 Öğretmen Moduna Geç
-            </button>
-          </>
+          </div>
         )}
       </div>
     </div>
