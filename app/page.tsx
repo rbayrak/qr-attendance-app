@@ -183,11 +183,27 @@ const AttendanceSystem = () => {
       const lastAttendanceCheck = localStorage.getItem('lastAttendanceCheck');
       if (lastAttendanceCheck) {
         const checkData = JSON.parse(lastAttendanceCheck);
-        // Sadece son yoklama alınan öğrenci numarasını state'e set edelim
+        
+        // Öğrenci numarasını set et
         setStudentId(checkData.studentId);
+        
+        // validStudents'ın yüklenmesini bekle
+        if (validStudents.length > 0) {
+          // Öğrenci kontrollerini yap
+          const isValid = validStudents.some(s => s.studentId === checkData.studentId);
+          if (isValid) {
+            const now = new Date();
+            const checkTime = new Date(checkData.timestamp);
+            
+            if (now.toDateString() === checkTime.toDateString()) {
+              setStatus('✅ Öğrenci numarası doğrulandı');
+              setIsValidLocation(true);
+            }
+          }
+        }
       }
     }
-  }, [mode]);
+  }, [mode, validStudents]); // validStudents'ı dependency olarak ekledik
   
   const handleModeChange = () => {
     setDebugLogs(prev => [...prev, `
@@ -598,13 +614,19 @@ const AttendanceSystem = () => {
               setIsValidLocation(false);
               return;
             }
+          } else {
+            // Aynı öğrenci tekrar giriş yapıyor
+            setStatus('✅ Öğrenci numarası doğrulandı');
+            setIsValidLocation(true);
+            return;
           }
         }
+      } else {
+        // Hiç yoklama alınmamış
+        setStatus('✅ Öğrenci numarası doğrulandı');
+        setIsValidLocation(true);
+        return;
       }
-      
-      // Hiç yoklama alınmamış, farklı gün veya aynı öğrenci tekrar giriş yapıyor
-      setStatus('✅ Öğrenci numarası doğrulandı');
-      setIsValidLocation(true); // Burayı true yaptık ki konum doğrulaması yapılabilsin
     } else {
       // Öğrenci numarası girilmemiş veya liste yüklenmemiş
       setIsValidLocation(false);
