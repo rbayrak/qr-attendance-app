@@ -492,6 +492,52 @@ const AttendanceSystem = () => {
     }
   }, [mode]);
 
+  useEffect(() => {
+    if (mode === 'student') {
+      // Önce localStorage'dan konum kontrolü yap
+      const savedClassLocation = localStorage.getItem('classLocation');
+      if (savedClassLocation) {
+        const classLoc = JSON.parse(savedClassLocation);
+        setClassLocation(classLoc);
+        
+        // Eğer öğrencinin konumu da varsa mesafe kontrolü yap
+        if (location) {
+          const distance = calculateDistance(
+            location.lat,
+            location.lng,
+            classLoc.lat,
+            classLoc.lng
+          );
+          
+          if (distance > MAX_DISTANCE) {
+            setIsValidLocation(false);
+            setStatus('❌ Sınıf konumunda değilsiniz');
+          } else {
+            setIsValidLocation(true);
+            setStatus('✅ Konum doğrulandı');
+          }
+        }
+      } else {
+        // localStorage'da konum yoksa API'den kontrol et
+        fetch('/api/location')
+          .then(response => {
+            if (response.ok) {
+              return response.json();
+            }
+            throw new Error('Konum bulunamadı');
+          })
+          .then(classLoc => {
+            setClassLocation(classLoc);
+            localStorage.setItem('classLocation', JSON.stringify(classLoc));
+            sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
+          })
+          .catch(() => {
+            setStatus('❌ Öğretmen henüz konum paylaşmamış');
+          });
+      }
+    }
+  }, [mode, location]); // location dependency'sini ekledik
+
   const generateQR = async () => {
     if (!location) {
       setStatus('❌ Önce konum alın');
