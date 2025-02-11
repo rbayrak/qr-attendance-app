@@ -622,8 +622,9 @@ const AttendanceSystem = () => {
       // Aynı gün içinde başka bir öğrenci numarası ile yoklama alınmış mı?
       if (now.toDateString() === checkTime.toDateString()) {
         if (checkData.studentId !== newId) {
-          // Eğer yeni giren öğrenci numarası, daha önce yoklama alan öğrenci numarasından farklıysa uyar ama engelleme
-          setStatus(`⚠️ Bu cihazda zaten ${checkData.studentId} numaralı öğrenci yoklaması alınmış`);
+          // Eğer yeni giren öğrenci numarası, daha önce yoklama alan öğrenci numarasından farklıysa engelle
+          setStatus(`❌ Bu cihazda zaten ${checkData.studentId} numaralı öğrenci yoklaması alınmış. Aynı cihazda birden fazla öğrencinin yoklaması alınamaz`);
+          return;
         }
       }
     }
