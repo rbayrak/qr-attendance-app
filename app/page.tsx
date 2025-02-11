@@ -599,11 +599,16 @@ const AttendanceSystem = () => {
               setIsValidLocation(false);
               return;
             }
+          } else {
+            // Aynı öğrenci tekrar giriş yapıyor
+            setStatus('✅ Öğrenci numarası doğrulandı');
+            setIsValidLocation(false); // QR tarama butonu hala deaktif kalsın
+            return;
           }
         }
       }
       
-      // Tüm kontroller geçildi, öğrenci numarası doğrulandı
+      // Hiç yoklama alınmamış veya farklı günde
       setStatus('✅ Öğrenci numarası doğrulandı');
       setIsValidLocation(false); // QR tarama butonu hala deaktif kalsın
     } else {
