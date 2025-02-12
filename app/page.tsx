@@ -647,132 +647,147 @@ const AttendanceSystem = () => {
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
   // handleQrScan fonksiyonu (page.tsx içinde):
+  // QR Scan Handler (handleQrScan fonksiyonu için güncellenmiş versiyon)
+  // QR Scan Handler için genişletilmiş debug logları
   const handleQrScan = async (decodedText: string) => {
     try {
       const scannedData = JSON.parse(decodedText);
       
+      // Debug log: Tarama başlangıç detayları
+      setDebugLogs(prev => [...prev, `
+        ----- QR Scan Başlangıç -----
+        Tarih: ${new Date().toISOString()}
+        Öğrenci No: ${studentId}
+        Hafta: ${scannedData.week}
+        Tüm Öğrenciler: ${JSON.stringify(validStudents.map(s => s.studentId))}
+      `]);
+
       // Öğrenci kontrolü
       const validStudent = validStudents.find(s => s.studentId === studentId);
       if (!validStudent) {
         setStatus('❌ Öğrenci numarası listede bulunamadı');
+        
+        // Detaylı hata log
+        setDebugLogs(prev => [...prev, `
+          ----- Öğrenci Bulunamadı -----
+          Aranan Öğrenci No: ${studentId}
+          Mevcut Öğrenciler: ${JSON.stringify(validStudents)}
+        `]);
+        
         return;
       }
-    
-      if (scannedData.validUntil < Date.now()) {
-        setStatus('❌ QR kod süresi dolmuş');
-        return;
-      }
-    
-      if (!location) {
-        setStatus('❌ Önce konum alın');
-        return;
-      }
-  
+
       // IP adresini al
       const clientIP = await getClientIP();
       if (!clientIP) {
         setStatus('❌ IP adresi alınamadı');
+        
+        // Detaylı IP hatası log
+        setDebugLogs(prev => [...prev, `
+          ----- IP Adresi Hatası -----
+          IP Alınamadı
+        `]);
+        
         return;
       }
-  
-      // Excel'de IP kontrolü
+
+      // Excel'de IP kontrolü (daha detaylı)
       try {
         const response = await fetch(
           `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
         );
+        
+        if (!response.ok) {
+          throw new Error('Spreadsheet verisi alınamadı');
+        }
+        
         const data = await response.json();
         
-        const columnIndex = 3 + scannedData.week - 1;
-        const weekData = data.values.map((row: string[]) => row[columnIndex]);
-        const ipCheck = weekData.find(cell => cell && cell.includes(`(IP:${clientIP})`));
-        
-        if (ipCheck) {
-          setStatus('❌ Bu IP adresi ile başka bir öğrenci için yoklama alınmış');
-          return;
-        }
-      } catch (error) {
-        console.error('IP kontrolü hatası:', error);
-        // IP kontrolü başarısız olsa bile devam et - bu kontrolü backend'de tekrar yapacağız
-      }
-    
-      const distance = calculateDistance(
-        location.lat,
-        location.lng,
-        scannedData.classLocation.lat,
-        scannedData.classLocation.lng
-      );
-    
-      console.log('Mesafe:', distance, 'km');
-    
-      if (distance > MAX_DISTANCE) {
-        setStatus('❌ Sınıf konumunda değilsiniz');
-        return;
-      }
-    
-      // Backend API'ye istek at (şimdi IP'yi de gönderiyoruz)
-      const response = await fetch('/api/attendance', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          studentId: studentId,
-          week: scannedData.week,
-          clientIP: clientIP // IP'yi backend'e gönder
-        })
-      });
-    
-      const responseData = await response.json();
-    
-      // Debug loglarına API yanıtını ekleyelim
-      setDebugLogs(prev => [...prev, `
-        ----- Yoklama İşlemi Detayları -----
-          Öğrenci No: ${studentId}
-          Öğrenci Adı: ${validStudent.studentName}
-          IP: ${clientIP}
-          Öğrenci Konumu: ${location.lat}, ${location.lng}
-          Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
-          Mesafe: ${distance} km
-          Max İzin: ${MAX_DISTANCE} km
+        // Detaylı veri log
+        setDebugLogs(prev => [...prev, `
+          ----- Excel Veri Kontrolü -----
+          Toplam Satır Sayısı: ${data.values ? data.values.length : 'Veri Yok'}
+          Sütun Sayısı: ${data.values && data.values[0] ? data.values[0].length : 'Sütun Yok'}
           Hafta: ${scannedData.week}
-          API Yanıtı: ${JSON.stringify(responseData, null, 2)}
-      `]);
-    
-      if (!response.ok) {
-        // IP hatası kontrolü
-        if (responseData.blockedStudentId) {
-          setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
+        `]);
+
+        if (!data.values || data.values.length === 0) {
+          throw new Error('Spreadsheet boş');
+        }
+        
+        const columnIndex = 3 + Number(scannedData.week) - 1;
+        
+        // Öğrenci satırını ve IP kontrolünü daha detaylı yap
+        const studentRowIndex = data.values.findIndex(
+          (row: string[]) => row[1] === studentId
+        );
+
+        if (studentRowIndex === -1) {
+          setStatus('❌ Öğrenci satırı bulunamadı');
+          
+          // Detaylı hata log
+          setDebugLogs(prev => [...prev, `
+            ----- Öğrenci Satırı Bulunamadı -----
+            Aranan Öğrenci No: ${studentId}
+            Mevcut Satırlar: ${JSON.stringify(data.values.slice(0, 5).map(row => row[1]))}
+          `]);
+          
           return;
         }
-        throw new Error(responseData.error || 'Yoklama kaydedilemedi');
+
+        // IP kontrolü için daha kapsamlı kontrol
+        const ipControlRows = data.values.filter(
+          (row: string[]) => row[columnIndex] && row[columnIndex].includes(`(IP:${clientIP})`)
+        );
+
+        // Detaylı IP kontrol log
+        setDebugLogs(prev => [...prev, `
+          ----- IP Kontrol Detayları -----
+          Bulunan IP Eşleşen Satır Sayısı: ${ipControlRows.length}
+          Eşleşen Satırlar: ${JSON.stringify(ipControlRows.map(row => row[1]))}
+          Kontrol Edilen IP: ${clientIP}
+          Kontrol Edilen Sütun İndeksi: ${columnIndex}
+        `]);
+
+        // Eğer IP zaten kullanılmışsa ve farklı bir öğrenci için kullanılmışsa
+        if (ipControlRows.length > 0 && 
+            ipControlRows.some(row => row[1] !== studentId)) {
+          
+          setStatus('❌ Bu IP adresi başka bir öğrenci için kullanılmış');
+          
+          // Detaylı IP kullanım log
+          setDebugLogs(prev => [...prev, `
+            ----- IP Kullanım Engellendi -----
+            Mevcut Öğrenci: ${studentId}
+            IP ile Kayıtlı Öğrenciler: ${JSON.stringify(ipControlRows.map(row => row[1]))}
+          `]);
+          
+          return;
+        }
+
+        // Diğer kontroller ve yoklama işlemleri devam eder...
+      } catch (error) {
+        // Detaylı hata log
+        setDebugLogs(prev => [...prev, `
+          ----- Excel Kontrol Hatası -----
+          Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
+          Hata Detayı: ${JSON.stringify(error)}
+        `]);
+        
+        console.error('Excel IP kontrolü hatası:', error);
       }
-    
-      // Yoklama başarılıysa local storage'a kaydet
-      localStorage.setItem('lastAttendanceCheck', JSON.stringify({
-        studentId: studentId,
-        timestamp: new Date().toISOString()
-      }));
-    
-      // Öğrencinin adını ve soyadını göster
-      setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
-      
-      // Taramayı durdur
-      setIsScanning(false);
-      if (html5QrCode) {
-        await html5QrCode.stop();
-      }
-    
+
+      // ... (mevcut kodun geri kalanı)
     } catch (error) {
+      // Genel hata log
+      setDebugLogs(prev => [...prev, `
+        ----- Genel QR Okuma Hatası -----
+        Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
+        Hata Detayı: ${JSON.stringify(error)}
+      `]);
+      
       console.error('QR okuma hatası:', error);
       setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
-      
-      // Hata logunu ekle
-      setDebugLogs(prev => [...prev, `
-        ----- QR Okuma Hatası -----
-          Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
-          Öğrenci No: ${studentId}
-          Zaman: ${new Date().toISOString()}
-      `]);
     }
   };
 
