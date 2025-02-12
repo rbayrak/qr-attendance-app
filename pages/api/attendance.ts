@@ -13,6 +13,7 @@ type ResponseData = {
 const ipAttendanceMap = new Map<string, {
   studentId: string;
   timestamp: number;
+  firstStudentId?: string; // İlk yoklamayı alan öğrencinin ID'si
 }>();
 
 export default async function handler(
@@ -45,29 +46,34 @@ export default async function handler(
     if (existingAttendance) {
       // Aynı gün kontrolü
       if (existingAttendance.timestamp >= today.getTime()) {
-        // Aynı öğrenci mi kontrol et
-        if (existingAttendance.studentId !== studentId) {
+        // İlk yoklamayı alan öğrenciyi hatırla
+        const firstStudentId = existingAttendance.firstStudentId || existingAttendance.studentId;
+        
+        // Eğer bu IP ile farklı bir öğrenci yoklama almaya çalışıyorsa engelle
+        if (studentId !== firstStudentId) {
           return res.status(403).json({ 
             error: 'Bu IP adresi bugün başka bir öğrenci için kullanılmış',
-            blockedStudentId: existingAttendance.studentId 
+            blockedStudentId: firstStudentId 
           });
         }
       } else {
-        // Gün değişmiş, kaydı güncelle
+        // Gün değişmiş, kaydı güncelle ve ilk öğrenciyi resetle
         ipAttendanceMap.set(ip, {
           studentId,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          firstStudentId: studentId
         });
       }
     } else {
       // İlk kez yoklama alınıyor
       ipAttendanceMap.set(ip, {
         studentId,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        firstStudentId: studentId
       });
     }
 
-    // Service Account yetkilendirmesi
+    // Service Account yetkilendirmesi (önceki kodun aynısı)
     const auth = new google.auth.GoogleAuth({
       credentials: {
         type: 'service_account',
@@ -103,10 +109,18 @@ export default async function handler(
     const ipCheck = weekData.find(cell => cell && cell.includes(`(IP:${ip})`));
     
     if (ipCheck) {
-      return res.status(403).json({ 
-        error: 'Bu IP adresi ile başka bir öğrenci için yoklama alınmış',
-        blockedStudentId: studentId 
-      });
+      // Eğer bu IP zaten bu hafta için kullanılmışsa
+      const existingStudentId = rows[rows.findIndex(row => 
+        row[weekColumnIndex] && row[weekColumnIndex].includes(`(IP:${ip})`)
+      )][1];
+
+      // Farklı bir öğrenci için kullanılmışsa engelle
+      if (existingStudentId !== studentId) {
+        return res.status(403).json({ 
+          error: 'Bu IP adresi bu hafta başka bir öğrenci için kullanılmış',
+          blockedStudentId: existingStudentId 
+        });
+      }
     }
     
     // Gerçek satır numarası (1'den başlar)
