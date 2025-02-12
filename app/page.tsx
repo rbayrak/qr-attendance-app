@@ -704,6 +704,88 @@ const AttendanceSystem = () => {
 
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
+  // Öğrenci modu için yoklama güncelleme fonksiyonu
+const updateStudentAttendance = async (studentId: string, weekNumber: number) => {
+  try {
+    setIsLoading(true);
+    
+    // IP adresini al
+    const clientIP = await getClientIP();
+    if (!clientIP) throw new Error('IP adresi alınamadı');
+    
+    // Öğrenci modunda API key ile işlem yap
+    const response = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
+    );
+    const data = await response.json();
+    
+    // Öğrencinin satırını bul
+    const studentRow = data.values.findIndex((row: string[]) => row[1] === studentId);
+    if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
+
+    // ASCII 67 = 'C', yani 3. sütun. Bu yüzden sütun indeksi 3'ten başlar
+    const columnIndex = 3 + weekNumber - 1; // Excel'deki veri indeksi
+    const weekColumn = String.fromCharCode(67 + weekNumber - 1); // Excel'deki sütun harfi
+    const cellRange = `${weekColumn}${studentRow + 1}`;
+
+    // IP kontrolü yap
+    const weekData = data.values.map((row: string[]) => row[columnIndex]);
+    const ipCheck = weekData.find(cell => cell && cell.includes(`(IP:${clientIP})`));
+    
+    if (ipCheck) {
+      throw new Error('Bu IP adresi ile başka bir öğrenci için yoklama alınmış');
+    }
+
+    // Yoklamayı güncelle
+    const updateResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}?valueInputOption=RAW`,
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer YOUR_API_KEY` // API key ile yetkilendirme
+        },
+        body: JSON.stringify({
+          range: cellRange,
+          values: [[`VAR (IP:${clientIP})`]],
+          majorDimension: "ROWS"
+        })
+      }
+    );
+
+    if (!updateResponse.ok) {
+      throw new Error('Yoklama güncellenemedi');
+    }
+
+    setDebugLogs(prev => [...prev, `
+      ----- Öğrenci Yoklama Güncelleme -----
+      Öğrenci: ${studentId}
+      Hafta: ${weekNumber}
+      Hücre: ${cellRange}
+      IP: ${clientIP}
+      Durum: Başarılı
+    `]);
+
+    setStatus('✅ Yoklama kaydedildi');
+    return true;
+
+  } catch (error) {
+    console.error('Yoklama güncelleme hatası:', error);
+    setStatus(`❌ Yoklama kaydedilemedi: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
+    
+    setDebugLogs(prev => [...prev, `
+      ----- Yoklama Güncelleme Hatası -----
+      Öğrenci: ${studentId}
+      Hafta: ${weekNumber}
+      Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
+    `]);
+    
+    return false;
+  } finally {
+    setIsLoading(false);
+  }
+};
+
   // handleQrScan fonksiyonu (page.tsx içinde):
   const handleQrScan = async (decodedText: string) => {
     try {
@@ -780,8 +862,8 @@ const AttendanceSystem = () => {
         return;
       }
   
-      // Yoklamayı güncelle
-      const attendanceResult = await updateAttendance(studentId);
+      // Yoklamayı güncelle (öğrenci modu için)
+      const attendanceResult = await updateStudentAttendance(studentId, scannedData.week);
       if (!attendanceResult) {
         return;
       }
