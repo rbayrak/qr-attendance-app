@@ -680,14 +680,9 @@ const AttendanceSystem = () => {
         return;
       }
   
-      const token = await getAccessToken();
+      // Öğrenci modunda basit HTTP isteği ile kontrol
       const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z`,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        }
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
       );
       const data = await response.json();
       
@@ -755,15 +750,9 @@ const AttendanceSystem = () => {
         }
       }
   
-      // Excel'de IP kontrolü
-      const token = await getAccessToken();
+      // Excel'de IP kontrolü (öğrenci modu için)
       const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z`,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        }
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
       );
       const data = await response.json();
       
@@ -790,13 +779,13 @@ const AttendanceSystem = () => {
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
-    
+  
       // Yoklamayı güncelle
       const attendanceResult = await updateAttendance(studentId);
       if (!attendanceResult) {
         return;
       }
-    
+  
       // Debug loglarına detayları ekle
       setDebugLogs(prev => [...prev, `
         ----- Yoklama İşlemi Detayları -----
@@ -809,13 +798,13 @@ const AttendanceSystem = () => {
           Max İzin: ${MAX_DISTANCE} km
           Hafta: ${scannedData.week}
       `]);
-    
+  
       // Başarılı yoklama
       localStorage.setItem('lastAttendanceCheck', JSON.stringify({
         studentId: studentId,
         timestamp: new Date().toISOString()
       }));
-    
+  
       // Başarı mesajı
       setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
       
