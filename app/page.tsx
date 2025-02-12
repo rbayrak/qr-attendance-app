@@ -335,28 +335,65 @@ const AttendanceSystem = () => {
       const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
       const cellRange = `${weekColumn}${studentRow + 1}`;
   
-      // Önce mevcut değeri kontrol et
-      const cellResponse = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
+      // Seçilen haftanın sütunundaki tüm hücreleri kontrol et
+      const columnResponse = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${weekColumn}:${weekColumn}`,
         {
           headers: {
             'Authorization': `Bearer ${token}`
           }
         }
       );
-      const cellData = await cellResponse.json();
-      const currentValue = cellData.values?.[0]?.[0] || '';
-  
-      // IP adresi kontrolü için regex
-      const ipRegex = /\(IP: ([\d\.]+)\)/;
-      const match = currentValue.match(ipRegex);
+      const columnData = await columnResponse.json();
+      const cells = columnData.values || [];
       
-      if (match) {
-        const existingIP = match[1];
-        if (existingIP === ip) {
-          throw new Error('Bu IP adresinden bugün zaten yoklama alınmış');
+      // IP kontrolü
+      for (let i = 1; i < cells.length; i++) {
+        const cellValue = cells[i]?.[0];
+        if (cellValue && typeof cellValue === 'string') {
+          const ipRegex = /\(IP: ([\d\.]+)\)/;
+          const match = cellValue.match(ipRegex);
+          
+          if (match && match[1] === ip) {
+            // Bu IP'den yoklama alan öğrenciyi bul
+            const rowNumber = i + 1;
+            const studentResponse = await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/B${rowNumber}:B${rowNumber}`,
+              {
+                headers: {
+                  'Authorization': `Bearer ${token}`
+                }
+              }
+            );
+            const studentData = await studentResponse.json();
+            const blockedStudentId = studentData.values?.[0]?.[0];
+            throw new Error(`Bu cihazda zaten ${blockedStudentId} numaralı öğrenci yoklaması alınmış. Aynı cihazda birden fazla öğrencinin yoklaması alınamaz`);
+          }
         }
       }
+  
+      // Update isteği için body hazırla
+      const updateBody = {
+        range: cellRange,
+        values: [[`VAR (IP: ${ip})`]],
+        majorDimension: "ROWS",
+        valueInputOption: "RAW"
+      };
+  
+      // Debug log ekle
+      console.log('Update request details:', {
+        endpoint: `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
+        body: updateBody,
+        cellRange,
+        ip
+      });
+  
+      setDebugLogs(prev => [...prev, `
+        ----- Yoklama Güncelleme İsteği -----
+        Hücre: ${cellRange}
+        IP: ${ip}
+        İstek Body: ${JSON.stringify(updateBody, null, 2)}
+      `]);
   
       // IP ile birlikte VAR yaz
       const updateResponse = await fetch(
@@ -367,12 +404,7 @@ const AttendanceSystem = () => {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({
-            range: cellRange,
-            values: [[`VAR (IP: ${ip})`]],
-            majorDimension: "ROWS",
-            valueInputOption: "RAW"
-          })
+          body: JSON.stringify(updateBody)
         }
       );
   
@@ -629,7 +661,7 @@ const AttendanceSystem = () => {
       return;
     }
     
-    // Öğrenciyi listede kontrol et
+    // 1. Öğrenciyi listede kontrol et
     const validStudent = validStudents.find(s => s.studentId === newId);
     if (!validStudent) {
       setStatus('⚠️ Bu öğrenci numarası listede yok');
@@ -637,41 +669,52 @@ const AttendanceSystem = () => {
     }
   
     try {
-      // IP adresini al
+      // 2. IP kontrolü
       const ipResponse = await fetch('https://api.ipify.org?format=json');
       const { ip } = await ipResponse.json();
   
-      // Google Sheets'ten yoklamaları kontrol et (D-R arası)
+      // 3. Seçilen haftanın sütununu kontrol et
+      const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
+      const cellRange = `${weekColumn}:${weekColumn}`;
+      
       const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/D:R?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
       );
       const data = await response.json();
       
-      // Öğrencinin satırını bul
-      const studentRow = data.values.findIndex((row: string[]) => row[1] === newId);
-      if (studentRow !== -1) {
-        const studentCells = data.values[studentRow];
-        
-        // Her hücrede IP kontrolü yap
-        for (const cell of studentCells) {
-          if (cell && typeof cell === 'string') {
+      // Hücrelerde IP kontrolü
+      let blockedStudentId = null;
+      if (data.values) {
+        for (let i = 1; i < data.values.length; i++) { // 1'den başla çünkü ilk satır başlık
+          const cellValue = data.values[i]?.[0];
+          if (cellValue && typeof cellValue === 'string') {
             const ipRegex = /\(IP: ([\d\.]+)\)/;
-            const match = cell.match(ipRegex);
+            const match = cellValue.match(ipRegex);
             
             if (match && match[1] === ip) {
-              setStatus('❌ Bu cihazdan bugün zaten yoklama alınmış');
-              return;
+              // Bu IP'den yoklama alan öğrenciyi bul
+              const studentInfoResponse = await fetch(
+                `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/B${i+1}:B${i+1}?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
+              );
+              const studentInfo = await studentInfoResponse.json();
+              blockedStudentId = studentInfo.values?.[0]?.[0];
+              break;
             }
           }
         }
       }
   
+      if (blockedStudentId) {
+        setStatus(`❌ Bu cihazda zaten ${blockedStudentId} numaralı öğrenci yoklaması alınmış. Aynı cihazda birden fazla öğrencinin yoklaması alınamaz`);
+        return;
+      }
+  
+      // Tüm kontroller başarılı
       setStatus('✅ Öğrenci numarası doğrulandı');
       
     } catch (error) {
       console.error('IP/Yoklama kontrolü hatası:', error);
-      // IP kontrolünde hata olsa bile öğrenci numarasını doğrula
-      setStatus('✅ Öğrenci numarası doğrulandı (IP kontrolü yapılamadı)');
+      setStatus('⚠️ Öğrenci numarası doğrulandı (IP kontrolü yapılamadı)');
     }
   };
 
