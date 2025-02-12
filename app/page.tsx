@@ -310,119 +310,73 @@ const AttendanceSystem = () => {
   };
 
   // Google Sheets'te yoklama güncelleme
-  const updateAttendance = async (studentId: string) => {
-    try {
-      setIsLoading(true);
-      
-      // IP adresini al
-      const ipResponse = await fetch('https://api.ipify.org?format=json');
-      const { ip } = await ipResponse.json();
-      
-      const token = await getAccessToken();
-      const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:R`,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        }
-      );
-      const data = await response.json();
-      
-      const studentRow = data.values.findIndex((row: string[]) => row[1] === studentId);
-      if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
-  
-      const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
-      const cellRange = `${weekColumn}${studentRow + 1}`;
-  
-      // Seçilen haftanın sütunundaki tüm hücreleri kontrol et
-      const columnResponse = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${weekColumn}:${weekColumn}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        }
-      );
-      const columnData = await columnResponse.json();
-      const cells = columnData.values || [];
-      
-      // IP kontrolü
-      for (let i = 1; i < cells.length; i++) {
-        const cellValue = cells[i]?.[0];
-        if (cellValue && typeof cellValue === 'string') {
-          const ipRegex = /\(IP: ([\d\.]+)\)/;
-          const match = cellValue.match(ipRegex);
-          
-          if (match && match[1] === ip) {
-            // Bu IP'den yoklama alan öğrenciyi bul
-            const rowNumber = i + 1;
-            const studentResponse = await fetch(
-              `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/B${rowNumber}:B${rowNumber}`,
-              {
-                headers: {
-                  'Authorization': `Bearer ${token}`
-                }
-              }
-            );
-            const studentData = await studentResponse.json();
-            const blockedStudentId = studentData.values?.[0]?.[0];
-            throw new Error(`Bu cihazda zaten ${blockedStudentId} numaralı öğrenci yoklaması alınmış. Aynı cihazda birden fazla öğrencinin yoklaması alınamaz`);
-          }
+  // Google Sheets'te yoklama güncelleme
+const updateAttendance = async (studentId: string) => {
+  try {
+    setIsLoading(true);
+    
+    // IP adresini al
+    const ipResponse = await fetch('https://api.ipify.org?format=json');
+    const { ip } = await ipResponse.json();
+    
+    const token = await getAccessToken();
+    const response = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:R`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`
         }
       }
-  
-      // Update isteği için body hazırla
-      const updateBody = {
-        range: cellRange,
-        values: [[`VAR (IP: ${ip})`]],
-        majorDimension: "ROWS",
-        valueInputOption: "RAW"
-      };
-  
-      // Debug log ekle
-      console.log('Update request details:', {
-        endpoint: `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
-        body: updateBody,
-        cellRange,
-        ip
-      });
-  
-      setDebugLogs(prev => [...prev, `
-        ----- Yoklama Güncelleme İsteği -----
-        Hücre: ${cellRange}
-        IP: ${ip}
-        İstek Body: ${JSON.stringify(updateBody, null, 2)}
-      `]);
-  
-      // IP ile birlikte VAR yaz
-      const updateResponse = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
-        {
-          method: 'PUT',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(updateBody)
-        }
-      );
-  
-      if (!updateResponse.ok) {
-        const errorData = await updateResponse.json();
-        throw new Error(errorData.error?.message || 'Güncelleme hatası');
+    );
+    const data = await response.json();
+    
+    const studentRow = data.values.findIndex((row: string[]) => row[1] === studentId);
+    if (studentRow === -1) throw new Error('Öğrenci bulunamadı');
+
+    const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
+    const cellRange = `${weekColumn}${studentRow + 1}`;
+
+    // Debug log ekle
+    console.log('Update request details:', {
+      endpoint: `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
+      value: `VAR (IP: ${ip})`,
+      cellRange,
+      ip
+    });
+
+    // IP ile birlikte VAR yaz
+    const updateResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          range: cellRange,
+          values: [[`VAR (IP: ${ip})`]],
+          majorDimension: "ROWS",
+          valueInputOption: "RAW"
+        })
       }
-  
-      setStatus('✅ Yoklama kaydedildi');
-      return true;
-    } catch (error) {
-      console.error('Yoklama güncelleme hatası:', error);
-      setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
-      return false;
-    } finally {
-      setIsLoading(false);
+    );
+
+    if (!updateResponse.ok) {
+      const errorData = await updateResponse.json();
+      throw new Error(errorData.error?.message || 'Güncelleme hatası');
     }
-  };
+
+    setStatus('✅ Yoklama kaydedildi');
+    return true;
+  } catch (error) {
+    console.error('Yoklama güncelleme hatası:', error);
+    setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
+    return false;
+  } finally {
+    setIsLoading(false);
+  }
+};
   
   // getLocation fonksiyonunu güncelle (diğer fonksiyonların yanına):
   const getLocation = async () => {
@@ -661,61 +615,29 @@ const AttendanceSystem = () => {
       return;
     }
     
-    // 1. Öğrenciyi listede kontrol et
+    // Öğrenciyi listede kontrol et
     const validStudent = validStudents.find(s => s.studentId === newId);
     if (!validStudent) {
       setStatus('⚠️ Bu öğrenci numarası listede yok');
       return;
     }
   
-    try {
-      // 2. IP kontrolü
-      const ipResponse = await fetch('https://api.ipify.org?format=json');
-      const { ip } = await ipResponse.json();
-  
-      // 3. Seçilen haftanın sütununu kontrol et
-      const weekColumn = String.fromCharCode(67 + selectedWeek - 1);
-      const cellRange = `${weekColumn}:${weekColumn}`;
+    // Önce localStorage kontrolü yap
+    const lastAttendanceCheck = localStorage.getItem('lastAttendanceCheck');
+    if (lastAttendanceCheck) {
+      const checkData = JSON.parse(lastAttendanceCheck);
+      const now = new Date();
+      const checkTime = new Date(checkData.timestamp);
       
-      const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${cellRange}?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
-      );
-      const data = await response.json();
-      
-      // Hücrelerde IP kontrolü
-      let blockedStudentId = null;
-      if (data.values) {
-        for (let i = 1; i < data.values.length; i++) { // 1'den başla çünkü ilk satır başlık
-          const cellValue = data.values[i]?.[0];
-          if (cellValue && typeof cellValue === 'string') {
-            const ipRegex = /\(IP: ([\d\.]+)\)/;
-            const match = cellValue.match(ipRegex);
-            
-            if (match && match[1] === ip) {
-              // Bu IP'den yoklama alan öğrenciyi bul
-              const studentInfoResponse = await fetch(
-                `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/B${i+1}:B${i+1}?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
-              );
-              const studentInfo = await studentInfoResponse.json();
-              blockedStudentId = studentInfo.values?.[0]?.[0];
-              break;
-            }
-          }
+      if (now.toDateString() === checkTime.toDateString()) {
+        if (checkData.studentId !== newId) {
+          setStatus(`❌ Bu cihazda zaten ${checkData.studentId} numaralı öğrenci yoklaması alınmış. Aynı cihazda birden fazla öğrencinin yoklaması alınamaz`);
+          return;
         }
       }
-  
-      if (blockedStudentId) {
-        setStatus(`❌ Bu cihazda zaten ${blockedStudentId} numaralı öğrenci yoklaması alınmış. Aynı cihazda birden fazla öğrencinin yoklaması alınamaz`);
-        return;
-      }
-  
-      // Tüm kontroller başarılı
-      setStatus('✅ Öğrenci numarası doğrulandı');
-      
-    } catch (error) {
-      console.error('IP/Yoklama kontrolü hatası:', error);
-      setStatus('⚠️ Öğrenci numarası doğrulandı (IP kontrolü yapılamadı)');
     }
+  
+    setStatus('✅ Öğrenci numarası doğrulandı');
   };
 
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
