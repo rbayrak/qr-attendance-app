@@ -710,19 +710,14 @@ const AttendanceSystem = () => {
       
       // Öğrencinin o haftaki yoklama durumunu kontrol et
       const studentRowIndex = validStudents.findIndex(s => s.studentId === studentId);
+      let isAlreadyAttended = false;
+      
       if (studentRowIndex !== -1) {
         const weekData = data.values || [];
         const existingAttendanceCell = weekData[studentRowIndex];
         
         if (existingAttendanceCell && existingAttendanceCell[0] && existingAttendanceCell[0].includes('VAR')) {
-          setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
-          
-          // QR taramayı durdur
-          setIsScanning(false);
-          if (html5QrCode) {
-            await html5QrCode.stop();
-          }
-          return;
+          isAlreadyAttended = true;
         }
       }
    
@@ -779,8 +774,12 @@ const AttendanceSystem = () => {
         timestamp: new Date().toISOString()
       }));
     
-      // Öğrencinin adını ve soyadını göster
-      setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
+      // Öğrencinin adını ve soyadını göster ve duruma göre mesaj ver
+      if (isAlreadyAttended) {
+        setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
+      } else {
+        setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
+      }
       
       // Taramayı durdur
       setIsScanning(false);
