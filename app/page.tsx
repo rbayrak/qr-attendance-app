@@ -809,8 +809,8 @@ const AttendanceSystem = () => {
             }
   
             if (response.status === 429 || response.statusText.includes('Quota exceeded')) {
-              if (attempt < MAX_RETRIES) {
-                setStatus(`⚠️ Sistem yoğun, tekrar deneniyor... (${MAX_RETRIES - attempt} deneme hakkı kaldı)`);
+              if (attempt < MAX_RETRIES - 1) { // Değişiklik burada
+                setStatus(`⚠️ Sistem yoğun, tekrar deneniyor... (${MAX_RETRIES - attempt - 1} deneme hakkı kaldı)`);
                 return makeRequest(attempt + 1);
               } else {
                 throw new Error('Maximum retry attempts reached');
@@ -818,6 +818,12 @@ const AttendanceSystem = () => {
             }
   
             throw new Error(responseData.error || 'Yoklama kaydedilemedi');
+          }
+  
+          // Başarılı durumda taramayı durdur ve mesajı göster
+          setIsScanning(false);
+          if (html5QrCode) {
+            await html5QrCode.stop();
           }
   
           // Kalan deneme hakkını göster
@@ -833,25 +839,19 @@ const AttendanceSystem = () => {
             timestamp: new Date().toISOString()
           }));
   
-          // Taramayı durdur
-          setIsScanning(false);
-          if (html5QrCode) {
-            await html5QrCode.stop();
-          }
-  
-          return responseData;
+          return responseData; // Başarılı durumda çık
         } catch (error) {
           if (error instanceof Error && error.message === 'Blocked device') {
-            throw error; // Bu hatayı yukarı fırlat
+            throw error;
           }
-          if (attempt < MAX_RETRIES) {
+          if (attempt < MAX_RETRIES - 1) {
             return makeRequest(attempt + 1);
           }
           throw error;
         }
       };
   
-      await makeRequest();
+      await makeRequest(0); // İlk denemeyi başlat
   
     } catch (error) {
       console.error('QR okuma hatası:', error);
@@ -859,6 +859,12 @@ const AttendanceSystem = () => {
         setStatus('❌ Çok fazla deneme yapıldı. Lütfen biraz bekleyip tekrar deneyin.');
       } else if (error instanceof Error && error.message !== 'Blocked device') {
         setStatus(`❌ ${error.message || 'Bilinmeyen hata'}`);
+      }
+      
+      // Hata durumunda da QR taramayı durdur
+      setIsScanning(false);
+      if (html5QrCode) {
+        await html5QrCode.stop();
       }
     }
   };
