@@ -701,8 +701,15 @@ const AttendanceSystem = () => {
         return;
       }
      
+      // IP ve cihaz parmak izini al (bu kısmı öne aldık)
+      const clientIPData = await getClientIP();
+      if (!clientIPData) {
+        setStatus('❌ IP adresi alınamadı');
+        return;
+      }
+     
       // Haftalık yoklama kontrolü ekleyelim
-      const weekColumn = String.fromCharCode(68 + scannedData.week - 1); // D sütunundan başlayarak
+      const weekColumn = String.fromCharCode(68 + scannedData.week - 1); 
       const response = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${weekColumn}:${weekColumn}?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
       );
@@ -717,13 +724,6 @@ const AttendanceSystem = () => {
         if (existingAttendanceCell && existingAttendanceCell[0] && existingAttendanceCell[0].includes('VAR')) {
           const attendanceInfo = existingAttendanceCell[0];
           
-          // IP ve cihaz parmak izini al
-          const clientIPData = await getClientIP();
-          if (!clientIPData) {
-            setStatus('❌ IP adresi alınamadı');
-            return;
-          }
-     
           // Cihaz parmak izini çıkart
           const deviceFingerprintMatch = attendanceInfo.match(/\(DF:([^)]+)\)/);
           
@@ -743,13 +743,6 @@ const AttendanceSystem = () => {
             }
           }
         }
-      }
-     
-      // IP ve cihaz parmak izini al
-      const clientIPData = await getClientIP();
-      if (!clientIPData) {
-        setStatus('❌ IP adresi alınamadı');
-        return;
       }
      
       const { ip: clientIP, deviceFingerprint } = clientIPData;
