@@ -251,19 +251,43 @@ const AttendanceSystem = () => {
         setClassLocation(JSON.parse(savedClassLocation));
       }
       // Google yetkilendirmesini başlat
-      initializeGoogleAuth().then(() => {
-        setIsAuthenticated(true);
-        fetchStudentList();
-      }).catch(error => {
-        console.error('Google Auth başlatma hatası:', error);
-        setStatus('❌ Google yetkilendirme hatası');
-      });
+      
     } else {
       setStatus('❌ Yanlış şifre');
     }
     setPassword('');
   };
 
+  useEffect(() => {
+    if (mode === 'teacher' && isTeacherAuthenticated) {
+      let isMounted = true;
+  
+      const initAuth = async () => {
+        try {
+          // Google Auth başlatma
+          await initializeGoogleAuth();
+          
+          if (isMounted) {
+            setIsAuthenticated(true);
+            // Token hazır olduğunda öğrenci listesini yükle
+            await fetchStudentList();
+          }
+        } catch (error) {
+          console.error('Google Auth başlatma hatası:', error);
+          if (isMounted) {
+            setStatus('❌ Google yetkilendirme hatası: ' + error.message);
+          }
+        }
+      };
+  
+      initAuth();
+  
+      // Cleanup function
+      return () => {
+        isMounted = false;
+      };
+    }
+  }, [mode, isTeacherAuthenticated]); // mode ve isTeacherAuthenticated değiştiğinde çalışır
 
   useEffect(() => {
     const loadStudentList = async () => {
@@ -296,18 +320,37 @@ const AttendanceSystem = () => {
 
   // Öğrenci listesini Google Sheets'ten çekm
 
+  // Frontend'deki fetchStudentList fonksiyonu
   const fetchStudentList = async () => {
     try {
-      // Token kontrolü
-      if (!accessToken || accessToken === 'undefined') {
-        await initializeGoogleAuth();
-        if (!accessToken) {
-          throw new Error('Token alınamadı');
+      // Token kontrolü ve yenileme
+      let token;
+      try {
+        token = await getAccessToken();
+        if (!token) {
+          await initializeGoogleAuth();
+          token = await getAccessToken();
+        }
+      } catch (error) {
+        console.error('Token alınamadı:', error);
+        throw new Error('Google yetkilendirme hatası');
+      }
+
+      // Cache kontrolü
+      const cachedList = localStorage.getItem('studentList');
+      const cachedTime = localStorage.getItem('studentListTime');
+      
+      if (cachedList && cachedTime) {
+        const timeDiff = Date.now() - parseInt(cachedTime);
+        // Cache 5 dakikadan yeni ise kullan
+        if (timeDiff < 5 * 60 * 1000) {
+          setValidStudents(JSON.parse(cachedList));
+          return;
         }
       }
 
       // Rate limiting için kısa bir bekleme
-      await delay(500);
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       const response = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C`,
@@ -320,42 +363,55 @@ const AttendanceSystem = () => {
 
       if (!response.ok) {
         if (response.status === 429 || response.statusText.includes('Quota exceeded')) {
-          // Quota aşıldıysa 1 saniye bekle ve tekrar dene
-          await delay(1000);
-          return fetchStudentList(); // Recursive call
+          // Quota aşıldıysa cache'den veriyi yükle
+          if (cachedList) {
+            setValidStudents(JSON.parse(cachedList));
+            return;
+          }
+          throw new Error('API kotası aşıldı');
         }
         throw new Error(`API Hatası: ${response.statusText}`);
       }
 
       const data = await response.json();
       
+      if (!data.values || data.values.length < 2) {
+        throw new Error('Geçerli veri bulunamadı');
+      }
+
       const students = data.values.slice(1).map((row: string[]) => ({
         studentId: row[1]?.toString() || '',
         studentName: row[2]?.toString() || ''
-      }));
+      })).filter(student => student.studentId && student.studentName);
       
+      if (students.length === 0) {
+        throw new Error('Öğrenci listesi boş');
+      }
+
       setValidStudents(students);
       
       // Cache'e kaydet
       localStorage.setItem('studentList', JSON.stringify(students));
-      localStorage.setItem('studentListTimestamp', Date.now().toString());
+      localStorage.setItem('studentListTime', Date.now().toString());
 
     } catch (error) {
       console.error('Öğrenci listesi çekme hatası:', error);
       
-      // Cache'den veri yüklemeyi dene
+      // Cache'den yüklemeyi dene
       const cachedList = localStorage.getItem('studentList');
-      const cachedTimestamp = localStorage.getItem('studentListTimestamp');
-      
-      if (cachedList && cachedTimestamp) {
-        const cacheAge = Date.now() - Number(cachedTimestamp);
-        if (cacheAge < 24 * 60 * 60 * 1000) { // 24 saat geçerli
-          setValidStudents(JSON.parse(cachedList));
+      if (cachedList) {
+        try {
+          const students = JSON.parse(cachedList);
+          setValidStudents(students);
+          setStatus('⚠️ Cached liste kullanılıyor');
           return;
+        } catch (e) {
+          console.error('Cache okuma hatası:', e);
         }
       }
       
-      setStatus('❌ Öğrenci listesi yüklenemedi');
+      setStatus('❌ Öğrenci listesi yüklenemedi: ' + 
+        (error instanceof Error ? error.message : 'Bilinmeyen hata'));
     }
   };
 
