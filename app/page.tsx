@@ -743,7 +743,6 @@ const AttendanceSystem = () => {
   // handleQrScan fonksiyonu (page.tsx içinde):
   const handleQrScan = async (decodedText: string) => {
     const MAX_RETRIES = 3;
-    let retryCount = 0;
   
     try {
       const scannedData = JSON.parse(decodedText);
@@ -784,9 +783,11 @@ const AttendanceSystem = () => {
         return;
       }
     
-      const makeRequest = async (attempt = 0): Promise<any> => {
+      const makeRequest = async (attempt = 0): Promise<boolean> => {
         try {
-          await delay(500 * Math.pow(2, attempt)); // Exponential backoff
+          if (attempt > 0) {
+            await delay(500 * Math.pow(2, attempt));
+          }
   
           const response = await fetch('/api/attendance', {
             method: 'POST',
@@ -802,66 +803,64 @@ const AttendanceSystem = () => {
   
           const responseData = await response.json();
   
-          if (!response.ok) {
-            if (responseData.blockedStudentId) {
-              setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
-              throw new Error('Blocked device');
+          // Başarılı durum kontrolü
+          if (response.ok) {
+            // QR taramayı durdur
+            setIsScanning(false);
+            if (html5QrCode) {
+              await html5QrCode.stop();
             }
   
-            if (response.status === 429 || response.statusText.includes('Quota exceeded')) {
-              if (attempt < MAX_RETRIES - 1) { // Değişiklik burada
-                setStatus(`⚠️ Sistem yoğun, tekrar deneniyor... (${MAX_RETRIES - attempt - 1} deneme hakkı kaldı)`);
-                return makeRequest(attempt + 1);
-              } else {
-                throw new Error('Maximum retry attempts reached');
-              }
+            // Başarılı mesajını göster
+            if (responseData.message) {
+              setStatus(`✅ Sn. ${validStudent.studentName}, ${responseData.message.toLowerCase()}`);
+            } else {
+              setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
             }
   
-            throw new Error(responseData.error || 'Yoklama kaydedilemedi');
+            // Local storage'a kaydet
+            localStorage.setItem('lastAttendanceCheck', JSON.stringify({
+              studentId: studentId,
+              timestamp: new Date().toISOString()
+            }));
+  
+            return true; // Başarılı
           }
   
-          // Başarılı durumda taramayı durdur ve mesajı göster
-          setIsScanning(false);
-          if (html5QrCode) {
-            await html5QrCode.stop();
+          // Hata durumlarını kontrol et
+          if (responseData.blockedStudentId) {
+            setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
+            return false;
           }
   
-          // Kalan deneme hakkını göster
-          if (responseData.attemptsLeft !== undefined) {
-            setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi. Bu hafta ${responseData.attemptsLeft} deneme hakkınız kaldı.`);
-          } else {
-            setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
+          // Quota veya rate limit hatası
+          if (response.status === 429 || responseData.error?.includes('Quota exceeded')) {
+            if (attempt < MAX_RETRIES - 1) {
+              setStatus(`⚠️ Sistem yoğun, tekrar deneniyor... (${MAX_RETRIES - attempt - 1} deneme hakkı kaldı)`);
+              return makeRequest(attempt + 1);
+            }
+            throw new Error('Sistem çok yoğun, lütfen biraz sonra tekrar deneyin');
           }
   
-          // Yoklama başarılıysa local storage'a kaydet
-          localStorage.setItem('lastAttendanceCheck', JSON.stringify({
-            studentId: studentId,
-            timestamp: new Date().toISOString()
-          }));
+          throw new Error(responseData.error || 'Yoklama kaydedilemedi');
   
-          return responseData; // Başarılı durumda çık
         } catch (error) {
-          if (error instanceof Error && error.message === 'Blocked device') {
-            throw error;
-          }
-          if (attempt < MAX_RETRIES - 1) {
+          if (attempt < MAX_RETRIES - 1 && error instanceof Error && 
+             (error.message.includes('Quota') || error.message.includes('network'))) {
             return makeRequest(attempt + 1);
           }
           throw error;
         }
       };
   
-      await makeRequest(0); // İlk denemeyi başlat
+      // İlk denemeyi yap
+      await makeRequest(0);
   
     } catch (error) {
       console.error('QR okuma hatası:', error);
-      if (error instanceof Error && error.message === 'Maximum retry attempts reached') {
-        setStatus('❌ Çok fazla deneme yapıldı. Lütfen biraz bekleyip tekrar deneyin.');
-      } else if (error instanceof Error && error.message !== 'Blocked device') {
-        setStatus(`❌ ${error.message || 'Bilinmeyen hata'}`);
-      }
+      setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
       
-      // Hata durumunda da QR taramayı durdur
+      // Hata durumunda QR taramayı durdur
       setIsScanning(false);
       if (html5QrCode) {
         await html5QrCode.stop();

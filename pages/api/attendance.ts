@@ -9,9 +9,8 @@ type ResponseData = {
   error?: string;
   debug?: any;
   blockedStudentId?: string;
-  attemptsLeft?: number;
-  retryAfter?: number;
   message?: string;
+  retryAfter?: number;  // Bunu ekleyelim
 };
 
 // IP ve öğrenci eşleştirmelerini tutmak için
@@ -19,10 +18,7 @@ const ipAttendanceMap = new Map<string, {
   studentId: string;
   timestamp: number;
   firstStudentId?: string;
-  weeklyAttempts: Map<number, number>; // Her hafta için deneme sayısı
 }>();
-
-const MAX_WEEKLY_ATTEMPTS = 5; // Haftalık maksimum deneme sayısı
 
 const validateIP = (ip: string) => {
   const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
@@ -97,16 +93,12 @@ export default async function handler(
     const weekData = weekResponse.data.values || [];
     const existingAttendanceCell = weekData[studentRowIndex];
 
-    // Eğer öğrenci zaten bu hafta yoklamaya katılmışsa, tekrar denemesine gerek yok
+    // Eğer öğrenci zaten bu hafta yoklamaya katılmışsa, başarılı mesajı dön
     if (existingAttendanceCell && existingAttendanceCell[0] && existingAttendanceCell[0].includes('VAR')) {
-      // Öğrencinin kendi IP'si ile yaptığı başarılı bir yoklama varsa, engelleme
-      if (existingAttendanceCell[0].includes(`(IP:${ip})`)) {
-        return res.status(200).json({ 
-          success: true,
-          message: 'Yoklamanız zaten alınmış',
-          attemptsLeft: 0
-        });
-      }
+      return res.status(200).json({ 
+        success: true,
+        message: 'Yoklamanız zaten alınmış'
+      });
     }
 
     const today = new Date();
@@ -114,16 +106,8 @@ export default async function handler(
     
     let existingAttendance = ipAttendanceMap.get(ip);
     
-    // Haftalık deneme sayısı kontrolü
+    // Günlük aynı IP kontrolü
     if (existingAttendance) {
-      const weeklyAttempts = existingAttendance.weeklyAttempts.get(week) || 0;
-      if (weeklyAttempts >= MAX_WEEKLY_ATTEMPTS) {
-        return res.status(403).json({ 
-          error: 'Bu hafta için maksimum deneme sayısına ulaşıldı',
-          attemptsLeft: 0
-        });
-      }
-
       // Aynı gün kontrolü
       if (existingAttendance.timestamp >= today.getTime()) {
         const firstStudentId = existingAttendance.firstStudentId || existingAttendance.studentId;
@@ -139,38 +123,22 @@ export default async function handler(
         existingAttendance.timestamp = Date.now();
         existingAttendance.firstStudentId = studentId;
       }
-
-      // Deneme sayısını artır
-      existingAttendance.weeklyAttempts.set(week, weeklyAttempts + 1);
     } else {
       // İlk kez yoklama alınıyor
-      const weeklyAttempts = new Map<number, number>();
-      weeklyAttempts.set(week, 1);
-      
       existingAttendance = {
         studentId,
         timestamp: Date.now(),
-        firstStudentId: studentId,
-        weeklyAttempts
+        firstStudentId: studentId
       };
       ipAttendanceMap.set(ip, existingAttendance);
     }
 
-    // IP kontrolü
+    // Excel'de IP kontrolü
     const ipCheck = weekData.find(row => row[0] && row[0].includes(`(IP:${ip})`));
     if (ipCheck) {
       const ipRowIndex = weekData.findIndex(row => row[0] && row[0].includes(`(IP:${ip})`));
       if (ipRowIndex !== -1 && studentResponse.data.values[ipRowIndex]) {
         const existingStudentId = studentResponse.data.values[ipRowIndex][0];
-        // Eğer aynı öğrenci ise ve başarılı bir yoklama varsa izin ver
-        if (existingStudentId === studentId && weekData[ipRowIndex][0].includes('VAR')) {
-          return res.status(200).json({ 
-            success: true,
-            message: 'Yoklamanız zaten alınmış',
-            attemptsLeft: 0
-          });
-        }
-        // Farklı öğrenci ise engelle
         if (existingStudentId && existingStudentId !== studentId) {
           return res.status(403).json({ 
             error: 'Bu IP adresi bu hafta başka bir öğrenci için kullanılmış',
@@ -204,11 +172,9 @@ export default async function handler(
 
     const updateResult = await sheets.spreadsheets.values.batchUpdate(batchUpdate);
 
-    const attemptsLeft = MAX_WEEKLY_ATTEMPTS - (existingAttendance.weeklyAttempts.get(week) || 0);
-
     res.status(200).json({ 
       success: true,
-      attemptsLeft,
+      message: 'Yoklamanız başarıyla kaydedildi',
       debug: {
         operationDetails: {
           ogrenciNo: studentId,
@@ -216,9 +182,7 @@ export default async function handler(
           sutun: weekColumn,
           aralik: range,
           weekNumber: week,
-          ip: ip,
-          weeklyAttempts: existingAttendance.weeklyAttempts.get(week),
-          attemptsLeft
+          ip: ip
         },
         updateResult: updateResult.data,
         ipCheck: {
