@@ -204,17 +204,45 @@ const AttendanceSystem = () => {
       }
     }
   }, [mode, validStudents]); // validStudents'ı dependency olarak ekledik
+
+  const getDeviceFingerprint = () => {
+    const fingerprint = [
+      navigator.userAgent,
+      screen.width,
+      screen.height,
+      navigator.language,
+      navigator.hardwareConcurrency,
+      // Ekstra benzersiz bilgiler
+      navigator.platform,
+      new Date().getTimezoneOffset()
+    ].join('|');
+  
+    // Basit bir hash oluşturma
+    let hash = 0;
+    for (let i = 0; i < fingerprint.length; i++) {
+      const char = fingerprint.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // 32-bit integer'a çevir
+    }
+  
+    return Math.abs(hash).toString();
+  };
   
   const getClientIP = async () => {
     try {
       const response = await fetch('https://api.ipify.org?format=json');
       const data = await response.json();
-      return data.ip;
+      const deviceFingerprint = getDeviceFingerprint();
+      return {
+        ip: data.ip,
+        deviceFingerprint
+      };
     } catch (error) {
       console.error('IP adresi alınamadı:', error);
       return null;
     }
   };
+  
 
   const handleModeChange = () => {
     setDebugLogs(prev => [...prev, `
@@ -251,43 +279,19 @@ const AttendanceSystem = () => {
         setClassLocation(JSON.parse(savedClassLocation));
       }
       // Google yetkilendirmesini başlat
-      
+      initializeGoogleAuth().then(() => {
+        setIsAuthenticated(true);
+        fetchStudentList();
+      }).catch(error => {
+        console.error('Google Auth başlatma hatası:', error);
+        setStatus('❌ Google yetkilendirme hatası');
+      });
     } else {
       setStatus('❌ Yanlış şifre');
     }
     setPassword('');
   };
 
-  useEffect(() => {
-    if (mode === 'teacher' && isTeacherAuthenticated) {
-      let isMounted = true;
-  
-      const initAuth = async () => {
-        try {
-          // Google Auth başlatma
-          await initializeGoogleAuth();
-          
-          if (isMounted) {
-            setIsAuthenticated(true);
-            // Token hazır olduğunda öğrenci listesini yükle
-            await fetchStudentList();
-          }
-        } catch (error) {
-          console.error('Google Auth başlatma hatası:', error);
-          if (isMounted) {
-            setStatus('❌ Google yetkilendirme hatası: ' + error.message);
-          }
-        }
-      };
-  
-      initAuth();
-  
-      // Cleanup function
-      return () => {
-        isMounted = false;
-      };
-    }
-  }, [mode, isTeacherAuthenticated]); // mode ve isTeacherAuthenticated değiştiğinde çalışır
 
   useEffect(() => {
     const loadStudentList = async () => {
@@ -316,42 +320,12 @@ const AttendanceSystem = () => {
   }, [mode]);
 
   
-  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-  // Öğrenci listesini Google Sheets'ten çekm
 
-  // Frontend'deki fetchStudentList fonksiyonu
+  // Öğrenci listesini Google Sheets'ten çekme
   const fetchStudentList = async () => {
     try {
-      // Token kontrolü ve yenileme
-      let token;
-      try {
-        token = await getAccessToken();
-        if (!token) {
-          await initializeGoogleAuth();
-          token = await getAccessToken();
-        }
-      } catch (error) {
-        console.error('Token alınamadı:', error);
-        throw new Error('Google yetkilendirme hatası');
-      }
-
-      // Cache kontrolü
-      const cachedList = localStorage.getItem('studentList');
-      const cachedTime = localStorage.getItem('studentListTime');
-      
-      if (cachedList && cachedTime) {
-        const timeDiff = Date.now() - parseInt(cachedTime);
-        // Cache 5 dakikadan yeni ise kullan
-        if (timeDiff < 5 * 60 * 1000) {
-          setValidStudents(JSON.parse(cachedList));
-          return;
-        }
-      }
-
-      // Rate limiting için kısa bir bekleme
-      await new Promise(resolve => setTimeout(resolve, 500));
-
+      const token = await getAccessToken();
       const response = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C`,
         {
@@ -360,58 +334,17 @@ const AttendanceSystem = () => {
           }
         }
       );
-
-      if (!response.ok) {
-        if (response.status === 429 || response.statusText.includes('Quota exceeded')) {
-          // Quota aşıldıysa cache'den veriyi yükle
-          if (cachedList) {
-            setValidStudents(JSON.parse(cachedList));
-            return;
-          }
-          throw new Error('API kotası aşıldı');
-        }
-        throw new Error(`API Hatası: ${response.statusText}`);
-      }
-
       const data = await response.json();
       
-      if (!data.values || data.values.length < 2) {
-        throw new Error('Geçerli veri bulunamadı');
-      }
-
       const students = data.values.slice(1).map((row: string[]) => ({
         studentId: row[1]?.toString() || '',
         studentName: row[2]?.toString() || ''
-      })).filter(student => student.studentId && student.studentName);
+      }));
       
-      if (students.length === 0) {
-        throw new Error('Öğrenci listesi boş');
-      }
-
       setValidStudents(students);
-      
-      // Cache'e kaydet
-      localStorage.setItem('studentList', JSON.stringify(students));
-      localStorage.setItem('studentListTime', Date.now().toString());
-
     } catch (error) {
       console.error('Öğrenci listesi çekme hatası:', error);
-      
-      // Cache'den yüklemeyi dene
-      const cachedList = localStorage.getItem('studentList');
-      if (cachedList) {
-        try {
-          const students = JSON.parse(cachedList);
-          setValidStudents(students);
-          setStatus('⚠️ Cached liste kullanılıyor');
-          return;
-        } catch (e) {
-          console.error('Cache okuma hatası:', e);
-        }
-      }
-      
-      setStatus('❌ Öğrenci listesi yüklenemedi: ' + 
-        (error instanceof Error ? error.message : 'Bilinmeyen hata'));
+      setStatus('❌ Öğrenci listesi yüklenemedi');
     }
   };
 
@@ -761,7 +694,7 @@ const AttendanceSystem = () => {
         setStatus('❌ Önce konum alın');
         return;
       }
-  
+   
       // Haftalık yoklama kontrolü ekleyelim
       const weekColumn = String.fromCharCode(68 + scannedData.week - 1); // D sütunundan başlayarak
       const response = await fetch(
@@ -786,14 +719,16 @@ const AttendanceSystem = () => {
           return;
         }
       }
-  
-      // IP adresini al
-      const clientIP = await getClientIP();
-      if (!clientIP) {
+   
+      // IP ve cihaz parmak izini al
+      const clientIPData = await getClientIP();
+      if (!clientIPData) {
         setStatus('❌ IP adresi alınamadı');
         return;
       }
-  
+   
+      const { ip: clientIP, deviceFingerprint } = clientIPData;
+   
       const distance = calculateDistance(
         location.lat,
         location.lng,
@@ -801,12 +736,15 @@ const AttendanceSystem = () => {
         scannedData.classLocation.lng
       );
     
+      console.log('Mesafe:', distance, 'km');
+    
       if (distance > MAX_DISTANCE) {
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
-  
-      const fetchResponse = await fetch('/api/attendance', {
+    
+      // Backend API'ye istek at
+      const attendanceResponse = await fetch('/api/attendance', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -814,47 +752,36 @@ const AttendanceSystem = () => {
         body: JSON.stringify({
           studentId: studentId,
           week: scannedData.week,
-          clientIP: clientIP
+          clientIP: clientIP,
+          deviceFingerprint: deviceFingerprint
         })
       });
-  
-      const responseData = await fetchResponse.json();
-  
-      // Başarılı durum kontrolü
-      if (fetchResponse.ok) {
-        // QR taramayı durdur
-        setIsScanning(false);
-        if (html5QrCode) {
-          await html5QrCode.stop();
-        }
-  
-        // Başarılı mesajını göster
-        if (responseData.message) {
-          setStatus(`✅ Sn. ${validStudent.studentName}, ${responseData.message.toLowerCase()}`);
-        } else {
-          setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
-        }
-  
-        // Local storage'a kaydet
-        localStorage.setItem('lastAttendanceCheck', JSON.stringify({
-          studentId: studentId,
-          timestamp: new Date().toISOString()
-        }));
-      } else {
-        // Hata durumlarını kontrol et
+    
+      const responseData = await attendanceResponse.json();
+    
+      if (!attendanceResponse.ok) {
         if (responseData.blockedStudentId) {
           setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
-        } else {
-          setStatus(`❌ ${responseData.error || 'Yoklama kaydedilemedi'}`);
+          return;
         }
-        
-        // QR taramayı durdur
-        setIsScanning(false);
-        if (html5QrCode) {
-          await html5QrCode.stop();
-        }
+        throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
-  
+    
+      // Yoklama başarılıysa local storage'a kaydet
+      localStorage.setItem('lastAttendanceCheck', JSON.stringify({
+        studentId: studentId,
+        timestamp: new Date().toISOString()
+      }));
+    
+      // Öğrencinin adını ve soyadını göster
+      setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
+      
+      // Taramayı durdur
+      setIsScanning(false);
+      if (html5QrCode) {
+        await html5QrCode.stop();
+      }
+    
     } catch (error) {
       console.error('QR okuma hatası:', error);
       setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
@@ -866,7 +793,6 @@ const AttendanceSystem = () => {
       }
     }
   };
-  
 
   useEffect(() => {
     let scanner: Html5Qrcode;

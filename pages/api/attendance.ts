@@ -1,4 +1,3 @@
-// attendance.ts
 import { google } from 'googleapis';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
@@ -9,12 +8,24 @@ type ResponseData = {
   blockedStudentId?: string;
 };
 
-// IP ve öğrenci eşleştirmelerini tutmak için
-const ipAttendanceMap = new Map<string, {
+interface DeviceAttendanceRecord {
   studentId: string;
   timestamp: number;
-  firstStudentId?: string; // İlk yoklamayı alan öğrencinin ID'si
-}>();
+  firstStudentId?: string;
+  deviceFingerprints: string[];
+}
+
+// Cihaz ve IP bazlı yoklama kayıtları
+const deviceAttendanceMap = new Map<string, DeviceAttendanceRecord>();
+
+const validateIP = (ip: string) => {
+  const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+  if (!ipPattern.test(ip)) return false;
+  return ip.split('.').every(num => {
+    const n = parseInt(num);
+    return n >= 0 && n <= 255;
+  });
+};
 
 export default async function handler(
   req: NextApiRequest,
@@ -25,55 +36,64 @@ export default async function handler(
   }
 
   try {
-    const { studentId, week, clientIP } = req.body;
+    const { studentId, week, clientIP, deviceFingerprint } = req.body;
 
     if (!studentId || !week) {
       return res.status(400).json({ error: 'Öğrenci ID ve hafta bilgisi gerekli' });
     }
 
-    // IP adresini al (önce client'dan gelen, yoksa request'ten)
+    // IP ve cihaz parmak izi kontrolü
     const ip = clientIP || 
                req.headers['x-forwarded-for']?.toString() || 
                req.socket.remoteAddress || 
                'unknown';
 
+    if (!validateIP(ip) || !deviceFingerprint) {
+      return res.status(400).json({ error: 'Geçersiz IP veya cihaz tanımlayıcısı' });
+    }
+
+    // Benzersiz cihaz anahtarı
+    const deviceKey = `${ip}_${deviceFingerprint}`;
+    
     // Bugünün başlangıç timestamp'i
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    // Memory'de IP kontrolü
-    const existingAttendance = ipAttendanceMap.get(ip);
+    // Mevcut cihaz kaydını kontrol et
+    const existingAttendance = deviceAttendanceMap.get(deviceKey);
+    
     if (existingAttendance) {
       // Aynı gün kontrolü
       if (existingAttendance.timestamp >= today.getTime()) {
-        // İlk yoklamayı alan öğrenciyi hatırla
         const firstStudentId = existingAttendance.firstStudentId || existingAttendance.studentId;
         
-        // Eğer bu IP ile farklı bir öğrenci yoklama almaya çalışıyorsa engelle
+        // Farklı öğrenci kontrolü
         if (studentId !== firstStudentId) {
           return res.status(403).json({ 
-            error: 'Bu IP adresi bugün başka bir öğrenci için kullanılmış',
+            error: 'Bu cihaz bugün başka bir öğrenci için kullanılmış',
             blockedStudentId: firstStudentId 
           });
         }
       } else {
-        // Gün değişmiş, kaydı güncelle ve ilk öğrenciyi resetle
-        ipAttendanceMap.set(ip, {
+        // Günü geçmiş kayıt, güncelle
+        deviceAttendanceMap.set(deviceKey, {
           studentId,
           timestamp: Date.now(),
-          firstStudentId: studentId
+          firstStudentId: studentId,
+          deviceFingerprints: [deviceFingerprint]
         });
       }
     } else {
-      // İlk kez yoklama alınıyor
-      ipAttendanceMap.set(ip, {
+      // İlk kez kayıt
+      deviceAttendanceMap.set(deviceKey, {
         studentId,
         timestamp: Date.now(),
-        firstStudentId: studentId
+        firstStudentId: studentId,
+        deviceFingerprints: [deviceFingerprint]
       });
     }
 
-    // Service Account yetkilendirmesi (önceki kodun aynısı)
+    // Google Sheets yetkilendirmesi
     const auth = new google.auth.GoogleAuth({
       credentials: {
         type: 'service_account',
@@ -86,10 +106,10 @@ export default async function handler(
 
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // Önce tüm verileri çek
+    // Tüm verileri çek
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.SPREADSHEET_ID,
-      range: 'A:Z', // Tüm sütunları al
+      range: 'A:Z',
     });
 
     const rows = response.data.values;
@@ -97,78 +117,75 @@ export default async function handler(
       return res.status(404).json({ error: 'Veri bulunamadı' });
     }
 
-    // Öğrenciyi bul ve satır numarasını al (1'den başlayarak)
+    // Öğrenciyi bul ve satır numarasını al
     const studentRowIndex = rows.findIndex(row => row[1] === studentId);
     if (studentRowIndex === -1) {
       return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
 
-    // Excel'de IP kontrolü
+    // Hafta sütunu kontrolü
     const weekColumnIndex = 3 + Number(week) - 1; // D sütunundan başlayarak
     const weekData = rows.map(row => row[weekColumnIndex]);
-    const ipCheck = weekData.find(cell => cell && cell.includes(`(IP:${ip})`));
+    
+    // IP ve cihaz parmak izi kontrolü
+    const ipCheck = weekData.find(cell => 
+      cell && 
+      cell.includes(`(IP:${ip})`) && 
+      cell.includes(`(DF:${deviceFingerprint})`)
+    );
     
     if (ipCheck) {
-      // Eğer bu IP zaten bu hafta için kullanılmışsa
+      // Bu IP ve cihaz parmak izi zaten kullanılmışsa
       const existingStudentId = rows[rows.findIndex(row => 
-        row[weekColumnIndex] && row[weekColumnIndex].includes(`(IP:${ip})`)
+        row[weekColumnIndex] && 
+        row[weekColumnIndex].includes(`(IP:${ip})`) && 
+        row[weekColumnIndex].includes(`(DF:${deviceFingerprint})`)
       )][1];
 
       // Farklı bir öğrenci için kullanılmışsa engelle
       if (existingStudentId !== studentId) {
         return res.status(403).json({ 
-          error: 'Bu IP adresi bu hafta başka bir öğrenci için kullanılmış',
+          error: 'Bu cihaz bu hafta başka bir öğrenci için kullanılmış',
           blockedStudentId: existingStudentId 
         });
       }
     }
     
-    // Gerçek satır numarası (1'den başlar)
+    // Gerçek satır numarası
     const studentRow = studentRowIndex + 1;
 
     if (week < 1 || week > 16) {
       return res.status(400).json({ error: 'Geçersiz hafta numarası' });
     }
 
-    // Hafta sütununu belirle (D'den başlayarak)
+    // Hafta sütununu belirle
     const weekColumn = String.fromCharCode(68 + Number(week) - 1);
-    
-    // Güncelleme aralığını belirle
     const range = `${weekColumn}${studentRow}`;
 
-    // Debug bilgilerini hazırla
-    const debugInfo = {
-      operationDetails: {
-        ogrenciNo: studentId,
-        bulunanSatir: studentRow,
-        sutun: weekColumn,
-        aralik: range,
-        weekNumber: week,
-        ip: ip,
-        calculatedASCII: 68 + Number(week) - 1
-      }
-    };
-
-    // Yoklamayı kaydet (IP ile birlikte)
+    // Yoklamayı kaydet (IP ve cihaz parmak izi ile)
     const updateResult = await sheets.spreadsheets.values.update({
       spreadsheetId: process.env.SPREADSHEET_ID,
       range: range,
       valueInputOption: 'RAW',
       requestBody: {
-        values: [[`VAR (IP:${ip})`]]
+        values: [[`VAR (IP:${ip}) (DF:${deviceFingerprint})`]]
       }
     });
 
-    // Başarılı yanıtta debug bilgilerini de gönder
+    // Başarılı yanıt
     res.status(200).json({ 
       success: true,
       debug: {
-        ...debugInfo,
-        updateResult: updateResult.data,
-        ipCheck: {
-          ip,
-          timestamp: Date.now()
-        }
+        operationDetails: {
+          ogrenciNo: studentId,
+          bulunanSatir: studentRow,
+          sutun: weekColumn,
+          aralik: range,
+          weekNumber: week,
+          ip: ip,
+          deviceFingerprint: deviceFingerprint
+        },
+        updateResult: updateResult.data
       }
     });
 
