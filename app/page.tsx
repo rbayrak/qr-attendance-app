@@ -708,17 +708,14 @@ const AttendanceSystem = () => {
       );
       const data = await response.json();
       
-      // İndeks eşleşmesi sorununu gidermek için öğrencinin gerçek satır numarasını bulalım
-      const studentRowIndex = data.values?.findIndex(
-        (row: any) => row[0] && row[0].includes(studentId)
-      );
-      
-      if (studentRowIndex !== -1 && data.values) {
-        const existingAttendanceCell = data.values[studentRowIndex];
+      // Öğrencinin o haftaki yoklama durumunu kontrol et
+      const studentRowIndex = validStudents.findIndex(s => s.studentId === studentId);
+      if (studentRowIndex !== -1) {
+        const weekData = data.values || [];
+        const existingAttendanceCell = weekData[studentRowIndex];
         
         if (existingAttendanceCell && existingAttendanceCell[0] && existingAttendanceCell[0].includes('VAR')) {
-          const studentName = validStudents.find(s => s.studentId === studentId)?.studentName;
-          setStatus(`✅ Sn. ${studentName || ''}, bu hafta için yoklamanız zaten alınmış`);
+          setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
           
           // QR taramayı durdur
           setIsScanning(false);

@@ -15,17 +15,8 @@ interface DeviceAttendanceRecord {
   deviceFingerprints: string[];
 }
 
-// Cihaz ve IP bazlı yoklama kayıtları
+// Cihaz bazlı yoklama kayıtları
 const deviceAttendanceMap = new Map<string, DeviceAttendanceRecord>();
-
-const validateIP = (ip: string) => {
-  const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
-  if (!ipPattern.test(ip)) return false;
-  return ip.split('.').every(num => {
-    const n = parseInt(num);
-    return n >= 0 && n <= 255;
-  });
-};
 
 export default async function handler(
   req: NextApiRequest,
@@ -42,25 +33,17 @@ export default async function handler(
       return res.status(400).json({ error: 'Öğrenci ID ve hafta bilgisi gerekli' });
     }
 
-    // IP ve cihaz parmak izi kontrolü
-    const ip = clientIP || 
-               req.headers['x-forwarded-for']?.toString() || 
-               req.socket.remoteAddress || 
-               'unknown';
-
-    if (!validateIP(ip) || !deviceFingerprint) {
-      return res.status(400).json({ error: 'Geçersiz IP veya cihaz tanımlayıcısı' });
+    // Cihaz parmak izi kontrolü
+    if (!deviceFingerprint) {
+      return res.status(400).json({ error: 'Cihaz tanımlayıcısı gerekli' });
     }
 
-    // Benzersiz cihaz anahtarı
-    const deviceKey = `${ip}_${deviceFingerprint}`;
-    
     // Bugünün başlangıç timestamp'i
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
     // Mevcut cihaz kaydını kontrol et
-    const existingAttendance = deviceAttendanceMap.get(deviceKey);
+    const existingAttendance = deviceAttendanceMap.get(deviceFingerprint);
     
     if (existingAttendance) {
       // Aynı gün kontrolü
@@ -76,7 +59,7 @@ export default async function handler(
         }
       } else {
         // Günü geçmiş kayıt, güncelle
-        deviceAttendanceMap.set(deviceKey, {
+        deviceAttendanceMap.set(deviceFingerprint, {
           studentId,
           timestamp: Date.now(),
           firstStudentId: studentId,
@@ -85,7 +68,7 @@ export default async function handler(
       }
     } else {
       // İlk kez kayıt
-      deviceAttendanceMap.set(deviceKey, {
+      deviceAttendanceMap.set(deviceFingerprint, {
         studentId,
         timestamp: Date.now(),
         firstStudentId: studentId,
@@ -127,18 +110,16 @@ export default async function handler(
     const weekColumnIndex = 3 + Number(week) - 1; // D sütunundan başlayarak
     const weekData = rows.map(row => row[weekColumnIndex]);
     
-    // IP ve cihaz parmak izi kontrolü
-    const ipCheck = weekData.find(cell => 
+    // Cihaz parmak izi kontrolü
+    const deviceFingerprintCheck = weekData.find(cell => 
       cell && 
-      cell.includes(`(IP:${ip})`) && 
       cell.includes(`(DF:${deviceFingerprint})`)
     );
     
-    if (ipCheck) {
-      // Bu IP ve cihaz parmak izi zaten kullanılmışsa
+    if (deviceFingerprintCheck) {
+      // Bu cihaz parmak izi zaten kullanılmışsa
       const existingStudentId = rows[rows.findIndex(row => 
         row[weekColumnIndex] && 
-        row[weekColumnIndex].includes(`(IP:${ip})`) && 
         row[weekColumnIndex].includes(`(DF:${deviceFingerprint})`)
       )][1];
 
@@ -162,13 +143,13 @@ export default async function handler(
     const weekColumn = String.fromCharCode(68 + Number(week) - 1);
     const range = `${weekColumn}${studentRow}`;
 
-    // Yoklamayı kaydet (IP ve cihaz parmak izi ile)
+    // Yoklamayı kaydet (cihaz parmak izi ile)
     const updateResult = await sheets.spreadsheets.values.update({
       spreadsheetId: process.env.SPREADSHEET_ID,
       range: range,
       valueInputOption: 'RAW',
       requestBody: {
-        values: [[`VAR (IP:${ip}) (DF:${deviceFingerprint})`]]
+        values: [[`VAR (DF:${deviceFingerprint})`]]
       }
     });
 
@@ -182,7 +163,6 @@ export default async function handler(
           sutun: weekColumn,
           aralik: range,
           weekNumber: week,
-          ip: ip,
           deviceFingerprint: deviceFingerprint
         },
         updateResult: updateResult.data
