@@ -742,8 +742,6 @@ const AttendanceSystem = () => {
 
   // handleQrScan fonksiyonu (page.tsx içinde):
   const handleQrScan = async (decodedText: string) => {
-    const MAX_RETRIES = 3;
-  
     try {
       const scannedData = JSON.parse(decodedText);
       
@@ -782,79 +780,55 @@ const AttendanceSystem = () => {
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
-    
-      const makeRequest = async (attempt = 0): Promise<boolean> => {
-        try {
-          if (attempt > 0) {
-            await delay(500 * Math.pow(2, attempt));
-          }
   
-          const response = await fetch('/api/attendance', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              studentId: studentId,
-              week: scannedData.week,
-              clientIP: clientIP
-            })
-          });
+      const response = await fetch('/api/attendance', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          studentId: studentId,
+          week: scannedData.week,
+          clientIP: clientIP
+        })
+      });
   
-          const responseData = await response.json();
+      const responseData = await response.json();
   
-          // Başarılı durum kontrolü
-          if (response.ok) {
-            // QR taramayı durdur
-            setIsScanning(false);
-            if (html5QrCode) {
-              await html5QrCode.stop();
-            }
-  
-            // Başarılı mesajını göster
-            if (responseData.message) {
-              setStatus(`✅ Sn. ${validStudent.studentName}, ${responseData.message.toLowerCase()}`);
-            } else {
-              setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
-            }
-  
-            // Local storage'a kaydet
-            localStorage.setItem('lastAttendanceCheck', JSON.stringify({
-              studentId: studentId,
-              timestamp: new Date().toISOString()
-            }));
-  
-            return true; // Başarılı
-          }
-  
-          // Hata durumlarını kontrol et
-          if (responseData.blockedStudentId) {
-            setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
-            return false;
-          }
-  
-          // Quota veya rate limit hatası
-          if (response.status === 429 || responseData.error?.includes('Quota exceeded')) {
-            if (attempt < MAX_RETRIES - 1) {
-              setStatus(`⚠️ Sistem yoğun, tekrar deneniyor... (${MAX_RETRIES - attempt - 1} deneme hakkı kaldı)`);
-              return makeRequest(attempt + 1);
-            }
-            throw new Error('Sistem çok yoğun, lütfen biraz sonra tekrar deneyin');
-          }
-  
-          throw new Error(responseData.error || 'Yoklama kaydedilemedi');
-  
-        } catch (error) {
-          if (attempt < MAX_RETRIES - 1 && error instanceof Error && 
-             (error.message.includes('Quota') || error.message.includes('network'))) {
-            return makeRequest(attempt + 1);
-          }
-          throw error;
+      // Başarılı durum kontrolü
+      if (response.ok) {
+        // QR taramayı durdur
+        setIsScanning(false);
+        if (html5QrCode) {
+          await html5QrCode.stop();
         }
-      };
   
-      // İlk denemeyi yap
-      await makeRequest(0);
+        // Başarılı mesajını göster
+        if (responseData.message) {
+          setStatus(`✅ Sn. ${validStudent.studentName}, ${responseData.message.toLowerCase()}`);
+        } else {
+          setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
+        }
+  
+        // Local storage'a kaydet
+        localStorage.setItem('lastAttendanceCheck', JSON.stringify({
+          studentId: studentId,
+          timestamp: new Date().toISOString()
+        }));
+      } else {
+        // Hata durumlarını kontrol et
+        if (responseData.blockedStudentId) {
+          setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
+        } else {
+          setStatus(`❌ ${responseData.error || 'Yoklama kaydedilemedi'}`);
+        }
+        
+        // QR taramayı durdur
+        setIsScanning(false);
+        if (html5QrCode) {
+          await html5QrCode.stop();
+        }
+      }
   
     } catch (error) {
       console.error('QR okuma hatası:', error);

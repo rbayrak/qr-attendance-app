@@ -2,15 +2,12 @@
 import { google } from 'googleapis';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
 type ResponseData = {
   success?: boolean;
   error?: string;
   debug?: any;
   blockedStudentId?: string;
   message?: string;
-  retryAfter?: number;  // Bunu ekleyelim
 };
 
 // IP ve öğrenci eşleştirmelerini tutmak için
@@ -66,8 +63,6 @@ export default async function handler(
 
     const sheets = google.sheets({ version: 'v4', auth });
     const weekColumn = String.fromCharCode(68 + Number(week) - 1);
-    
-    await delay(500);
 
     // Öğrenci kontrolü ve yoklama kaydı için batch request
     const [studentResponse, weekResponse] = await Promise.all([
@@ -156,8 +151,6 @@ export default async function handler(
 
     const range = `${weekColumn}${studentRow}`;
 
-    await delay(500);
-
     // Yoklamayı kaydet
     const batchUpdate = {
       spreadsheetId: process.env.SPREADSHEET_ID,
@@ -198,20 +191,17 @@ export default async function handler(
     if (error instanceof Error) {
       if (error.message.includes('Quota exceeded')) {
         return res.status(429).json({
-          error: 'Sistem yoğun, lütfen birkaç saniye sonra tekrar deneyin',
-          retryAfter: 3
+          error: 'Sistem yoğun, lütfen daha sonra tekrar deneyin'
         });
       } else if (error.message.includes('Rate limit exceeded')) {
         return res.status(429).json({
-          error: 'API limit aşıldı, lütfen biraz bekleyin',
-          retryAfter: 5
+          error: 'API limit aşıldı'
         });
       }
     }
     
     res.status(500).json({ 
-      error: error instanceof Error ? error.message : 'Unknown error',
-      debug: 'debugInfo'
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
-}
+};
