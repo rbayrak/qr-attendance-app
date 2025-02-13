@@ -633,8 +633,7 @@ const AttendanceSystem = () => {
       // Aynı gün içinde başka bir öğrenci numarası ile yoklama alınmış mı?
       if (now.toDateString() === checkTime.toDateString()) {
         if (checkData.studentId !== newId) {
-          // Eğer yeni giren öğrenci numarası, daha önce yoklama alan öğrenci numarasından farklıysa engelle
-          setStatus(`❌ Bu cihazda zaten ${checkData.studentId} numaralı öğrenci yoklaması alınmış. Aynı cihazda birden fazla öğrencinin yoklaması alınamaz`);
+          setStatus(`❌ Bu cihazda zaten ${checkData.studentId} numaralı öğrenci yoklaması alınmış`);
           return;
         }
       }
@@ -675,26 +674,6 @@ const AttendanceSystem = () => {
         return;
       }
   
-      // Excel'de IP kontrolü
-      try {
-        const response = await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
-        );
-        const data = await response.json();
-        
-        const columnIndex = 3 + scannedData.week - 1;
-        const weekData = data.values.map((row: string[]) => row[columnIndex]);
-        const ipCheck = weekData.find(cell => cell && cell.includes(`(IP:${clientIP})`));
-        
-        if (ipCheck) {
-          setStatus('❌ Bu IP adresi ile başka bir öğrenci için yoklama alınmış');
-          return;
-        }
-      } catch (error) {
-        console.error('IP kontrolü hatası:', error);
-        // IP kontrolü başarısız olsa bile devam et - bu kontrolü backend'de tekrar yapacağız
-      }
-    
       const distance = calculateDistance(
         location.lat,
         location.lng,
@@ -709,7 +688,7 @@ const AttendanceSystem = () => {
         return;
       }
     
-      // Backend API'ye istek at (şimdi IP'yi de gönderiyoruz)
+      // Backend API'ye istek at
       const response = await fetch('/api/attendance', {
         method: 'POST',
         headers: {
@@ -718,28 +697,13 @@ const AttendanceSystem = () => {
         body: JSON.stringify({
           studentId: studentId,
           week: scannedData.week,
-          clientIP: clientIP // IP'yi backend'e gönder
+          clientIP: clientIP
         })
       });
     
       const responseData = await response.json();
     
-      // Debug loglarına API yanıtını ekleyelim
-      setDebugLogs(prev => [...prev, `
-        ----- Yoklama İşlemi Detayları -----
-          Öğrenci No: ${studentId}
-          Öğrenci Adı: ${validStudent.studentName}
-          IP: ${clientIP}
-          Öğrenci Konumu: ${location.lat}, ${location.lng}
-          Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
-          Mesafe: ${distance} km
-          Max İzin: ${MAX_DISTANCE} km
-          Hafta: ${scannedData.week}
-          API Yanıtı: ${JSON.stringify(responseData, null, 2)}
-      `]);
-    
       if (!response.ok) {
-        // IP hatası kontrolü
         if (responseData.blockedStudentId) {
           setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
           return;
@@ -765,16 +729,9 @@ const AttendanceSystem = () => {
     } catch (error) {
       console.error('QR okuma hatası:', error);
       setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
-      
-      // Hata logunu ekle
-      setDebugLogs(prev => [...prev, `
-        ----- QR Okuma Hatası -----
-          Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
-          Öğrenci No: ${studentId}
-          Zaman: ${new Date().toISOString()}
-      `]);
     }
   };
+  
 
   useEffect(() => {
     let scanner: Html5Qrcode;
