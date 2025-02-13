@@ -239,7 +239,13 @@ const AttendanceSystem = () => {
       };
     } catch (error) {
       console.error('IP adresi alınamadı:', error);
-      return null;
+      
+      // Hata durumunda sadece device fingerprint dön
+      const deviceFingerprint = getDeviceFingerprint();
+      return {
+        ip: 'unknown',
+        deviceFingerprint
+      };
     }
   };
   
