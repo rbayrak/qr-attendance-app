@@ -700,16 +700,9 @@ const AttendanceSystem = () => {
         setStatus('❌ Önce konum alın');
         return;
       }
-     
-      // IP ve cihaz parmak izini al (bu kısmı öne aldık)
-      const clientIPData = await getClientIP();
-      if (!clientIPData) {
-        setStatus('❌ IP adresi alınamadı');
-        return;
-      }
-     
+   
       // Haftalık yoklama kontrolü ekleyelim
-      const weekColumn = String.fromCharCode(68 + scannedData.week - 1); 
+      const weekColumn = String.fromCharCode(68 + scannedData.week - 1); // D sütunundan başlayarak
       const response = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${weekColumn}:${weekColumn}?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
       );
@@ -722,45 +715,40 @@ const AttendanceSystem = () => {
         const existingAttendanceCell = weekData[studentRowIndex];
         
         if (existingAttendanceCell && existingAttendanceCell[0] && existingAttendanceCell[0].includes('VAR')) {
-          const attendanceInfo = existingAttendanceCell[0];
+          setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
           
-          // Cihaz parmak izini çıkart
-          const deviceFingerprintMatch = attendanceInfo.match(/\(DF:([^)]+)\)/);
-          
-          if (deviceFingerprintMatch) {
-            const existingDeviceFingerprint = deviceFingerprintMatch[1];
-            
-            // Eğer aynı cihaz ise
-            if (clientIPData.deviceFingerprint === existingDeviceFingerprint) {
-              setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
-              
-              // QR taramayı durdur
-              setIsScanning(false);
-              if (html5QrCode) {
-                await html5QrCode.stop();
-              }
-              return;
-            }
+          // QR taramayı durdur
+          setIsScanning(false);
+          if (html5QrCode) {
+            await html5QrCode.stop();
           }
+          return;
         }
       }
-     
+   
+      // IP ve cihaz parmak izini al
+      const clientIPData = await getClientIP();
+      if (!clientIPData) {
+        setStatus('❌ IP adresi alınamadı');
+        return;
+      }
+   
       const { ip: clientIP, deviceFingerprint } = clientIPData;
-     
+   
       const distance = calculateDistance(
         location.lat,
         location.lng,
         scannedData.classLocation.lat,
         scannedData.classLocation.lng
       );
-      
+    
       console.log('Mesafe:', distance, 'km');
-      
+    
       if (distance > MAX_DISTANCE) {
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
-      
+    
       // Backend API'ye istek at
       const attendanceResponse = await fetch('/api/attendance', {
         method: 'POST',
@@ -774,9 +762,9 @@ const AttendanceSystem = () => {
           deviceFingerprint: deviceFingerprint
         })
       });
-      
+    
       const responseData = await attendanceResponse.json();
-      
+    
       if (!attendanceResponse.ok) {
         if (responseData.blockedStudentId) {
           setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
@@ -784,13 +772,13 @@ const AttendanceSystem = () => {
         }
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
-      
+    
       // Yoklama başarılıysa local storage'a kaydet
       localStorage.setItem('lastAttendanceCheck', JSON.stringify({
         studentId: studentId,
         timestamp: new Date().toISOString()
       }));
-      
+    
       // Öğrencinin adını ve soyadını göster
       setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
       
@@ -799,7 +787,7 @@ const AttendanceSystem = () => {
       if (html5QrCode) {
         await html5QrCode.stop();
       }
-      
+    
     } catch (error) {
       console.error('QR okuma hatası:', error);
       setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
