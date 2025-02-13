@@ -10,7 +10,8 @@ type ResponseData = {
   debug?: any;
   blockedStudentId?: string;
   attemptsLeft?: number;
-  retryAfter?: number;  // Bunu ekleyelim
+  retryAfter?: number;
+  message?: string;
 };
 
 // IP ve öğrenci eşleştirmelerini tutmak için
@@ -54,6 +55,58 @@ export default async function handler(
 
     if (!validateIP(ip)) {
       return res.status(400).json({ error: 'Geçersiz IP adresi' });
+    }
+
+    // Google Sheets işlemleri
+    const auth = new google.auth.GoogleAuth({
+      credentials: {
+        type: 'service_account',
+        project_id: process.env.GOOGLE_PROJECT_ID,
+        private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        client_email: process.env.GOOGLE_CLIENT_EMAIL,
+      },
+      scopes: ['https://www.googleapis.com/auth/spreadsheets']
+    });
+
+    const sheets = google.sheets({ version: 'v4', auth });
+    const weekColumn = String.fromCharCode(68 + Number(week) - 1);
+    
+    await delay(500);
+
+    // Öğrenci kontrolü ve yoklama kaydı için batch request
+    const [studentResponse, weekResponse] = await Promise.all([
+      sheets.spreadsheets.values.get({
+        spreadsheetId: process.env.SPREADSHEET_ID,
+        range: 'B:B',
+      }),
+      sheets.spreadsheets.values.get({
+        spreadsheetId: process.env.SPREADSHEET_ID,
+        range: `${weekColumn}:${weekColumn}`,
+      })
+    ]);
+
+    if (!studentResponse.data.values) {
+      return res.status(404).json({ error: 'Öğrenci listesi bulunamadı' });
+    }
+
+    const studentRowIndex = studentResponse.data.values.findIndex(row => row[0] === studentId);
+    if (studentRowIndex === -1) {
+      return res.status(404).json({ error: 'Öğrenci bulunamadı' });
+    }
+
+    const weekData = weekResponse.data.values || [];
+    const existingAttendanceCell = weekData[studentRowIndex];
+
+    // Eğer öğrenci zaten bu hafta yoklamaya katılmışsa, tekrar denemesine gerek yok
+    if (existingAttendanceCell && existingAttendanceCell[0] && existingAttendanceCell[0].includes('VAR')) {
+      // Öğrencinin kendi IP'si ile yaptığı başarılı bir yoklama varsa, engelleme
+      if (existingAttendanceCell[0].includes(`(IP:${ip})`)) {
+        return res.status(200).json({ 
+          success: true,
+          message: 'Yoklamanız zaten alınmış',
+          attemptsLeft: 0
+        });
+      }
     }
 
     const today = new Date();
@@ -103,50 +156,21 @@ export default async function handler(
       ipAttendanceMap.set(ip, existingAttendance);
     }
 
-    // Google Sheets işlemleri
-    const auth = new google.auth.GoogleAuth({
-      credentials: {
-        type: 'service_account',
-        project_id: process.env.GOOGLE_PROJECT_ID,
-        private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-        client_email: process.env.GOOGLE_CLIENT_EMAIL,
-      },
-      scopes: ['https://www.googleapis.com/auth/spreadsheets']
-    });
-
-    const sheets = google.sheets({ version: 'v4', auth });
-    const weekColumn = String.fromCharCode(68 + Number(week) - 1);
-    
-    await delay(500);
-
-    // Öğrenci kontrolü ve yoklama kaydı için batch request
-    const [studentResponse, weekResponse] = await Promise.all([
-      sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.SPREADSHEET_ID,
-        range: 'B:B',
-      }),
-      sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.SPREADSHEET_ID,
-        range: `${weekColumn}:${weekColumn}`,
-      })
-    ]);
-
-    if (!studentResponse.data.values) {
-      return res.status(404).json({ error: 'Öğrenci listesi bulunamadı' });
-    }
-
-    const studentRowIndex = studentResponse.data.values.findIndex(row => row[0] === studentId);
-    if (studentRowIndex === -1) {
-      return res.status(404).json({ error: 'Öğrenci bulunamadı' });
-    }
-
-    const weekData = weekResponse.data.values || [];
+    // IP kontrolü
     const ipCheck = weekData.find(row => row[0] && row[0].includes(`(IP:${ip})`));
-    
     if (ipCheck) {
       const ipRowIndex = weekData.findIndex(row => row[0] && row[0].includes(`(IP:${ip})`));
       if (ipRowIndex !== -1 && studentResponse.data.values[ipRowIndex]) {
         const existingStudentId = studentResponse.data.values[ipRowIndex][0];
+        // Eğer aynı öğrenci ise ve başarılı bir yoklama varsa izin ver
+        if (existingStudentId === studentId && weekData[ipRowIndex][0].includes('VAR')) {
+          return res.status(200).json({ 
+            success: true,
+            message: 'Yoklamanız zaten alınmış',
+            attemptsLeft: 0
+          });
+        }
+        // Farklı öğrenci ise engelle
         if (existingStudentId && existingStudentId !== studentId) {
           return res.status(403).json({ 
             error: 'Bu IP adresi bu hafta başka bir öğrenci için kullanılmış',
