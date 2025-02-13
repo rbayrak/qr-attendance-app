@@ -1,6 +1,8 @@
-// attendance.ts
 import { google } from 'googleapis';
 import type { NextApiRequest, NextApiResponse } from 'next';
+
+// Delay fonksiyonu
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 type ResponseData = {
   success?: boolean;
@@ -13,7 +15,7 @@ type ResponseData = {
 const ipAttendanceMap = new Map<string, {
   studentId: string;
   timestamp: number;
-  firstStudentId?: string; // İlk yoklamayı alan öğrencinin ID'si
+  firstStudentId?: string;
 }>();
 
 export default async function handler(
@@ -31,25 +33,18 @@ export default async function handler(
       return res.status(400).json({ error: 'Öğrenci ID ve hafta bilgisi gerekli' });
     }
 
-    // IP adresini al (önce client'dan gelen, yoksa request'ten)
     const ip = clientIP || 
                req.headers['x-forwarded-for']?.toString() || 
                req.socket.remoteAddress || 
                'unknown';
 
-    // Bugünün başlangıç timestamp'i
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    // Memory'de IP kontrolü
     const existingAttendance = ipAttendanceMap.get(ip);
     if (existingAttendance) {
-      // Aynı gün kontrolü
       if (existingAttendance.timestamp >= today.getTime()) {
-        // İlk yoklamayı alan öğrenciyi hatırla
         const firstStudentId = existingAttendance.firstStudentId || existingAttendance.studentId;
-        
-        // Eğer bu IP ile farklı bir öğrenci yoklama almaya çalışıyorsa engelle
         if (studentId !== firstStudentId) {
           return res.status(403).json({ 
             error: 'Bu IP adresi bugün başka bir öğrenci için kullanılmış',
@@ -57,7 +52,6 @@ export default async function handler(
           });
         }
       } else {
-        // Gün değişmiş, kaydı güncelle ve ilk öğrenciyi resetle
         ipAttendanceMap.set(ip, {
           studentId,
           timestamp: Date.now(),
@@ -65,7 +59,6 @@ export default async function handler(
         });
       }
     } else {
-      // İlk kez yoklama alınıyor
       ipAttendanceMap.set(ip, {
         studentId,
         timestamp: Date.now(),
@@ -73,7 +66,6 @@ export default async function handler(
       });
     }
 
-    // Service Account yetkilendirmesi (önceki kodun aynısı)
     const auth = new google.auth.GoogleAuth({
       credentials: {
         type: 'service_account',
@@ -85,71 +77,58 @@ export default async function handler(
     });
 
     const sheets = google.sheets({ version: 'v4', auth });
+    const weekColumn = String.fromCharCode(68 + Number(week) - 1);
+    
+    await delay(500);
 
-    // Önce tüm verileri çek
-    const response = await sheets.spreadsheets.values.get({
+    // Öğrenci ID'sini kontrol et
+    const studentResponse = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.SPREADSHEET_ID,
-      range: 'A:Z', // Tüm sütunları al
+      range: 'B:B',
     });
 
-    const rows = response.data.values;
-    if (!rows) {
-      return res.status(404).json({ error: 'Veri bulunamadı' });
+    if (!studentResponse.data.values) {
+      return res.status(404).json({ error: 'Öğrenci listesi bulunamadı' });
     }
 
-    // Öğrenciyi bul ve satır numarasını al (1'den başlayarak)
-    const studentRowIndex = rows.findIndex(row => row[1] === studentId);
+    const studentRowIndex = studentResponse.data.values.findIndex(row => row[0] === studentId);
     if (studentRowIndex === -1) {
       return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
 
-    // Excel'de IP kontrolü
-    const weekColumnIndex = 3 + Number(week) - 1; // D sütunundan başlayarak
-    const weekData = rows.map(row => row[weekColumnIndex]);
-    const ipCheck = weekData.find(cell => cell && cell.includes(`(IP:${ip})`));
+    // Haftalık veriyi kontrol et
+    const weekResponse = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      range: `${weekColumn}:${weekColumn}`,
+    });
+
+    const weekData = weekResponse.data.values || [];
+    const ipCheck = weekData.find(row => row[0] && row[0].includes(`(IP:${ip})`));
     
     if (ipCheck) {
-      // Eğer bu IP zaten bu hafta için kullanılmışsa
-      const existingStudentId = rows[rows.findIndex(row => 
-        row[weekColumnIndex] && row[weekColumnIndex].includes(`(IP:${ip})`)
-      )][1];
-
-      // Farklı bir öğrenci için kullanılmışsa engelle
-      if (existingStudentId !== studentId) {
-        return res.status(403).json({ 
-          error: 'Bu IP adresi bu hafta başka bir öğrenci için kullanılmış',
-          blockedStudentId: existingStudentId 
-        });
+      const ipRowIndex = weekData.findIndex(row => row[0] && row[0].includes(`(IP:${ip})`));
+      if (ipRowIndex !== -1 && studentResponse.data.values[ipRowIndex]) {
+        const existingStudentId = studentResponse.data.values[ipRowIndex][0];
+        if (existingStudentId && existingStudentId !== studentId) {
+          return res.status(403).json({ 
+            error: 'Bu IP adresi bu hafta başka bir öğrenci için kullanılmış',
+            blockedStudentId: existingStudentId 
+          });
+        }
       }
     }
-    
-    // Gerçek satır numarası (1'den başlar)
+
     const studentRow = studentRowIndex + 1;
 
     if (week < 1 || week > 16) {
       return res.status(400).json({ error: 'Geçersiz hafta numarası' });
     }
 
-    // Hafta sütununu belirle (D'den başlayarak)
-    const weekColumn = String.fromCharCode(68 + Number(week) - 1);
-    
-    // Güncelleme aralığını belirle
     const range = `${weekColumn}${studentRow}`;
 
-    // Debug bilgilerini hazırla
-    const debugInfo = {
-      operationDetails: {
-        ogrenciNo: studentId,
-        bulunanSatir: studentRow,
-        sutun: weekColumn,
-        aralik: range,
-        weekNumber: week,
-        ip: ip,
-        calculatedASCII: 68 + Number(week) - 1
-      }
-    };
+    await delay(500);
 
-    // Yoklamayı kaydet (IP ile birlikte)
+    // Yoklamayı kaydet
     const updateResult = await sheets.spreadsheets.values.update({
       spreadsheetId: process.env.SPREADSHEET_ID,
       range: range,
@@ -159,11 +138,17 @@ export default async function handler(
       }
     });
 
-    // Başarılı yanıtta debug bilgilerini de gönder
     res.status(200).json({ 
       success: true,
       debug: {
-        ...debugInfo,
+        operationDetails: {
+          ogrenciNo: studentId,
+          bulunanSatir: studentRow,
+          sutun: weekColumn,
+          aralik: range,
+          weekNumber: week,
+          ip: ip,
+        },
         updateResult: updateResult.data,
         ipCheck: {
           ip,
@@ -174,6 +159,13 @@ export default async function handler(
 
   } catch (error) {
     console.error('Error:', error);
+    
+    if (error instanceof Error && error.message.includes('Quota exceeded')) {
+      return res.status(429).json({
+        error: 'Sistem şu anda yoğun, lütfen birkaç saniye sonra tekrar deneyin'
+      });
+    }
+    
     res.status(500).json({ 
       error: error instanceof Error ? error.message : 'Unknown error',
       debug: 'debugInfo'

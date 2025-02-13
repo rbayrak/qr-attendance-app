@@ -292,12 +292,23 @@ const AttendanceSystem = () => {
   }, [mode]);
 
   
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+  // Öğrenci listesini Google Sheets'ten çekm
 
-  // Öğrenci listesini Google Sheets'ten çekme
   const fetchStudentList = async () => {
     try {
-      const token = await getAccessToken();
+      // Token kontrolü
+      if (!accessToken || accessToken === 'undefined') {
+        await initializeGoogleAuth();
+        if (!accessToken) {
+          throw new Error('Token alınamadı');
+        }
+      }
+
+      // Rate limiting için kısa bir bekleme
+      await delay(500);
+
       const response = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:C`,
         {
@@ -306,6 +317,16 @@ const AttendanceSystem = () => {
           }
         }
       );
+
+      if (!response.ok) {
+        if (response.status === 429 || response.statusText.includes('Quota exceeded')) {
+          // Quota aşıldıysa 1 saniye bekle ve tekrar dene
+          await delay(1000);
+          return fetchStudentList(); // Recursive call
+        }
+        throw new Error(`API Hatası: ${response.statusText}`);
+      }
+
       const data = await response.json();
       
       const students = data.values.slice(1).map((row: string[]) => ({
@@ -314,8 +335,26 @@ const AttendanceSystem = () => {
       }));
       
       setValidStudents(students);
+      
+      // Cache'e kaydet
+      localStorage.setItem('studentList', JSON.stringify(students));
+      localStorage.setItem('studentListTimestamp', Date.now().toString());
+
     } catch (error) {
       console.error('Öğrenci listesi çekme hatası:', error);
+      
+      // Cache'den veri yüklemeyi dene
+      const cachedList = localStorage.getItem('studentList');
+      const cachedTimestamp = localStorage.getItem('studentListTimestamp');
+      
+      if (cachedList && cachedTimestamp) {
+        const cacheAge = Date.now() - Number(cachedTimestamp);
+        if (cacheAge < 24 * 60 * 60 * 1000) { // 24 saat geçerli
+          setValidStudents(JSON.parse(cachedList));
+          return;
+        }
+      }
+      
       setStatus('❌ Öğrenci listesi yüklenemedi');
     }
   };
@@ -681,13 +720,14 @@ const AttendanceSystem = () => {
         scannedData.classLocation.lng
       );
     
-      console.log('Mesafe:', distance, 'km');
-    
       if (distance > MAX_DISTANCE) {
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
     
+      // Rate limiting için kısa bir bekleme
+      await delay(500);
+  
       // Backend API'ye istek at
       const response = await fetch('/api/attendance', {
         method: 'POST',
@@ -700,6 +740,14 @@ const AttendanceSystem = () => {
           clientIP: clientIP
         })
       });
+  
+      if (!response.ok) {
+        if (response.status === 429 || response.statusText.includes('Quota exceeded')) {
+          await delay(1000);
+          setStatus('⚠️ Sistem yoğun, tekrar deneniyor...');
+          return handleQrScan(decodedText); // Recursive call
+        }
+      }
     
       const responseData = await response.json();
     
