@@ -6,6 +6,7 @@ type ResponseData = {
   error?: string;
   debug?: any;
   blockedStudentId?: string;
+  isAlreadyAttended?: boolean;
 };
 
 interface DeviceAttendanceRecord {
@@ -143,6 +144,10 @@ export default async function handler(
     const weekColumn = String.fromCharCode(68 + Number(week) - 1);
     const range = `${weekColumn}${studentRow}`;
 
+    // Mevcut hafta verilerini kontrol et ve öğrencinin zaten yoklaması var mı diye bak
+    const isAlreadyAttended = rows[studentRowIndex][weekColumnIndex] && 
+                             rows[studentRowIndex][weekColumnIndex].includes('VAR');
+
     // Yoklamayı kaydet (cihaz parmak izi ile)
     const updateResult = await sheets.spreadsheets.values.update({
       spreadsheetId: process.env.SPREADSHEET_ID,
@@ -156,6 +161,7 @@ export default async function handler(
     // Başarılı yanıt
     res.status(200).json({ 
       success: true,
+      isAlreadyAttended: isAlreadyAttended,
       debug: {
         operationDetails: {
           ogrenciNo: studentId,

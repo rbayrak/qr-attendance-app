@@ -700,36 +700,16 @@ const AttendanceSystem = () => {
         setStatus('❌ Önce konum alın');
         return;
       }
-   
-      // Haftalık yoklama kontrolü ekleyelim
-      const weekColumn = String.fromCharCode(68 + scannedData.week - 1); // D sütunundan başlayarak
-      const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${weekColumn}:${weekColumn}?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
-      );
-      const data = await response.json();
-      
-      // Öğrencinin o haftaki yoklama durumunu kontrol et
-      const studentRowIndex = validStudents.findIndex(s => s.studentId === studentId);
-      let isAlreadyAttended = false;
-      
-      if (studentRowIndex !== -1) {
-        const weekData = data.values || [];
-        const existingAttendanceCell = weekData[studentRowIndex];
-        
-        if (existingAttendanceCell && existingAttendanceCell[0] && existingAttendanceCell[0].includes('VAR')) {
-          isAlreadyAttended = true;
-        }
-      }
-   
+  
       // IP ve cihaz parmak izini al
       const clientIPData = await getClientIP();
       if (!clientIPData) {
         setStatus('❌ IP adresi alınamadı');
         return;
       }
-   
+  
       const { ip: clientIP, deviceFingerprint } = clientIPData;
-   
+  
       const distance = calculateDistance(
         location.lat,
         location.lng,
@@ -757,9 +737,9 @@ const AttendanceSystem = () => {
           deviceFingerprint: deviceFingerprint
         })
       });
-    
+  
       const responseData = await attendanceResponse.json();
-    
+  
       if (!attendanceResponse.ok) {
         if (responseData.blockedStudentId) {
           setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
@@ -767,15 +747,15 @@ const AttendanceSystem = () => {
         }
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
-    
+  
       // Yoklama başarılıysa local storage'a kaydet
       localStorage.setItem('lastAttendanceCheck', JSON.stringify({
         studentId: studentId,
         timestamp: new Date().toISOString()
       }));
-    
-      // Öğrencinin adını ve soyadını göster ve duruma göre mesaj ver
-      if (isAlreadyAttended) {
+  
+      // Bildirim mesajını backend'den gelen isAlreadyAttended değerine göre belirle
+      if (responseData.isAlreadyAttended) {
         setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
       } else {
         setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
