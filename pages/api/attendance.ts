@@ -1,7 +1,7 @@
+// attendance.ts
 import { google } from 'googleapis';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-// Delay fonksiyonu
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 type ResponseData = {
@@ -9,6 +9,8 @@ type ResponseData = {
   error?: string;
   debug?: any;
   blockedStudentId?: string;
+  attemptsLeft?: number;
+  retryAfter?: number;  // Bunu ekleyelim
 };
 
 // IP ve öğrenci eşleştirmelerini tutmak için
@@ -16,7 +18,19 @@ const ipAttendanceMap = new Map<string, {
   studentId: string;
   timestamp: number;
   firstStudentId?: string;
+  weeklyAttempts: Map<number, number>; // Her hafta için deneme sayısı
 }>();
+
+const MAX_WEEKLY_ATTEMPTS = 5; // Haftalık maksimum deneme sayısı
+
+const validateIP = (ip: string) => {
+  const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+  if (!ipPattern.test(ip)) return false;
+  return ip.split('.').every(num => {
+    const n = parseInt(num);
+    return n >= 0 && n <= 255;
+  });
+};
 
 export default async function handler(
   req: NextApiRequest,
@@ -38,11 +52,26 @@ export default async function handler(
                req.socket.remoteAddress || 
                'unknown';
 
+    if (!validateIP(ip)) {
+      return res.status(400).json({ error: 'Geçersiz IP adresi' });
+    }
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    const existingAttendance = ipAttendanceMap.get(ip);
+    let existingAttendance = ipAttendanceMap.get(ip);
+    
+    // Haftalık deneme sayısı kontrolü
     if (existingAttendance) {
+      const weeklyAttempts = existingAttendance.weeklyAttempts.get(week) || 0;
+      if (weeklyAttempts >= MAX_WEEKLY_ATTEMPTS) {
+        return res.status(403).json({ 
+          error: 'Bu hafta için maksimum deneme sayısına ulaşıldı',
+          attemptsLeft: 0
+        });
+      }
+
+      // Aynı gün kontrolü
       if (existingAttendance.timestamp >= today.getTime()) {
         const firstStudentId = existingAttendance.firstStudentId || existingAttendance.studentId;
         if (studentId !== firstStudentId) {
@@ -52,20 +81,29 @@ export default async function handler(
           });
         }
       } else {
-        ipAttendanceMap.set(ip, {
-          studentId,
-          timestamp: Date.now(),
-          firstStudentId: studentId
-        });
+        // Gün değişmiş, yeni gün için kayıt güncelle
+        existingAttendance.studentId = studentId;
+        existingAttendance.timestamp = Date.now();
+        existingAttendance.firstStudentId = studentId;
       }
+
+      // Deneme sayısını artır
+      existingAttendance.weeklyAttempts.set(week, weeklyAttempts + 1);
     } else {
-      ipAttendanceMap.set(ip, {
+      // İlk kez yoklama alınıyor
+      const weeklyAttempts = new Map<number, number>();
+      weeklyAttempts.set(week, 1);
+      
+      existingAttendance = {
         studentId,
         timestamp: Date.now(),
-        firstStudentId: studentId
-      });
+        firstStudentId: studentId,
+        weeklyAttempts
+      };
+      ipAttendanceMap.set(ip, existingAttendance);
     }
 
+    // Google Sheets işlemleri
     const auth = new google.auth.GoogleAuth({
       credentials: {
         type: 'service_account',
@@ -81,11 +119,17 @@ export default async function handler(
     
     await delay(500);
 
-    // Öğrenci ID'sini kontrol et
-    const studentResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.SPREADSHEET_ID,
-      range: 'B:B',
-    });
+    // Öğrenci kontrolü ve yoklama kaydı için batch request
+    const [studentResponse, weekResponse] = await Promise.all([
+      sheets.spreadsheets.values.get({
+        spreadsheetId: process.env.SPREADSHEET_ID,
+        range: 'B:B',
+      }),
+      sheets.spreadsheets.values.get({
+        spreadsheetId: process.env.SPREADSHEET_ID,
+        range: `${weekColumn}:${weekColumn}`,
+      })
+    ]);
 
     if (!studentResponse.data.values) {
       return res.status(404).json({ error: 'Öğrenci listesi bulunamadı' });
@@ -95,12 +139,6 @@ export default async function handler(
     if (studentRowIndex === -1) {
       return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
-
-    // Haftalık veriyi kontrol et
-    const weekResponse = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.SPREADSHEET_ID,
-      range: `${weekColumn}:${weekColumn}`,
-    });
 
     const weekData = weekResponse.data.values || [];
     const ipCheck = weekData.find(row => row[0] && row[0].includes(`(IP:${ip})`));
@@ -129,17 +167,24 @@ export default async function handler(
     await delay(500);
 
     // Yoklamayı kaydet
-    const updateResult = await sheets.spreadsheets.values.update({
+    const batchUpdate = {
       spreadsheetId: process.env.SPREADSHEET_ID,
-      range: range,
-      valueInputOption: 'RAW',
-      requestBody: {
-        values: [[`VAR (IP:${ip})`]]
+      resource: {
+        valueInputOption: 'RAW',
+        data: [{
+          range: range,
+          values: [[`VAR (IP:${ip})`]]
+        }]
       }
-    });
+    };
+
+    const updateResult = await sheets.spreadsheets.values.batchUpdate(batchUpdate);
+
+    const attemptsLeft = MAX_WEEKLY_ATTEMPTS - (existingAttendance.weeklyAttempts.get(week) || 0);
 
     res.status(200).json({ 
       success: true,
+      attemptsLeft,
       debug: {
         operationDetails: {
           ogrenciNo: studentId,
@@ -148,6 +193,8 @@ export default async function handler(
           aralik: range,
           weekNumber: week,
           ip: ip,
+          weeklyAttempts: existingAttendance.weeklyAttempts.get(week),
+          attemptsLeft
         },
         updateResult: updateResult.data,
         ipCheck: {
@@ -160,10 +207,18 @@ export default async function handler(
   } catch (error) {
     console.error('Error:', error);
     
-    if (error instanceof Error && error.message.includes('Quota exceeded')) {
-      return res.status(429).json({
-        error: 'Sistem şu anda yoğun, lütfen birkaç saniye sonra tekrar deneyin'
-      });
+    if (error instanceof Error) {
+      if (error.message.includes('Quota exceeded')) {
+        return res.status(429).json({
+          error: 'Sistem yoğun, lütfen birkaç saniye sonra tekrar deneyin',
+          retryAfter: 3
+        });
+      } else if (error.message.includes('Rate limit exceeded')) {
+        return res.status(429).json({
+          error: 'API limit aşıldı, lütfen biraz bekleyin',
+          retryAfter: 5
+        });
+      }
     }
     
     res.status(500).json({ 
