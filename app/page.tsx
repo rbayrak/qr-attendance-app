@@ -762,6 +762,31 @@ const AttendanceSystem = () => {
         return;
       }
   
+      // Haftalık yoklama kontrolü ekleyelim
+      const weekColumn = String.fromCharCode(68 + scannedData.week - 1); // D sütunundan başlayarak
+      const response = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${weekColumn}:${weekColumn}?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY}`
+      );
+      const data = await response.json();
+      
+      // Öğrencinin o haftaki yoklama durumunu kontrol et
+      const studentRowIndex = validStudents.findIndex(s => s.studentId === studentId);
+      if (studentRowIndex !== -1) {
+        const weekData = data.values || [];
+        const existingAttendanceCell = weekData[studentRowIndex];
+        
+        if (existingAttendanceCell && existingAttendanceCell[0] && existingAttendanceCell[0].includes('VAR')) {
+          setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
+          
+          // QR taramayı durdur
+          setIsScanning(false);
+          if (html5QrCode) {
+            await html5QrCode.stop();
+          }
+          return;
+        }
+      }
+  
       // IP adresini al
       const clientIP = await getClientIP();
       if (!clientIP) {
@@ -781,7 +806,7 @@ const AttendanceSystem = () => {
         return;
       }
   
-      const response = await fetch('/api/attendance', {
+      const fetchResponse = await fetch('/api/attendance', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -793,10 +818,10 @@ const AttendanceSystem = () => {
         })
       });
   
-      const responseData = await response.json();
+      const responseData = await fetchResponse.json();
   
       // Başarılı durum kontrolü
-      if (response.ok) {
+      if (fetchResponse.ok) {
         // QR taramayı durdur
         setIsScanning(false);
         if (html5QrCode) {
