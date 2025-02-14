@@ -178,75 +178,8 @@ const AttendanceSystem = () => {
   const [isValidLocation, setIsValidLocation] = useState<boolean>(false);
   const [classLocation, setClassLocation] = useState<Location | null>(null);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
-  const [showFingerprintModal, setShowFingerprintModal] = useState(false);
-  const [fingerprintToRemove, setFingerprintToRemove] = useState('');
 
-  const removeFingerprintRecord = async () => {
-    const trimmedFingerprint = fingerprintToRemove.replace(/[^0-9]/g, '').trim();
-    
-    if (!trimmedFingerprint) {
-      setStatus('❌ Geçersiz cihaz parmak izi formatı');
-      return;
-    }
   
-    try {
-      const response = await fetch(
-        `/api/attendance?fingerprint=${encodeURIComponent(trimmedFingerprint)}`, 
-        { method: 'DELETE' }
-      );
-  
-      const data = await response.json();
-      
-      if (response.ok) {
-        // Önbellek temizleme
-        localStorage.removeItem('lastAttendanceCheck');
-        sessionStorage.removeItem('deviceSession');
-        
-        // Diğer cihaz kayıtlarını temizle
-        const cleanResponse = await fetch('/api/attendance/clean', { method: 'POST' });
-        if (!cleanResponse.ok) throw new Error('Önbellek temizlenemedi');
-  
-        setStatus(`✅ ${data.message}`);
-      }
-    } catch (error) {
-      console.error('Full error chain:', error);
-    }
-  };
-  
-  
-  
-  
-  // Modal bileşeni
-  const FingerprintRemovalModal = () => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl p-6 w-full max-w-md space-y-4">
-        <h3 className="text-xl font-bold">Cihaz Parmak İzi Kaydı Silme</h3>
-        <input
-          type="text"
-          value={fingerprintToRemove}
-          onChange={(e) => setFingerprintToRemove(e.target.value)}
-          placeholder="Cihaz parmak izini girin"
-          className="w-full p-3 border rounded-lg"
-          autoFocus
-        />
-        <div className="flex gap-2">
-          <button
-            onClick={() => setShowFingerprintModal(false)}
-            className="flex-1 p-3 bg-gray-500 text-white rounded-lg"
-          >
-            İptal
-          </button>
-          <button
-            onClick={removeFingerprintRecord}
-            className="flex-1 p-3 bg-red-600 text-white rounded-lg"
-          >
-            Sil
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
 
   // Debug loglarını güncelleyen yardımcı fonksiyon
   const updateDebugLogs = async (newLog: string) => {
@@ -1007,16 +940,6 @@ const AttendanceSystem = () => {
               🗑️ Temizle
             </button>
 
-            <button
-              onClick={() => {
-                console.log('Modal açılıyor'); // Debug log
-                setShowFingerprintModal(true)
-              }}
-              className="w-full p-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"
-            >
-              🔍 Cihaz Parmak İzi Sil
-            </button>
-
   
             {qrData && (
               <div className="mt-4 text-center">
@@ -1139,7 +1062,6 @@ const AttendanceSystem = () => {
           </>
         )}
       </div>
-      {showFingerprintModal && <FingerprintRemovalModal />}
     </div>
   );
 };
