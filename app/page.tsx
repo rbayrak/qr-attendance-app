@@ -199,7 +199,7 @@ const AttendanceSystem = () => {
     }
     
     try {
-      const encodedFingerprint = encodeURIComponent(fingerprintToRemove);
+      const encodedFingerprint = encodeURIComponent(trimmedFingerprint);
       
       console.log('Encoded fingerprint:', encodedFingerprint); // Debug log ekledik
       
@@ -219,7 +219,7 @@ const AttendanceSystem = () => {
         setShowFingerprintModal(false);
         setFingerprintToRemove('');
         
-        updateDebugLogs(`🔧 Cihaz parmak izi silindi: ${fingerprintToRemove}`);
+        updateDebugLogs(`🔧 Cihaz parmak izi silindi: ${trimmedFingerprint}`);
       } else {
         setStatus(`❌ ${data.message || 'Kayıt silinemedi'}`);
       }
