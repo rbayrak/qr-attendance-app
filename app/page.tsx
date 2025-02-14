@@ -182,59 +182,36 @@ const AttendanceSystem = () => {
   const [fingerprintToRemove, setFingerprintToRemove] = useState('');
 
   const removeFingerprintRecord = async () => {
-    console.log('Fingerprint to remove:', fingerprintToRemove);
-  
-    const trimmedFingerprint = fingerprintToRemove.replace(/[^a-zA-Z0-9]/g, '').trim();
-  
-    console.log('Trimmed fingerprint:', trimmedFingerprint);
+    const trimmedFingerprint = fingerprintToRemove.replace(/[^0-9]/g, '').trim();
     
     if (!trimmedFingerprint) {
       setStatus('❌ Geçersiz cihaz parmak izi formatı');
       return;
     }
-    
-    if (!fingerprintToRemove) {
-      setStatus('❌ Lütfen bir cihaz parmak izi girin');
-      return;
-    }
-    
+  
     try {
-      const encodedFingerprint = encodeURIComponent(trimmedFingerprint);
-      
-      console.log('Encoded fingerprint:', encodedFingerprint);
-      
       const response = await fetch(
-        `/api/attendance?fingerprint=${encodedFingerprint}`, 
-        { 
-          method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
+        `/api/attendance?fingerprint=${encodeURIComponent(trimmedFingerprint)}`, 
+        { method: 'DELETE' }
       );
   
-      console.log('Response status:', response.status);
-  
       const data = await response.json();
-      
-      console.log('Response data:', data);
       
       if (response.ok) {
         setStatus(`✅ ${data.message}`);
         setShowFingerprintModal(false);
         setFingerprintToRemove('');
-        
-        updateDebugLogs(`🔧 Cihaz parmak izi silindi: ${trimmedFingerprint}`);
+        updateDebugLogs(`🔧 ${data.message}`);
       } else {
-        // Hata detayını daha açık göster
         setStatus(`❌ ${data.message || 'Kayıt silinemedi'}`);
-        console.error('Deletion error details:', data);
       }
     } catch (error) {
       console.error('Error:', error);
-      setStatus('❌ Bir hata oluştu');
+      setStatus('❌ Sunucu hatası');
     }
   };
+  
+  
   
   
   // Modal bileşeni
