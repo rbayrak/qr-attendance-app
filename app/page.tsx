@@ -182,6 +182,14 @@ const AttendanceSystem = () => {
   const [fingerprintToRemove, setFingerprintToRemove] = useState('');
 
   const removeFingerprintRecord = async () => {
+
+    const trimmedFingerprint = fingerprintToRemove.replace(/[^a-zA-Z0-9]/g, '').trim();
+  
+    if (!trimmedFingerprint) {
+      setStatus('❌ Geçersiz cihaz parmak izi formatı');
+      return;
+    }
+    
     if (!fingerprintToRemove) {
       setStatus('❌ Lütfen bir cihaz parmak izi girin');
       return;
