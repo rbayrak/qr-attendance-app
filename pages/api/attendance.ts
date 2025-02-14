@@ -205,8 +205,17 @@ export default async function handler(
           : 'Cihaz kaydı bulunamadı'
       });
     } else {
-      return res.status(405).json({ error: 'Method not allowed' });
+      // ▼▼▼ BU KISIM YANLIŞTI ▼▼▼
+      // Tüm kayıtları temizle
+      deviceAttendanceMap.clear();
+      return res.status(200).json({ 
+        success: true,
+        message: 'Tüm cihaz kayıtları temizlendi'
+      });
     }
+  }
+  else { // ▲▲▲▲ BU SATIR EKSİKTİ ▲▲▲▲
+    return res.status(405).json({ error: 'Method not allowed' });
   }
   
 }
