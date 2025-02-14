@@ -674,36 +674,42 @@ const AttendanceSystem = () => {
   const handleQrScan = async (decodedText: string) => {
     try {
       const scannedData = JSON.parse(decodedText);
-
-      // Log ekle
-      setDebugLogs(prev => [...prev, `
-        ===== QR Tarama Başladı =====
-        Öğrenci No: ${studentId}
-        Konum: ${location?.lat}, ${location?.lng}
-        Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
-        Zaman: ${new Date().toLocaleTimeString()}
-      `]);
-      
+      const currentTime = new Date().toLocaleTimeString();
+      const studentInfo = validStudents.find(s => s.studentId === studentId);
+  
+      // İlk log - Tarama başladı
+      const scanStartLog = `
+  ===== YENİ YOKLAMA KAYDI =====
+  Zaman: ${currentTime}
+  Öğrenci: ${studentInfo?.studentName || 'Bilinmiyor'} (${studentId})
+  Konum Durumu: ${isValidLocation ? '✅ Geçerli' : '❌ Geçersiz'}
+  `;
+      setDebugLogs(prev => [...prev, scanStartLog]);
+  
       // Öğrenci kontrolü
       const validStudent = validStudents.find(s => s.studentId === studentId);
       if (!validStudent) {
+        setDebugLogs(prev => [...prev, `❌ HATA: Öğrenci numarası (${studentId}) listede bulunamadı`]);
         setStatus('❌ Öğrenci numarası listede bulunamadı');
         return;
       }
-    
+  
       if (scannedData.validUntil < Date.now()) {
+        setDebugLogs(prev => [...prev, `❌ HATA: QR kod süresi dolmuş`]);
         setStatus('❌ QR kod süresi dolmuş');
         return;
       }
-    
+  
       if (!location) {
+        setDebugLogs(prev => [...prev, `❌ HATA: Konum bilgisi yok`]);
         setStatus('❌ Önce konum alın');
         return;
       }
   
-      // IP ve cihaz parmak izini al
+      // IP ve device fingerprint kontrolü
       const clientIPData = await getClientIP();
       if (!clientIPData) {
+        setDebugLogs(prev => [...prev, `❌ HATA: IP adresi alınamadı`]);
         setStatus('❌ IP adresi alınamadı');
         return;
       }
@@ -716,26 +722,29 @@ const AttendanceSystem = () => {
         scannedData.classLocation.lat,
         scannedData.classLocation.lng
       );
-    
-      console.log('Mesafe:', distance, 'km');
-    
+  
+      setDebugLogs(prev => [...prev, `
+  📍 KONUM BİLGİLERİ:
+  Uzaklık: ${distance.toFixed(3)} km
+  Öğrenci Konumu: ${location.lat}, ${location.lng}
+  Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
+  `]);
+  
       if (distance > MAX_DISTANCE) {
-        setDebugLogs(prev => [...prev, `❌ Konum Doğrulama Başarısız - Öğrenci No: ${studentId}`]);
+        setDebugLogs(prev => [...prev, `❌ HATA: Konum mesafesi çok uzak (${distance.toFixed(3)} km)`]);
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
-    
-      // Backend API'ye istek at
+  
+      // Backend API isteği
       const attendanceResponse = await fetch('/api/attendance', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          studentId: studentId,
+          studentId,
           week: scannedData.week,
-          clientIP: clientIP,
-          deviceFingerprint: deviceFingerprint
+          clientIP,
+          deviceFingerprint
         })
       });
   
@@ -743,39 +752,40 @@ const AttendanceSystem = () => {
   
       if (!attendanceResponse.ok) {
         if (responseData.blockedStudentId) {
+          setDebugLogs(prev => [...prev, `❌ HATA: Cihaz ${responseData.blockedStudentId} no'lu öğrenci tarafından kullanılmış`]);
           setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
           return;
         }
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
   
-      // Yoklama başarılıysa local storage'a kaydet
+      // Başarılı kayıt
       localStorage.setItem('lastAttendanceCheck', JSON.stringify({
         studentId: studentId,
         timestamp: new Date().toISOString()
       }));
   
-      // Bildirim mesajını backend'den gelen isAlreadyAttended değerine göre belirle
+      // Sonuç logları
       if (responseData.isAlreadyAttended) {
-        setDebugLogs(prev => [...prev, `⚠️ Yoklama Zaten Alınmış - Öğrenci No: ${studentId}`]);
+        setDebugLogs(prev => [...prev, `⚠️ UYARI: ${studentId} no'lu öğrenci için yoklama zaten alınmış`]);
         setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
       } else {
-        setDebugLogs(prev => [...prev, `✅ Yoklama Başarılı - Öğrenci No: ${studentId}`]);
+        setDebugLogs(prev => [...prev, `✅ BAŞARILI: ${studentId} no'lu öğrenci için yoklama kaydedildi`]);
         setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
       }
-      
+  
       // Taramayı durdur
       setIsScanning(false);
       if (html5QrCode) {
         await html5QrCode.stop();
       }
-    
+  
     } catch (error) {
-      setDebugLogs(prev => [...prev, `❌ Hata - Öğrenci No: ${studentId}\nHata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`]);
+      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      setDebugLogs(prev => [...prev, `❌ HATA: ${errorMessage}`]);
       console.error('QR okuma hatası:', error);
-      setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
-      
-      // Hata durumunda QR taramayı durdur
+      setStatus(`❌ ${errorMessage}`);
+  
       setIsScanning(false);
       if (html5QrCode) {
         await html5QrCode.stop();
