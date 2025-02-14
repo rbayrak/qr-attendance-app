@@ -182,11 +182,11 @@ const AttendanceSystem = () => {
   const [fingerprintToRemove, setFingerprintToRemove] = useState('');
 
   const removeFingerprintRecord = async () => {
-    console.log('Fingerprint to remove:', fingerprintToRemove); // Debug log ekledik
+    console.log('Fingerprint to remove:', fingerprintToRemove);
   
     const trimmedFingerprint = fingerprintToRemove.replace(/[^a-zA-Z0-9]/g, '').trim();
   
-    console.log('Trimmed fingerprint:', trimmedFingerprint); // Debug log ekledik
+    console.log('Trimmed fingerprint:', trimmedFingerprint);
     
     if (!trimmedFingerprint) {
       setStatus('❌ Geçersiz cihaz parmak izi formatı');
@@ -201,18 +201,23 @@ const AttendanceSystem = () => {
     try {
       const encodedFingerprint = encodeURIComponent(trimmedFingerprint);
       
-      console.log('Encoded fingerprint:', encodedFingerprint); // Debug log ekledik
+      console.log('Encoded fingerprint:', encodedFingerprint);
       
       const response = await fetch(
         `/api/attendance?fingerprint=${encodedFingerprint}`, 
-        { method: 'DELETE' }
+        { 
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
       );
   
-      console.log('Response status:', response.status); // Debug log ekledik
+      console.log('Response status:', response.status);
   
       const data = await response.json();
       
-      console.log('Response data:', data); // Debug log ekledik
+      console.log('Response data:', data);
       
       if (response.ok) {
         setStatus(`✅ ${data.message}`);
@@ -221,10 +226,12 @@ const AttendanceSystem = () => {
         
         updateDebugLogs(`🔧 Cihaz parmak izi silindi: ${trimmedFingerprint}`);
       } else {
+        // Hata detayını daha açık göster
         setStatus(`❌ ${data.message || 'Kayıt silinemedi'}`);
+        console.error('Deletion error details:', data);
       }
     } catch (error) {
-      console.error('Error:', error); // Hata detaylarını logla
+      console.error('Error:', error);
       setStatus('❌ Bir hata oluştu');
     }
   };
