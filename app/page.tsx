@@ -178,8 +178,67 @@ const AttendanceSystem = () => {
   const [isValidLocation, setIsValidLocation] = useState<boolean>(false);
   const [classLocation, setClassLocation] = useState<Location | null>(null);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [showFingerprintModal, setShowFingerprintModal] = useState(false);
+  const [fingerprintToRemove, setFingerprintToRemove] = useState('');
 
+  const removeFingerprintRecord = async () => {
+    if (!fingerprintToRemove) {
+      setStatus('❌ Lütfen bir cihaz parmak izi girin');
+      return;
+    }
   
+    try {
+      const response = await fetch('/api/attendance', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fingerprint: fingerprintToRemove })
+      });
+  
+      const data = await response.json();
+  
+      if (response.ok) {
+        setStatus(`✅ ${fingerprintToRemove} parmak izi kaydı silindi`);
+        setShowFingerprintModal(false);
+        setFingerprintToRemove('');
+      } else {
+        setStatus(`❌ ${data.error || 'Kayıt silinemedi'}`);
+      }
+    } catch (error) {
+      setStatus('❌ Bir hata oluştu');
+    }
+  };
+  
+  // Modal bileşeni
+  const FingerprintRemovalModal = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl p-6 w-full max-w-md space-y-4">
+        <h3 className="text-xl font-bold">Cihaz Parmak İzi Kaydı Silme</h3>
+        <input
+          type="text"
+          value={fingerprintToRemove}
+          onChange={(e) => setFingerprintToRemove(e.target.value)}
+          placeholder="Cihaz parmak izini girin"
+          className="w-full p-3 border rounded-lg"
+          autoFocus
+        />
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowFingerprintModal(false)}
+            className="flex-1 p-3 bg-gray-500 text-white rounded-lg"
+          >
+            İptal
+          </button>
+          <button
+            onClick={removeFingerprintRecord}
+            className="flex-1 p-3 bg-red-600 text-white rounded-lg"
+          >
+            Sil
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
 
   // Debug loglarını güncelleyen yardımcı fonksiyon
   const updateDebugLogs = async (newLog: string) => {
@@ -938,6 +997,13 @@ const AttendanceSystem = () => {
               disabled={isLoading}
             >
               🗑️ Temizle
+            </button>
+
+            <button
+              onClick={() => setShowFingerprintModal(true)}
+              className="w-full p-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"
+            >
+              🔍 Cihaz Parmak İzi Sil
             </button>
 
   

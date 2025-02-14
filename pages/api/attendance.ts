@@ -183,15 +183,26 @@ export default async function handler(
     }
   }
   else if (req.method === 'DELETE') {
-    // Tüm kayıtları temizle
-    deviceAttendanceMap.clear();
-    return res.status(200).json({ 
-      success: true,
-      message: 'Tüm cihaz kayıtları temizlendi'
-    });
+    const { fingerprint } = req.body;
+    
+    if (fingerprint) {
+      // Spesifik bir fingerprint'i temizle
+      deviceAttendanceMap.delete(fingerprint);
+      return res.status(200).json({ 
+        success: true,
+        message: `${fingerprint} cihaz kaydı temizlendi`
+      });
+    } else {
+      // Tüm kayıtları temizle
+      deviceAttendanceMap.clear();
+      return res.status(200).json({ 
+        success: true,
+        message: 'Tüm cihaz kayıtları temizlendi'
+      });
+    }
   }
   else {
     return res.status(405).json({ error: 'Method not allowed' });
-  }   
+  }     
 }
 
