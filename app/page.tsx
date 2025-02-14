@@ -683,6 +683,15 @@ const AttendanceSystem = () => {
   const handleQrScan = async (decodedText: string) => {
     try {
       const scannedData = JSON.parse(decodedText);
+
+      // Log ekle
+      setDebugLogs(prev => [...prev, `
+        ===== QR Tarama Başladı =====
+        Öğrenci No: ${studentId}
+        Konum: ${location?.lat}, ${location?.lng}
+        Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
+        Zaman: ${new Date().toLocaleTimeString()}
+      `]);
       
       // Öğrenci kontrolü
       const validStudent = validStudents.find(s => s.studentId === studentId);
@@ -720,6 +729,7 @@ const AttendanceSystem = () => {
       console.log('Mesafe:', distance, 'km');
     
       if (distance > MAX_DISTANCE) {
+        setDebugLogs(prev => [...prev, `❌ Konum Doğrulama Başarısız - Öğrenci No: ${studentId}`]);
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
@@ -756,8 +766,10 @@ const AttendanceSystem = () => {
   
       // Bildirim mesajını backend'den gelen isAlreadyAttended değerine göre belirle
       if (responseData.isAlreadyAttended) {
+        setDebugLogs(prev => [...prev, `⚠️ Yoklama Zaten Alınmış - Öğrenci No: ${studentId}`]);
         setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
       } else {
+        setDebugLogs(prev => [...prev, `✅ Yoklama Başarılı - Öğrenci No: ${studentId}`]);
         setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
       }
       
@@ -841,18 +853,15 @@ const AttendanceSystem = () => {
             </button>
           </div>
         </div>
+
+        
       </div>
     );
   }
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
-      {/* Debug Panel */}
-      <div className="mb-4 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-40">
-        {debugLogs.map((log, i) => (
-          <div key={i} className="whitespace-pre-wrap">{log}</div>
-        ))}
-      </div>
+      
       {showPasswordModal && (
         <PasswordModal
           password={password}
@@ -939,6 +948,14 @@ const AttendanceSystem = () => {
                 </div>
               </div>
             )}
+
+          <div className="mt-6 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-60 fixed bottom-4 left-4 right-4 max-w-md mx-auto">
+            <h3 className="text-sm font-bold mb-2">Debug Konsolu</h3>
+            {debugLogs.map((log, i) => (
+              <div key={i} className="whitespace-pre-wrap mb-1">{log}</div>
+            ))}
+          </div>
+            
           </div>
         ) : (
           <>
