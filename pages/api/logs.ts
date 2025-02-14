@@ -19,10 +19,6 @@ export default async function handler(
     }
     else if (req.method === 'DELETE') {
       debugLogs = []; // Tüm logları temizle
-
-      if (debugLogs.length !== 0) {
-        debugLogs = []; // Tekrar kontrol et ve temizle
-      }
       return res.status(200).json({ success: true });
     }
     else {
