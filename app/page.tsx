@@ -194,22 +194,40 @@ const AttendanceSystem = () => {
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (mode === 'teacher') {
-      interval = setInterval(() => {
-        const savedLogs = localStorage.getItem('debugLogs');
-        if (savedLogs) {
-          const parsedLogs = JSON.parse(savedLogs);
-          if (JSON.stringify(debugLogs) !== JSON.stringify(parsedLogs)) {
-            setDebugLogs(parsedLogs);
-          }
-        }
-      }, 2000);
+        const checkLogs = () => {
+            const savedLogs = localStorage.getItem('debugLogs');
+            if (savedLogs) {
+                const parsedLogs = JSON.parse(savedLogs);
+                // Eğer localStorage'daki log sayısı state'teki log sayısından fazlaysa güncelle
+                if (parsedLogs.length > debugLogs.length) {
+                    console.log('Yeni loglar bulundu:', parsedLogs);
+                    setDebugLogs(parsedLogs);
+                }
+            }
+        };
+
+        // İlk kontrol
+        checkLogs();
+        
+        // Periyodik kontrol
+        interval = setInterval(checkLogs, 1000); // 1 saniyede bir kontrol et
     }
+
+    if (mode === 'teacher') {
+      console.log('Debug log kontrolü:', {
+          localStorageLogs: localStorage.getItem('debugLogs'),
+          stateLogs: debugLogs
+      });
+    }
+
     return () => {
-      if (interval) {
-        clearInterval(interval);
-      }
+        if (interval) {
+            clearInterval(interval);
+        }
     };
-  }, [mode, debugLogs]);
+
+    
+  }, [mode, debugLogs.length]); // debugLogs.length'i dependency olarak ekle
 
   useEffect(() => {
     if (mode === 'student') {
@@ -733,10 +751,14 @@ const AttendanceSystem = () => {
         }
 
         // Debug loglarını güncelle
-        const savedLogs = localStorage.getItem('debugLogs');
-        if (savedLogs) {
-            setDebugLogs(JSON.parse(savedLogs));
-        }
+        // Debug loglarını güncelle
+          const savedLogs = localStorage.getItem('debugLogs');
+          if (savedLogs) {
+              const parsedLogs = JSON.parse(savedLogs);
+              if (parsedLogs.length > debugLogs.length) {
+                  setDebugLogs(parsedLogs);
+              }
+          }
 
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
