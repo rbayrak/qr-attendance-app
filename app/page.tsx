@@ -1022,7 +1022,10 @@ const AttendanceSystem = () => {
             </button>
 
             <button
-              onClick={() => setShowFingerprintModal(true)}
+              onClick={() => {
+                console.log('Modal açılıyor'); // Debug log
+                setShowFingerprintModal(true)
+              }}
               className="w-full p-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"
             >
               🔍 Cihaz Parmak İzi Sil
@@ -1150,6 +1153,7 @@ const AttendanceSystem = () => {
           </>
         )}
       </div>
+      {showFingerprintModal && <FingerprintRemovalModal />}
     </div>
   );
 };
