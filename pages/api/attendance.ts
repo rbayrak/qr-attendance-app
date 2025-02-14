@@ -195,9 +195,14 @@ export default async function handler(
   else if (req.method === 'DELETE') {
     const fingerprint = req.query.fingerprint as string;
     
+    console.log('DELETE Request - Full Query:', req.query);
+    console.log('Received DELETE request with fingerprint:', fingerprint);
+    
     if (fingerprint && fingerprint !== 'undefined') {
-      // Belirli bir fingerprint'i sil
+      console.log('Attempting to delete fingerprint:', fingerprint);
       const deleted = deviceAttendanceMap.delete(fingerprint);
+      console.log('Delete operation result:', deleted);
+      
       return res.status(deleted ? 200 : 404).json({ 
         success: deleted,
         message: deleted 
@@ -205,8 +210,7 @@ export default async function handler(
           : 'Cihaz kaydı bulunamadı'
       });
     } else {
-      // ▼▼▼ BU KISIM YANLIŞTI ▼▼▼
-      // Tüm kayıtları temizle
+      console.log('No specific fingerprint provided, clearing all records');
       deviceAttendanceMap.clear();
       return res.status(200).json({ 
         success: true,

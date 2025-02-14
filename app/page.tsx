@@ -182,9 +182,12 @@ const AttendanceSystem = () => {
   const [fingerprintToRemove, setFingerprintToRemove] = useState('');
 
   const removeFingerprintRecord = async () => {
-
+    console.log('Fingerprint to remove:', fingerprintToRemove); // Debug log ekledik
+  
     const trimmedFingerprint = fingerprintToRemove.replace(/[^a-zA-Z0-9]/g, '').trim();
   
+    console.log('Trimmed fingerprint:', trimmedFingerprint); // Debug log ekledik
+    
     if (!trimmedFingerprint) {
       setStatus('❌ Geçersiz cihaz parmak izi formatı');
       return;
@@ -194,29 +197,34 @@ const AttendanceSystem = () => {
       setStatus('❌ Lütfen bir cihaz parmak izi girin');
       return;
     }
-  
+    
     try {
-      // URL encode ekleyerek özel karakter sorununu çöz
       const encodedFingerprint = encodeURIComponent(fingerprintToRemove);
+      
+      console.log('Encoded fingerprint:', encodedFingerprint); // Debug log ekledik
       
       const response = await fetch(
         `/api/attendance?fingerprint=${encodedFingerprint}`, 
         { method: 'DELETE' }
       );
   
+      console.log('Response status:', response.status); // Debug log ekledik
+  
       const data = await response.json();
+      
+      console.log('Response data:', data); // Debug log ekledik
       
       if (response.ok) {
         setStatus(`✅ ${data.message}`);
         setShowFingerprintModal(false);
         setFingerprintToRemove('');
         
-        // Debug loglarını güncelle
         updateDebugLogs(`🔧 Cihaz parmak izi silindi: ${fingerprintToRemove}`);
       } else {
         setStatus(`❌ ${data.message || 'Kayıt silinemedi'}`);
       }
     } catch (error) {
+      console.error('Error:', error); // Hata detaylarını logla
       setStatus('❌ Bir hata oluştu');
     }
   };
