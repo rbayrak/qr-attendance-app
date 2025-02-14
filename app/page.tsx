@@ -177,6 +177,19 @@ const AttendanceSystem = () => {
   //const [deviceBlocked, setDeviceBlocked] = useState<boolean>(false);
   const [isValidLocation, setIsValidLocation] = useState<boolean>(false);
   const [classLocation, setClassLocation] = useState<Location | null>(null);
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+
+  
+
+  // Debug loglarını güncelleyen yardımcı fonksiyon
+  const updateDebugLogs = (newLog: string) => {
+    setDebugLogs(prev => {
+      const updatedLogs = [...prev, newLog];
+      // Debug loglarını localStorage'a kaydet
+      localStorage.setItem('debugLogs', JSON.stringify(updatedLogs));
+      return updatedLogs;
+    });
+  };
 
   useEffect(() => {
     if (mode === 'student') {
@@ -251,27 +264,20 @@ const AttendanceSystem = () => {
   
 
   const handleModeChange = () => {
-    setDebugLogs(prev => [...prev, `
-      ----- Mode Değişimi Başlıyor -----
-      Mevcut Mod: ${mode}
-      Hedef Mod: ${mode === 'student' ? 'teacher' : 'student'}
-      localStorage: ${localStorage.getItem('classLocation')}
-      sessionStorage: ${sessionStorage.getItem('classLocation')}
-    `]);
-  
     if (mode === 'student') {
       setShowPasswordModal(true);
     } else {
-      // Sayfa yenilemeden mode değiştir
+      updateDebugLogs(`----- Öğrenci Moduna Geçildi -----`);
       setMode('student');
       setIsTeacherAuthenticated(false);
-      // Storage'ı koruyalım, temizlemeyelim
       const savedClassLocation = localStorage.getItem('classLocation');
       if (savedClassLocation) {
         setClassLocation(JSON.parse(savedClassLocation));
       }
     }
   };
+
+  
   
   // handlePasswordSubmit fonksiyonunu da güncelleyelim
   const handlePasswordSubmit = () => {
@@ -279,17 +285,24 @@ const AttendanceSystem = () => {
       setIsTeacherAuthenticated(true);
       setMode('teacher');
       setShowPasswordModal(false);
-      // Storage'ı koruyalım
+      
+      const savedLogs = localStorage.getItem('debugLogs');
+      if (savedLogs) {
+        setDebugLogs(JSON.parse(savedLogs));
+      }
+  
+      updateDebugLogs(`----- Öğretmen Moduna Geçildi -----`);
+  
       const savedClassLocation = localStorage.getItem('classLocation');
       if (savedClassLocation) {
         setClassLocation(JSON.parse(savedClassLocation));
       }
-      // Google yetkilendirmesini başlat
+      
       initializeGoogleAuth().then(() => {
         setIsAuthenticated(true);
         fetchStudentList();
       }).catch(error => {
-        console.error('Google Auth başlatma hatası:', error);
+        updateDebugLogs(`❌ HATA: Google yetkilendirme hatası - ${error.message}`);
         setStatus('❌ Google yetkilendirme hatası');
       });
     } else {
@@ -512,13 +525,19 @@ const AttendanceSystem = () => {
 
   // Diğer useEffect'lerin yanına ekleyin
   useEffect(() => {
-    setDebugLogs(prev => [...prev, `
+    const savedLogs = localStorage.getItem('debugLogs');
+    if (savedLogs && mode === 'teacher') {
+      setDebugLogs(JSON.parse(savedLogs));
+    }
+  
+    updateDebugLogs(`
       ----- Mode Değişimi -----
       Yeni Mod: ${mode}
       localStorage: ${localStorage.getItem('classLocation')}
       sessionStorage: ${sessionStorage.getItem('classLocation')}
-    `]);
+    `);
   
+    // fetchClassLocation fonksiyonunu burada tanımlayalım
     const fetchClassLocation = async () => {
       try {
         const response = await fetch('/api/location');
@@ -529,17 +548,17 @@ const AttendanceSystem = () => {
           // Storage'lara kaydet
           localStorage.setItem('classLocation', JSON.stringify(classLoc));
           sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
-    
-          setDebugLogs(prev => [...prev, `
+      
+          updateDebugLogs(`
             ----- Sınıf Konumu Alındı -----
             Konum: ${JSON.stringify(classLoc)}
-          `]);
+          `);
         }
       } catch (error) {
-        setDebugLogs(prev => [...prev, `
+        updateDebugLogs(`
           ----- API Konum Alma Hatası -----
           Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
-        `]);
+        `);
       }
     };
   
@@ -550,49 +569,23 @@ const AttendanceSystem = () => {
 
   useEffect(() => {
     if (mode === 'student') {
-      // Önce localStorage'dan konum kontrolü yap
-      const savedClassLocation = localStorage.getItem('classLocation');
-      if (savedClassLocation) {
-        const classLoc = JSON.parse(savedClassLocation);
-        setClassLocation(classLoc);
-        
-        // Eğer öğrencinin konumu da varsa mesafe kontrolü yap
-        if (location) {
-          const distance = calculateDistance(
-            location.lat,
-            location.lng,
-            classLoc.lat,
-            classLoc.lng
-          );
-          
-          if (distance > MAX_DISTANCE) {
-            setIsValidLocation(false);
-            setStatus('❌ Sınıf konumunda değilsiniz');
-          } else {
-            setIsValidLocation(true);
-            setStatus('✅ Konum doğrulandı');
-          }
-        }
-      } else {
-        // localStorage'da konum yoksa API'den kontrol et
-        fetch('/api/location')
-          .then(response => {
-            if (response.ok) {
-              return response.json();
-            }
-            throw new Error('Konum bulunamadı');
-          })
-          .then(classLoc => {
+      const fetchClassLocation = async () => {
+        try {
+          const response = await fetch('/api/location');
+          if (response.ok) {
+            const classLoc = await response.json();
             setClassLocation(classLoc);
             localStorage.setItem('classLocation', JSON.stringify(classLoc));
             sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
-          })
-          .catch(() => {
-            setStatus('❌ Öğretmen henüz konum paylaşmamış');
-          });
-      }
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+          updateDebugLogs(`❌ HATA: Konum alınamadı - ${errorMessage}`);
+        }
+      };
+      fetchClassLocation();
     }
-  }, [mode, location]); // location dependency'sini ekledik
+  }, [mode]);
 
   const generateQR = async () => {
     if (!location) {
@@ -668,7 +661,7 @@ const AttendanceSystem = () => {
     setStatus('✅ Öğrenci numarası doğrulandı');
   };
 
-  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  
 
   // handleQrScan fonksiyonu (page.tsx içinde):
   const handleQrScan = async (decodedText: string) => {
@@ -678,30 +671,29 @@ const AttendanceSystem = () => {
       const studentInfo = validStudents.find(s => s.studentId === studentId);
   
       // İlk log - Tarama başladı
-      const scanStartLog = `
+      updateDebugLogs(`
   ===== YENİ YOKLAMA KAYDI =====
   Zaman: ${currentTime}
   Öğrenci: ${studentInfo?.studentName || 'Bilinmiyor'} (${studentId})
-  Konum Durumu: ${isValidLocation ? '✅ Geçerli' : '❌ Geçersiz'}
-  `;
-      setDebugLogs(prev => [...prev, scanStartLog]);
+  Hafta: ${scannedData.week}
+  `);
   
       // Öğrenci kontrolü
       const validStudent = validStudents.find(s => s.studentId === studentId);
       if (!validStudent) {
-        setDebugLogs(prev => [...prev, `❌ HATA: Öğrenci numarası (${studentId}) listede bulunamadı`]);
+        updateDebugLogs(`❌ HATA: Öğrenci numarası (${studentId}) listede bulunamadı`);
         setStatus('❌ Öğrenci numarası listede bulunamadı');
         return;
       }
   
       if (scannedData.validUntil < Date.now()) {
-        setDebugLogs(prev => [...prev, `❌ HATA: QR kod süresi dolmuş`]);
+        updateDebugLogs(`❌ HATA: QR kod süresi dolmuş`);
         setStatus('❌ QR kod süresi dolmuş');
         return;
       }
   
       if (!location) {
-        setDebugLogs(prev => [...prev, `❌ HATA: Konum bilgisi yok`]);
+        updateDebugLogs(`❌ HATA: Konum bilgisi yok`);
         setStatus('❌ Önce konum alın');
         return;
       }
@@ -709,13 +701,14 @@ const AttendanceSystem = () => {
       // IP ve device fingerprint kontrolü
       const clientIPData = await getClientIP();
       if (!clientIPData) {
-        setDebugLogs(prev => [...prev, `❌ HATA: IP adresi alınamadı`]);
+        updateDebugLogs(`❌ HATA: IP adresi alınamadı`);
         setStatus('❌ IP adresi alınamadı');
         return;
       }
   
       const { ip: clientIP, deviceFingerprint } = clientIPData;
   
+      // Mesafe hesaplama
       const distance = calculateDistance(
         location.lat,
         location.lng,
@@ -723,15 +716,15 @@ const AttendanceSystem = () => {
         scannedData.classLocation.lng
       );
   
-      setDebugLogs(prev => [...prev, `
+      updateDebugLogs(`
   📍 KONUM BİLGİLERİ:
-  Uzaklık: ${distance.toFixed(3)} km
+  Mesafe: ${distance.toFixed(3)} km
   Öğrenci Konumu: ${location.lat}, ${location.lng}
   Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
-  `]);
+  `);
   
       if (distance > MAX_DISTANCE) {
-        setDebugLogs(prev => [...prev, `❌ HATA: Konum mesafesi çok uzak (${distance.toFixed(3)} km)`]);
+        updateDebugLogs(`❌ HATA: Konum mesafesi çok uzak (${distance.toFixed(3)} km)`);
         setStatus('❌ Sınıf konumunda değilsiniz');
         return;
       }
@@ -752,7 +745,7 @@ const AttendanceSystem = () => {
   
       if (!attendanceResponse.ok) {
         if (responseData.blockedStudentId) {
-          setDebugLogs(prev => [...prev, `❌ HATA: Cihaz ${responseData.blockedStudentId} no'lu öğrenci tarafından kullanılmış`]);
+          updateDebugLogs(`❌ HATA: Cihaz ${responseData.blockedStudentId} no'lu öğrenci tarafından kullanılmış`);
           setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
           return;
         }
@@ -767,10 +760,10 @@ const AttendanceSystem = () => {
   
       // Sonuç logları
       if (responseData.isAlreadyAttended) {
-        setDebugLogs(prev => [...prev, `⚠️ UYARI: ${studentId} no'lu öğrenci için yoklama zaten alınmış`]);
+        updateDebugLogs(`⚠️ UYARI: ${studentId} no'lu öğrenci için yoklama zaten alınmış`);
         setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
       } else {
-        setDebugLogs(prev => [...prev, `✅ BAŞARILI: ${studentId} no'lu öğrenci için yoklama kaydedildi`]);
+        updateDebugLogs(`✅ BAŞARILI: ${studentId} no'lu öğrenci için yoklama kaydedildi`);
         setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
       }
   
@@ -782,7 +775,7 @@ const AttendanceSystem = () => {
   
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-      setDebugLogs(prev => [...prev, `❌ HATA: ${errorMessage}`]);
+      updateDebugLogs(`❌ HATA: ${errorMessage}`);
       console.error('QR okuma hatası:', error);
       setStatus(`❌ ${errorMessage}`);
   
@@ -792,7 +785,6 @@ const AttendanceSystem = () => {
       }
     }
   };
-
   useEffect(() => {
     let scanner: Html5Qrcode;
     
