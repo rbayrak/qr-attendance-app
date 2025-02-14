@@ -545,48 +545,7 @@ const AttendanceSystem = () => {
   };
 
   // Diğer useEffect'lerin yanına ekleyin
-  useEffect(() => {
-    const savedLogs = localStorage.getItem('debugLogs');
-    if (savedLogs && mode === 'teacher') {
-      setDebugLogs(JSON.parse(savedLogs));
-    }
   
-    updateDebugLogs(`
-      ----- Mode Değişimi -----
-      Yeni Mod: ${mode}
-      localStorage: ${localStorage.getItem('classLocation')}
-      sessionStorage: ${sessionStorage.getItem('classLocation')}
-    `);
-  
-    // fetchClassLocation fonksiyonunu burada tanımlayalım
-    const fetchClassLocation = async () => {
-      try {
-        const response = await fetch('/api/location');
-        if (response.ok) {
-          const classLoc = await response.json();
-          setClassLocation(classLoc);
-          
-          // Storage'lara kaydet
-          localStorage.setItem('classLocation', JSON.stringify(classLoc));
-          sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
-      
-          updateDebugLogs(`
-            ----- Sınıf Konumu Alındı -----
-            Konum: ${JSON.stringify(classLoc)}
-          `);
-        }
-      } catch (error) {
-        updateDebugLogs(`
-          ----- API Konum Alma Hatası -----
-          Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
-        `);
-      }
-    };
-  
-    if (mode === 'student') {
-      fetchClassLocation();
-    }
-  }, [mode]);
 
   useEffect(() => {
     if (mode === 'student') {
@@ -692,17 +651,20 @@ const AttendanceSystem = () => {
       const studentInfo = validStudents.find(s => s.studentId === studentId);
   
       // İlk log - Tarama başladı
-      updateDebugLogs(`
-  ===== YENİ YOKLAMA KAYDI =====
-  Zaman: ${currentTime}
-  Öğrenci: ${studentInfo?.studentName || 'Bilinmiyor'} (${studentId})
-  Hafta: ${scannedData.week}
-  `);
+      const scanLog = `
+      ===== YENİ YOKLAMA KAYDI =====
+      Zaman: ${currentTime}
+      Öğrenci: ${studentInfo?.studentName || 'Bilinmiyor'} (${studentId})
+      Hafta: ${scannedData.week}
+      `;
+        
+        updateDebugLogs(scanLog);
   
       // Öğrenci kontrolü
       const validStudent = validStudents.find(s => s.studentId === studentId);
       if (!validStudent) {
-        updateDebugLogs(`❌ HATA: Öğrenci numarası (${studentId}) listede bulunamadı`);
+        const errorLog = `❌ HATA: Öğrenci numarası (${studentId}) listede bulunamadı`;
+        updateDebugLogs(errorLog);
         setStatus('❌ Öğrenci numarası listede bulunamadı');
         return;
       }
@@ -737,12 +699,13 @@ const AttendanceSystem = () => {
         scannedData.classLocation.lng
       );
   
-      updateDebugLogs(`
-  📍 KONUM BİLGİLERİ:
-  Mesafe: ${distance.toFixed(3)} km
-  Öğrenci Konumu: ${location.lat}, ${location.lng}
-  Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
-  `);
+      const locationLog = `
+📍 KONUM BİLGİLERİ:
+Mesafe: ${distance.toFixed(3)} km
+Öğrenci Konumu: ${location.lat}, ${location.lng}
+Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
+`;
+      updateDebugLogs(locationLog);
   
       if (distance > MAX_DISTANCE) {
         updateDebugLogs(`❌ HATA: Konum mesafesi çok uzak (${distance.toFixed(3)} km)`);
@@ -793,7 +756,12 @@ const AttendanceSystem = () => {
       if (html5QrCode) {
         await html5QrCode.stop();
       }
-  
+      
+      const savedLogs = localStorage.getItem('debugLogs');
+      if (savedLogs) {
+        setDebugLogs(JSON.parse(savedLogs));
+      }
+
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
       updateDebugLogs(`❌ HATA: ${errorMessage}`);
