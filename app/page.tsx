@@ -267,7 +267,6 @@ const AttendanceSystem = () => {
     if (mode === 'student') {
       setShowPasswordModal(true);
     } else {
-      updateDebugLogs(`----- Öğrenci Moduna Geçildi -----`);
       setMode('student');
       setIsTeacherAuthenticated(false);
       const savedClassLocation = localStorage.getItem('classLocation');
@@ -286,12 +285,13 @@ const AttendanceSystem = () => {
       setMode('teacher');
       setShowPasswordModal(false);
       
+      // Debug loglarını localStorage'dan yükle
       const savedLogs = localStorage.getItem('debugLogs');
       if (savedLogs) {
         setDebugLogs(JSON.parse(savedLogs));
       }
   
-      updateDebugLogs(`----- Öğretmen Moduna Geçildi -----`);
+      updateDebugLogs(`===== ÖĞRETMEN OTURUMU BAŞLADI =====`);
   
       const savedClassLocation = localStorage.getItem('classLocation');
       if (savedClassLocation) {
@@ -302,7 +302,8 @@ const AttendanceSystem = () => {
         setIsAuthenticated(true);
         fetchStudentList();
       }).catch(error => {
-        updateDebugLogs(`❌ HATA: Google yetkilendirme hatası - ${error.message}`);
+        const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+        updateDebugLogs(`❌ HATA: Google yetkilendirme hatası - ${errorMessage}`);
         setStatus('❌ Google yetkilendirme hatası');
       });
     } else {
