@@ -198,16 +198,18 @@ const AttendanceSystem = () => {
       const data = await response.json();
       
       if (response.ok) {
+        // Önbellek temizleme
+        localStorage.removeItem('lastAttendanceCheck');
+        sessionStorage.removeItem('deviceSession');
+        
+        // Diğer cihaz kayıtlarını temizle
+        const cleanResponse = await fetch('/api/attendance/clean', { method: 'POST' });
+        if (!cleanResponse.ok) throw new Error('Önbellek temizlenemedi');
+  
         setStatus(`✅ ${data.message}`);
-        setShowFingerprintModal(false);
-        setFingerprintToRemove('');
-        updateDebugLogs(`🔧 ${data.message}`);
-      } else {
-        setStatus(`❌ ${data.message || 'Kayıt silinemedi'}`);
       }
     } catch (error) {
-      console.error('Error:', error);
-      setStatus('❌ Sunucu hatası');
+      console.error('Full error chain:', error);
     }
   };
   
