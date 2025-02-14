@@ -182,52 +182,50 @@ const AttendanceSystem = () => {
   
 
   // Debug loglarını güncelleyen yardımcı fonksiyon
-  const updateDebugLogs = (newLog: string) => {
-    setDebugLogs(prev => {
-      const updatedLogs = [...prev, newLog];
-      // Debug loglarını localStorage'a kaydet
-      localStorage.setItem('debugLogs', JSON.stringify(updatedLogs));
-      return updatedLogs;
-    });
+  const updateDebugLogs = async (newLog: string) => {
+    try {
+      // API'ye log gönder
+      await fetch('/api/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ log: newLog })
+      });
+    } catch (error) {
+      console.error('Log gönderme hatası:', error);
+    }
   };
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (mode === 'teacher') {
-        const checkLogs = () => {
-            const savedLogs = localStorage.getItem('debugLogs');
-            if (savedLogs) {
-                const parsedLogs = JSON.parse(savedLogs);
-                // Eğer localStorage'daki log sayısı state'teki log sayısından fazlaysa güncelle
-                if (parsedLogs.length > debugLogs.length) {
-                    console.log('Yeni loglar bulundu:', parsedLogs);
-                    setDebugLogs(parsedLogs);
-                }
-            }
-        };
-
-        // İlk kontrol
-        checkLogs();
-        
-        // Periyodik kontrol
-        interval = setInterval(checkLogs, 1000); // 1 saniyede bir kontrol et
-    }
-
-    if (mode === 'teacher') {
-      console.log('Debug log kontrolü:', {
-          localStorageLogs: localStorage.getItem('debugLogs'),
-          stateLogs: debugLogs
-      });
-    }
-
-    return () => {
-        if (interval) {
-            clearInterval(interval);
-        }
-    };
-
     
-  }, [mode, debugLogs.length]); // debugLogs.length'i dependency olarak ekle
+    const fetchLogs = async () => {
+      try {
+        const response = await fetch('/api/logs');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.logs && data.logs.length !== debugLogs.length) {
+            setDebugLogs(data.logs);
+          }
+        }
+      } catch (error) {
+        console.error('Log alma hatası:', error);
+      }
+    };
+  
+    if (mode === 'teacher') {
+      // İlk yükleme
+      fetchLogs();
+      
+      // Periyodik kontrol
+      interval = setInterval(fetchLogs, 1000);
+    }
+  
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+  }, [mode, debugLogs.length]);
 
   useEffect(() => {
     if (mode === 'student') {
