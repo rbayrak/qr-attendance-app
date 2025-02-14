@@ -441,20 +441,11 @@ const AttendanceSystem = () => {
             setClassLocation(currentLocation);
             setStatus('📍 Konum alındı');
             
-            // Debug log ekle
-            setDebugLogs(prev => [...prev, `
-              ----- Öğretmen Konum Kaydı -----
-              Kaydedilen Konum: ${currentLocation.lat}, ${currentLocation.lng}
-              LocalStorage: ${localStorage.getItem('classLocation')}
-              SessionStorage: ${sessionStorage.getItem('classLocation')}
-            `]);
+        
   
           } catch (error) {
             setStatus('❌ Konum kaydedilemedi');
-            setDebugLogs(prev => [...prev, `
-              ----- Konum Kaydetme Hatası -----
-              Hata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}
-            `]);
+            
           }
         } else if (mode === 'student') {
           // Önce localStorage'dan kontrol et
@@ -780,6 +771,7 @@ const AttendanceSystem = () => {
       }
     
     } catch (error) {
+      setDebugLogs(prev => [...prev, `❌ Hata - Öğrenci No: ${studentId}\nHata: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`]);
       console.error('QR okuma hatası:', error);
       setStatus(`❌ ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`);
       
@@ -949,14 +941,15 @@ const AttendanceSystem = () => {
               </div>
             )}
 
-          <div className="mt-6 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-60 fixed bottom-4 left-4 right-4 max-w-md mx-auto">
-            <h3 className="text-sm font-bold mb-2">Debug Konsolu</h3>
-            {debugLogs.map((log, i) => (
-              <div key={i} className="whitespace-pre-wrap mb-1">{log}</div>
-            ))}
-          </div>
+            <div className="mt-6 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-60 fixed bottom-4 left-4 right-4 max-w-md mx-auto">
+              <h3 className="text-sm font-bold mb-2">Debug Konsolu</h3>
+              {debugLogs.map((log, i) => (
+                <div key={i} className="whitespace-pre-wrap mb-1">{log}</div>
+              ))}
+            </div>
             
           </div>
+          
         ) : (
           <>
             <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
