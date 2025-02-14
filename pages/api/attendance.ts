@@ -183,7 +183,7 @@ export default async function handler(
     }
   }
   else if (req.method === 'DELETE') {
-    const { fingerprint } = req.body;
+    const { fingerprint } = req.query;
 
     if (fingerprint) {
       // Spesifik bir fingerprint'i temizle

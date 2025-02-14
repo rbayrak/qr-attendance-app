@@ -188,8 +188,12 @@ const AttendanceSystem = () => {
     }
   
     try {
-      const response = await fetch(`/api/attendance?fingerprint=${fingerprintToRemove}`, {
-        method: 'DELETE'
+      const response = await fetch('/api/attendance', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ fingerprint: fingerprintToRemove })
       });
   
       const data = await response.json();
@@ -199,9 +203,11 @@ const AttendanceSystem = () => {
         setShowFingerprintModal(false);
         setFingerprintToRemove('');
       } else {
+        console.error('Silme hatası:', data);
         setStatus(`❌ ${data.error || 'Kayıt silinemedi'}`);
       }
     } catch (error) {
+      console.error('Fetch hatası:', error);
       setStatus('❌ Bir hata oluştu');
     }
   };
