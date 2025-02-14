@@ -101,7 +101,15 @@ interface Location {
   lng: number;
 }
 
-
+// Mevcut interface'lerin yanına ekle
+interface AttendanceLog {
+  studentId: string;
+  timestamp: string;
+  location: {
+    lat: number;
+    lng: number;
+  };
+}
 
 const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
   const R = 6371;
@@ -226,6 +234,17 @@ const AttendanceSystem = () => {
     }
   
     return Math.abs(hash).toString();
+  };
+
+  const saveAttendanceLog = (studentId: string, location: Location) => {
+    const logs = JSON.parse(localStorage.getItem('attendanceLogs') || '[]');
+    const newLog = {
+      studentId,
+      timestamp: new Date().toISOString(),
+      location
+    };
+    logs.push(newLog);
+    localStorage.setItem('attendanceLogs', JSON.stringify(logs));
   };
   
   const getClientIP = async () => {
@@ -759,6 +778,10 @@ const AttendanceSystem = () => {
         setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
       } else {
         setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
+
+        if (location) {
+          saveAttendanceLog(studentId, location);
+        }
       }
       
       // Taramayı durdur
@@ -847,12 +870,7 @@ const AttendanceSystem = () => {
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
-      {/* Debug Panel */}
-      <div className="mb-4 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-40">
-        {debugLogs.map((log, i) => (
-          <div key={i} className="whitespace-pre-wrap">{log}</div>
-        ))}
-      </div>
+
       {showPasswordModal && (
         <PasswordModal
           password={password}
@@ -939,6 +957,33 @@ const AttendanceSystem = () => {
                 </div>
               </div>
             )}
+
+            {/* Yeni eklenen Yoklama Logları bölümü */}
+            <div className="mt-4">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-lg font-semibold">Yoklama Logları</h3>
+                <button
+                  onClick={() => localStorage.removeItem('attendanceLogs')}
+                  className="px-3 py-1 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  Logları Temizle
+                </button>
+              </div>
+              <div className="p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-40">
+                {JSON.parse(localStorage.getItem('attendanceLogs') || '[]')
+                  .sort((a: AttendanceLog, b: AttendanceLog) => 
+                    new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+                  )
+                  .map((log: AttendanceLog, index: number) => (
+                    <div key={index} className="whitespace-pre-wrap mb-2">
+                      {`[${new Date(log.timestamp).toLocaleString()}] 
+                        Öğrenci: ${log.studentId} 
+                        Konum: ${log.location.lat.toFixed(6)}, ${log.location.lng.toFixed(6)}`}
+                    </div>
+                  ))}
+              </div>
+            </div>
+            
           </div>
         ) : (
           <>
