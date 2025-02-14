@@ -182,15 +182,18 @@ export default async function handler(
       });
     }
   }
-  else if (req.method === 'DELETE') {
-    const { fingerprint } = req.query;
 
-    if (fingerprint) {
-      // Spesifik bir fingerprint'i temizle
-      deviceAttendanceMap.delete(fingerprint);
-      return res.status(200).json({ 
-        success: true,
-        message: `${fingerprint} cihaz kaydı temizlendi`
+  else if (req.method === 'DELETE') {
+    const fingerprint = req.query.fingerprint as string;
+    
+    if (fingerprint && fingerprint !== 'undefined') {
+      // Belirli bir fingerprint'i sil
+      const deleted = deviceAttendanceMap.delete(fingerprint);
+      return res.status(deleted ? 200 : 404).json({ 
+        success: deleted,
+        message: deleted 
+          ? `${fingerprint} cihaz kaydı silindi` 
+          : 'Cihaz kaydı bulunamadı'
       });
     } else {
       // Tüm kayıtları temizle
@@ -201,8 +204,6 @@ export default async function handler(
       });
     }
   }
-  else {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }     
+  
 }
 

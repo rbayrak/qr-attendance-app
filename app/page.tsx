@@ -188,23 +188,31 @@ const AttendanceSystem = () => {
     }
   
     try {
-      const response = await fetch(`/api/attendance?fingerprint=${encodeURIComponent(fingerprintToRemove)}`, {
-        method: 'DELETE'
-      });
+      // URL encode ekleyerek özel karakter sorununu çöz
+      const encodedFingerprint = encodeURIComponent(fingerprintToRemove);
+      
+      const response = await fetch(
+        `/api/attendance?fingerprint=${encodedFingerprint}`, 
+        { method: 'DELETE' }
+      );
   
       const data = await response.json();
-  
+      
       if (response.ok) {
-        setStatus(`✅ ${fingerprintToRemove} parmak izi kaydı silindi`);
+        setStatus(`✅ ${data.message}`);
         setShowFingerprintModal(false);
         setFingerprintToRemove('');
+        
+        // Debug loglarını güncelle
+        updateDebugLogs(`🔧 Cihaz parmak izi silindi: ${fingerprintToRemove}`);
       } else {
-        setStatus(`❌ ${data.error || 'Kayıt silinemedi'}`);
+        setStatus(`❌ ${data.message || 'Kayıt silinemedi'}`);
       }
     } catch (error) {
       setStatus('❌ Bir hata oluştu');
     }
   };
+  
   
   // Modal bileşeni
   const FingerprintRemovalModal = () => (
