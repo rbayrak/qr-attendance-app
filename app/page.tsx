@@ -877,7 +877,7 @@ const AttendanceSystem = () => {
         )}
   
         {mode === 'teacher' ? (
-          <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
+          <div className="bg-white p-6 pb-80 rounded-xl shadow-md space-y-4">
             <div className="flex items-center justify-center mb-6">
                 <h2 className="text-xl font-bold text-gray-800 mr-2">Öğretmen Paneli</h2>
                 <img 
@@ -941,7 +941,7 @@ const AttendanceSystem = () => {
               </div>
             )}
 
-            <div className="mt-6 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-60 fixed bottom-4 left-4 right-4 max-w-md mx-auto">
+            <div className="mt-6 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-60 fixed bottom-4 left-4 right-4 max-w-md mx-auto z-50">
               <h3 className="text-sm font-bold mb-2">Debug Konsolu</h3>
               {debugLogs.map((log, i) => (
                 <div key={i} className="whitespace-pre-wrap mb-1">{log}</div>
