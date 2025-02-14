@@ -934,10 +934,10 @@ const AttendanceSystem = () => {
 
             <button
               onClick={clearAllRecords}
-              className="w-full p-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              className="absolute bottom-4 right-4 p-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 text-sm"
               disabled={isLoading}
             >
-              🗑️ Tüm Kayıtları Temizle
+              🗑️ Temizle
             </button>
 
   
