@@ -643,15 +643,26 @@ const AttendanceSystem = () => {
 
   // handleQrScan fonksiyonu (page.tsx içinde):
   const handleQrScan = async (decodedText: string) => {
+    // Öncelikle son tarama zamanını kontrol et
+    const lastScanTime = localStorage.getItem('lastQrScanTime');
+    const currentTime = Date.now();
+    
+    if (lastScanTime && currentTime - parseInt(lastScanTime) < 3000) { // 3 saniyelik bir cooldown
+        return; // Eğer son taramadan 3 saniye geçmediyse işlemi durdur
+    }
+    
+    // Yeni tarama zamanını kaydet
+    localStorage.setItem('lastQrScanTime', currentTime.toString());
+
     try {
         const scannedData = JSON.parse(decodedText);
-        const currentTime = new Date().toLocaleTimeString();
+        const currentTimeString = new Date().toLocaleTimeString();
         const studentInfo = validStudents.find(s => s.studentId === studentId);
 
         // İlk log - Tarama başladı
         const scanLog = `
         ===== YENİ YOKLAMA KAYDI =====
-        Zaman: ${currentTime}
+        Zaman: ${currentTimeString}
         Öğrenci: ${studentInfo?.studentName || 'Bilinmiyor'} (${studentId})
         Hafta: ${scannedData.week}
         `;
@@ -733,7 +744,7 @@ const AttendanceSystem = () => {
             timestamp: new Date().toISOString()
         }));
 
-        // Sonuç logları
+        // Response'u aldıktan ve başarılı olduktan sonra status'ü güncelle
         if (responseData.isAlreadyAttended) {
             updateDebugLogs(`⚠️ UYARI: ${studentId} no'lu öğrenci için yoklama zaten alınmış`);
             setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
@@ -742,21 +753,11 @@ const AttendanceSystem = () => {
             setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
         }
 
-        // Taramayı durdur
+        // İşlem başarılı olduktan sonra QR taramayı durdur
         setIsScanning(false);
         if (html5QrCode) {
             await html5QrCode.stop();
         }
-
-        // Debug loglarını güncelle
-        // Debug loglarını güncelle
-          const savedLogs = localStorage.getItem('debugLogs');
-          if (savedLogs) {
-              const parsedLogs = JSON.parse(savedLogs);
-              if (parsedLogs.length > debugLogs.length) {
-                  setDebugLogs(parsedLogs);
-              }
-          }
 
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
@@ -769,7 +770,7 @@ const AttendanceSystem = () => {
             await html5QrCode.stop();
         }
     }
- };
+};
 
   useEffect(() => {
     let scanner: Html5Qrcode;
