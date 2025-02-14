@@ -192,6 +192,26 @@ const AttendanceSystem = () => {
   };
 
   useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (mode === 'teacher') {
+      interval = setInterval(() => {
+        const savedLogs = localStorage.getItem('debugLogs');
+        if (savedLogs) {
+          const parsedLogs = JSON.parse(savedLogs);
+          if (JSON.stringify(debugLogs) !== JSON.stringify(parsedLogs)) {
+            setDebugLogs(parsedLogs);
+          }
+        }
+      }, 2000);
+    }
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+  }, [mode, debugLogs]);
+
+  useEffect(() => {
     if (mode === 'student') {
       const lastAttendanceCheck = localStorage.getItem('lastAttendanceCheck');
       if (lastAttendanceCheck) {
