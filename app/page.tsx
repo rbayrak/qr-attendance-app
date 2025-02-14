@@ -798,7 +798,33 @@ const AttendanceSystem = () => {
       if (scanner) scanner.stop().catch(() => {});
     };
   }, [isScanning]);
+
+  const clearAllRecords = async () => {
+    try {
+      // Cihaz kayıtlarını temizle
+      const deviceResponse = await fetch('/api/attendance', {
+        method: 'DELETE'
+      });
   
+      // Debug loglarını temizle
+      const logsResponse = await fetch('/api/logs', {
+        method: 'DELETE'
+      });
+  
+      if (deviceResponse.ok && logsResponse.ok) {
+        setDebugLogs([]); // Yerel state'i temizle
+        setStatus('✅ Tüm kayıtlar temizlendi');
+      } else {
+        throw new Error('Kayıtlar temizlenemedi');
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      setStatus('❌ Kayıtlar temizlenemedi');
+    }
+  };
+  
+  
+
   if (mode === 'teacher' && !isAuthenticated && isTeacherAuthenticated) {
     return (
       <div className="min-h-screen p-4 bg-gray-50">
@@ -905,6 +931,15 @@ const AttendanceSystem = () => {
             >
               QR Oluştur
             </button>
+
+            <button
+              onClick={clearAllRecords}
+              className="w-full p-3 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              disabled={isLoading}
+            >
+              🗑️ Tüm Kayıtları Temizle
+            </button>
+
   
             {qrData && (
               <div className="mt-4 text-center">
