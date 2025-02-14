@@ -201,9 +201,12 @@ const AttendanceSystem = () => {
         setShowFingerprintModal(false);
         setFingerprintToRemove('');
       } else {
+        // Hata detayını daha net görelim
+        console.error('Silme hatası:', data);
         setStatus(`❌ ${data.error || 'Kayıt silinemedi'}`);
       }
     } catch (error) {
+      console.error('Fetch hatası:', error);
       setStatus('❌ Bir hata oluştu');
     }
   };

@@ -184,6 +184,8 @@ export default async function handler(
   }
   else if (req.method === 'DELETE') {
     const { fingerprint } = req.body;
+
+    console.log('Gelen fingerprint:', fingerprint); // Bu satırı ekleyin
     
     if (fingerprint) {
       // Spesifik bir fingerprint'i temizle
