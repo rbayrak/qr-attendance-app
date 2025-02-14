@@ -547,25 +547,7 @@ const AttendanceSystem = () => {
   // Diğer useEffect'lerin yanına ekleyin
   
 
-  useEffect(() => {
-    if (mode === 'student') {
-      const fetchClassLocation = async () => {
-        try {
-          const response = await fetch('/api/location');
-          if (response.ok) {
-            const classLoc = await response.json();
-            setClassLocation(classLoc);
-            localStorage.setItem('classLocation', JSON.stringify(classLoc));
-            sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
-          }
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-          updateDebugLogs(`❌ HATA: Konum alınamadı - ${errorMessage}`);
-        }
-      };
-      fetchClassLocation();
-    }
-  }, [mode]);
+  
 
   const generateQR = async () => {
     if (!location) {
@@ -658,7 +640,7 @@ const AttendanceSystem = () => {
       Hafta: ${scannedData.week}
       `;
         
-        updateDebugLogs(scanLog);
+      updateDebugLogs(scanLog);
   
       // Öğrenci kontrolü
       const validStudent = validStudents.find(s => s.studentId === studentId);
@@ -689,28 +671,30 @@ const AttendanceSystem = () => {
         return;
       }
   
-      const { ip: clientIP, deviceFingerprint } = clientIPData;
+      const { ip, deviceFingerprint } = clientIPData; // clientIP yerine ip kullan
   
-      // Mesafe hesaplama
-      const distance = calculateDistance(
-        location.lat,
-        location.lng,
-        scannedData.classLocation.lat,
-        scannedData.classLocation.lng
-      );
-  
-      const locationLog = `
+      // Mesafe hesaplama ve konum kontrolü - location null kontrolü yapıldı
+      if (location) {
+        const distance = calculateDistance(
+          location.lat,
+          location.lng,
+          scannedData.classLocation.lat,
+          scannedData.classLocation.lng
+        );
+    
+        const locationLog = `
 📍 KONUM BİLGİLERİ:
 Mesafe: ${distance.toFixed(3)} km
 Öğrenci Konumu: ${location.lat}, ${location.lng}
 Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
 `;
-      updateDebugLogs(locationLog);
-  
-      if (distance > MAX_DISTANCE) {
-        updateDebugLogs(`❌ HATA: Konum mesafesi çok uzak (${distance.toFixed(3)} km)`);
-        setStatus('❌ Sınıf konumunda değilsiniz');
-        return;
+        updateDebugLogs(locationLog);
+    
+        if (distance > MAX_DISTANCE) {
+          updateDebugLogs(`❌ HATA: Konum mesafesi çok uzak (${distance.toFixed(3)} km)`);
+          setStatus('❌ Sınıf konumunda değilsiniz');
+          return;
+        }
       }
   
       // Backend API isteği
@@ -720,8 +704,8 @@ Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.ln
         body: JSON.stringify({
           studentId,
           week: scannedData.week,
-          clientIP,
-          deviceFingerprint
+          clientIP: ip, // ip olarak değiştirdik
+          deviceFingerprint // clientIPData'dan gelen deviceFingerprint
         })
       });
   
@@ -773,7 +757,8 @@ Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.ln
         await html5QrCode.stop();
       }
     }
-  };
+};
+
   useEffect(() => {
     let scanner: Html5Qrcode;
     
