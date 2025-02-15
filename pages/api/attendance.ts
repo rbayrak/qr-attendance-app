@@ -4,7 +4,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 type ResponseData = {
   success?: boolean;
   error?: string;
-  message?: string;  // Add this line
+  message?: string;
   debug?: any;
   blockedStudentId?: string;
   isAlreadyAttended?: boolean;
@@ -13,7 +13,6 @@ type ResponseData = {
 interface DeviceAttendanceRecord {
   studentId: string;
   timestamp: number;
-  firstStudentId?: string;
   deviceFingerprints: string[];
 }
 
@@ -25,7 +24,6 @@ export default async function handler(
   res: NextApiResponse<ResponseData>
 ) {
   if (req.method === 'POST') {
-
     try {
       const { studentId, week, clientIP, deviceFingerprint } = req.body;
 
@@ -48,33 +46,22 @@ export default async function handler(
       if (existingAttendance) {
         // Aynı gün kontrolü
         if (existingAttendance.timestamp >= today.getTime()) {
-          const firstStudentId = existingAttendance.firstStudentId || existingAttendance.studentId;
-          
           // Farklı öğrenci kontrolü
-          if (studentId !== firstStudentId) {
+          if (studentId !== existingAttendance.studentId) {
             return res.status(403).json({ 
               error: 'Bu cihaz bugün başka bir öğrenci için kullanılmış',
-              blockedStudentId: firstStudentId 
+              blockedStudentId: existingAttendance.studentId 
             });
           }
-        } else {
-          // Günü geçmiş kayıt, güncelle
-          deviceAttendanceMap.set(deviceFingerprint, {
-            studentId,
-            timestamp: Date.now(),
-            firstStudentId: studentId,
-            deviceFingerprints: [deviceFingerprint]
-          });
         }
-      } else {
-        // İlk kez kayıt
-        deviceAttendanceMap.set(deviceFingerprint, {
-          studentId,
-          timestamp: Date.now(),
-          firstStudentId: studentId,
-          deviceFingerprints: [deviceFingerprint]
-        });
       }
+
+      // Cihaz kaydını güncelle veya oluştur
+      deviceAttendanceMap.set(deviceFingerprint, {
+        studentId,
+        timestamp: Date.now(),
+        deviceFingerprints: [deviceFingerprint]
+      });
 
       // Google Sheets yetkilendirmesi
       const auth = new google.auth.GoogleAuth({
@@ -110,7 +97,7 @@ export default async function handler(
       const weekColumnIndex = 3 + Number(week) - 1; // D sütunundan başlayarak
       const weekData = rows.map(row => row[weekColumnIndex]);
       
-      // Cihaz parmak izi kontrolü
+      // Cihaz parmak izi kontrolü - sheets üzerinde
       const deviceFingerprintCheck = weekData.find(cell => 
         cell && 
         cell.includes(`(DF:${deviceFingerprint})`)
@@ -183,7 +170,6 @@ export default async function handler(
     }
   }
   else if (req.method === 'DELETE') {
-
     const { fingerprint } = req.query;
 
     // Belirli bir fingerprint'i silme
@@ -212,4 +198,3 @@ export default async function handler(
     return res.status(405).json({ error: 'Method not allowed' });
   }   
 }
-
