@@ -5,9 +5,9 @@ type ResponseData = {
   success?: boolean;
   error?: string;
   message?: string;
+  debug?: any;
   blockedStudentId?: string;
   isAlreadyAttended?: boolean;
-  debug?: any;
 };
 
 interface DeviceAttendanceRecord {
@@ -17,71 +17,39 @@ interface DeviceAttendanceRecord {
   deviceFingerprints: string[];
 }
 
+// Cihaz bazlı yoklama kayıtları
 const deviceAttendanceMap = new Map<string, DeviceAttendanceRecord>();
-
-const deepCleanDeviceRecords = (fingerprint: string) => {
-  let deletedCount = 0;
-  
-  deviceAttendanceMap.forEach((record, key) => {
-    // Anahtar olarak eşleşenler
-    if (key === fingerprint) {
-      deviceAttendanceMap.delete(key);
-      deletedCount++;
-    }
-    // Array içinde geçenler
-    else if (record.deviceFingerprints.includes(fingerprint)) {
-      const updatedFingerprints = record.deviceFingerprints.filter(fp => fp !== fingerprint);
-      if (updatedFingerprints.length === 0) {
-        deviceAttendanceMap.delete(key);
-      } else {
-        deviceAttendanceMap.set(key, {
-          ...record,
-          deviceFingerprints: updatedFingerprints
-        });
-      }
-      deletedCount++;
-    }
-  });
-  
-  return deletedCount;
-};
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<ResponseData>
 ) {
-  // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
   if (req.method === 'POST') {
     try {
       const { studentId, week, clientIP, deviceFingerprint } = req.body;
 
-      // Validasyonlar
       if (!studentId || !week) {
         return res.status(400).json({ error: 'Öğrenci ID ve hafta bilgisi gerekli' });
       }
+
+      // Cihaz parmak izi kontrolü
       if (!deviceFingerprint) {
         return res.status(400).json({ error: 'Cihaz tanımlayıcısı gerekli' });
       }
 
-      // Günlük timestamp kontrolü
+      // Bugünün başlangıç timestamp'i
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       
-      const existingRecord = deviceAttendanceMap.get(deviceFingerprint);
+      // Mevcut cihaz kaydını kontrol et
+      const existingAttendance = deviceAttendanceMap.get(deviceFingerprint);
       
-      if (existingRecord) {
+      if (existingAttendance) {
         // Aynı gün kontrolü
-        if (existingRecord.timestamp >= today.getTime()) {
-          const firstStudentId = existingRecord.firstStudentId || existingRecord.studentId;
+        if (existingAttendance.timestamp >= today.getTime()) {
+          const firstStudentId = existingAttendance.firstStudentId || existingAttendance.studentId;
           
+          // Farklı öğrenci kontrolü
           if (studentId !== firstStudentId) {
             return res.status(403).json({ 
               error: 'Bu cihaz bugün başka bir öğrenci için kullanılmış',
@@ -89,7 +57,7 @@ export default async function handler(
             });
           }
         } else {
-          // Yeni gün için kayıt güncelle
+          // Günü geçmiş kayıt, güncelle
           deviceAttendanceMap.set(deviceFingerprint, {
             studentId,
             timestamp: Date.now(),
@@ -98,7 +66,7 @@ export default async function handler(
           });
         }
       } else {
-        // İlk kayıt
+        // İlk kez kayıt
         deviceAttendanceMap.set(deviceFingerprint, {
           studentId,
           timestamp: Date.now(),
@@ -107,7 +75,7 @@ export default async function handler(
         });
       }
 
-      // Google Sheets entegrasyonu
+      // Google Sheets yetkilendirmesi
       const auth = new google.auth.GoogleAuth({
         credentials: {
           type: 'service_account',
@@ -119,108 +87,131 @@ export default async function handler(
       });
 
       const sheets = google.sheets({ version: 'v4', auth });
-      
+
       // Tüm verileri çek
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: process.env.SPREADSHEET_ID,
         range: 'A:Z',
       });
 
-      const rows = response.data.values || [];
+      const rows = response.data.values;
+      if (!rows) {
+        return res.status(404).json({ error: 'Veri bulunamadı' });
+      }
+
+      // Öğrenciyi bul ve satır numarasını al
       const studentRowIndex = rows.findIndex(row => row[1] === studentId);
-      
       if (studentRowIndex === -1) {
         return res.status(404).json({ error: 'Öğrenci bulunamadı' });
       }
 
       // Hafta sütunu kontrolü
-      const weekColumnIndex = 3 + Number(week) - 1;
+      const weekColumnIndex = 3 + Number(week) - 1; // D sütunundan başlayarak
       const weekData = rows.map(row => row[weekColumnIndex]);
       
       // Cihaz parmak izi kontrolü
-      const existingFingerprint = weekData.find(cell => 
-        cell?.includes(`(DF:${deviceFingerprint})`)
+      const deviceFingerprintCheck = weekData.find(cell => 
+        cell && 
+        cell.includes(`(DF:${deviceFingerprint})`)
       );
+      
+      if (deviceFingerprintCheck) {
+        // Bu cihaz parmak izi zaten kullanılmışsa
+        const existingStudentId = rows[rows.findIndex(row => 
+          row[weekColumnIndex] && 
+          row[weekColumnIndex].includes(`(DF:${deviceFingerprint})`)
+        )][1];
 
-      if (existingFingerprint) {
-        const existingStudentId = rows.find(row => 
-          row[weekColumnIndex]?.includes(`(DF:${deviceFingerprint}`)
-        )?.[1];
-
+        // Farklı bir öğrenci için kullanılmışsa engelle
         if (existingStudentId !== studentId) {
           return res.status(403).json({ 
             error: 'Bu cihaz bu hafta başka bir öğrenci için kullanılmış',
             blockedStudentId: existingStudentId 
           });
         }
-        return res.status(200).json({ 
-          success: true,
-          isAlreadyAttended: true,
-          message: 'Bu hafta için yoklama zaten alınmış'
-        });
+      }
+      
+      // Gerçek satır numarası
+      const studentRow = studentRowIndex + 1;
+
+      if (week < 1 || week > 16) {
+        return res.status(400).json({ error: 'Geçersiz hafta numarası' });
       }
 
-      // Google Sheets güncelleme
+      // Hafta sütununu belirle
+      const weekColumn = String.fromCharCode(68 + Number(week) - 1);
+      const range = `${weekColumn}${studentRow}`;
+
+      // Mevcut hafta verilerini kontrol et ve öğrencinin zaten yoklaması var mı diye bak
+      const isAlreadyAttended = rows[studentRowIndex][weekColumnIndex] && 
+                              rows[studentRowIndex][weekColumnIndex].includes('VAR');
+
+      // Yoklamayı kaydet (cihaz parmak izi ile)
       const updateResult = await sheets.spreadsheets.values.update({
         spreadsheetId: process.env.SPREADSHEET_ID,
-        range: `${String.fromCharCode(64 + weekColumnIndex)}${studentRowIndex + 1}`,
+        range: range,
         valueInputOption: 'RAW',
         requestBody: {
           values: [[`VAR (DF:${deviceFingerprint})`]]
         }
       });
 
+      // Başarılı yanıt
       res.status(200).json({ 
         success: true,
+        isAlreadyAttended: isAlreadyAttended,
         debug: {
           operationDetails: {
-            studentId,
-            week,
-            deviceFingerprint,
-            sheetUpdate: updateResult.data
-          }
+            ogrenciNo: studentId,
+            bulunanSatir: studentRow,
+            sutun: weekColumn,
+            aralik: range,
+            weekNumber: week,
+            deviceFingerprint: deviceFingerprint
+          },
+          updateResult: updateResult.data
         }
       });
 
     } catch (error) {
-      console.error('Sunucu hatası:', error);
+      console.error('Error:', error);
       res.status(500).json({ 
-        error: error instanceof Error ? error.message : 'Bilinmeyen hata',
-        debug: process.env.NODE_ENV === 'development' ? error : undefined
+        error: error instanceof Error ? error.message : 'Unknown error',
+        debug: 'debugInfo'
       });
     }
   }
-
-  if (req.method === 'DELETE') {
-    try {
-      const fingerprint = req.query.fingerprint as string;
-      
-      if (!fingerprint || fingerprint === 'undefined') {
-        deviceAttendanceMap.clear();
-        return res.status(200).json({ 
-          success: true,
-          message: 'Tüm cihaz kayıtları temizlendi' 
-        });
-      }
-
-      const decodedFingerprint = decodeURIComponent(fingerprint);
-      const totalDeleted = deepCleanDeviceRecords(decodedFingerprint);
-      
-      return res.status(totalDeleted > 0 ? 200 : 404).json({
-        success: totalDeleted > 0,
-        message: totalDeleted > 0 
-          ? `${decodedFingerprint} ile ilişkili ${totalDeleted} kayıt silindi`
-          : 'Kayıt bulunamadı'
+  else if (req.method === 'PUT' && req.body.action === 'removeFingerprint') {
+    const { fingerprint } = req.body;
+    
+    if (!fingerprint) {
+      return res.status(400).json({ 
+        error: 'Fingerprint gerekli'
       });
+    }
 
-    } catch (error) {
-      console.error('Silme hatası:', error);
-      res.status(500).json({ 
-        error: 'Internal server error',
-        debug: process.env.NODE_ENV === 'development' ? error : undefined
+    // Belirtilen fingerprint'i kontrol et ve sil
+    if (deviceAttendanceMap.has(fingerprint)) {
+      deviceAttendanceMap.delete(fingerprint);
+      return res.status(200).json({ 
+        success: true,
+        message: `${fingerprint} başarıyla silindi`
+      });
+    } else {
+      return res.status(404).json({ 
+        error: 'Belirtilen fingerprint bulunamadı'
       });
     }
   }
-
-  return res.status(405).json({ error: 'Method not allowed' });
+  else if (req.method === 'DELETE') {
+    // Tüm kayıtları temizle
+    deviceAttendanceMap.clear();
+    return res.status(200).json({ 
+      success: true,
+      message: 'Tüm cihaz kayıtları temizlendi'
+    });
+  }
+  else {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }   
 }
