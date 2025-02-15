@@ -583,6 +583,16 @@ const AttendanceSystem = () => {
               classLoc.lat,
               classLoc.lng
             );
+
+            // Bu satırları ekleyelim
+            const locationDebugLog = `
+            📍 MESAFE HESAPLAMA:
+            Öğrenci Konumu: ${currentLocation.lat}, ${currentLocation.lng}
+            Sınıf Konumu: ${classLoc.lat}, ${classLoc.lng}
+            Hesaplanan Mesafe: ${distance} km
+            İzin Verilen Max Mesafe: ${MAX_DISTANCE} km
+            `;
+            updateDebugLogs(locationDebugLog);
             
             if (distance > MAX_DISTANCE) {
               setIsValidLocation(false);
