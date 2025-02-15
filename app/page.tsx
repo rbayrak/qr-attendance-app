@@ -721,6 +721,14 @@ const AttendanceSystem = () => {
 
         const { ip, deviceFingerprint } = clientIPData;
 
+        // Bu kısmı ekleyelim - Fingerprint logla
+        updateDebugLogs(`
+          ===== CİHAZ BİLGİLERİ =====
+        🔑 Fingerprint: ${deviceFingerprint}
+        🌐 IP: ${ip}
+        `);
+  
+
         // Konum bilgilerini logla
         const locationLog = `
         📍 KONUM BİLGİLERİ:
