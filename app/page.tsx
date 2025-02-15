@@ -861,10 +861,9 @@ const AttendanceSystem = () => {
 
     try {
       setIsLoading(true);
-      // Önce mevcut fingerprint'leri logla
       updateDebugLogs(`
-===== FİNGERPRİNT SİLME İŞLEMİ =====
-🔑 Silinmeye çalışılan: ${fingerprintToRemove}
+      ===== FİNGERPRİNT SİLME İŞLEMİ =====
+      🔑 Silinmeye çalışılan: ${fingerprintToRemove}
       `);
 
       const response = await fetch('/api/attendance', {
@@ -879,7 +878,9 @@ const AttendanceSystem = () => {
       const data = await response.json();
   
       if (response.ok) {
-        updateDebugLogs(`✅ ${fingerprintToRemove} silindi`);
+        // Başarılı silme durumunda localStorage'ı da temizle
+        localStorage.removeItem('lastAttendanceCheck');
+        updateDebugLogs(`✅ ${fingerprintToRemove} silindi ve localStorage temizlendi`);
         setStatus('✅ Fingerprint başarıyla silindi');
       } else {
         throw new Error(data.error || 'Fingerprint silinemedi');
@@ -893,7 +894,7 @@ const AttendanceSystem = () => {
       setFingerprintToRemove('');
       setIsLoading(false);
     }
-};
+  };
   
   
 
