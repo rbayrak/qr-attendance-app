@@ -109,28 +109,6 @@ export default async function handler(
       const weekColumnIndex = 3 + Number(week) - 1; // D sütunundan başlayarak
       const weekData = rows.map(row => row[weekColumnIndex]);
       
-      // Cihaz parmak izi kontrolü
-      const deviceFingerprintCheck = weekData.find(cell => 
-        cell && 
-        cell.includes(`(DF:${deviceFingerprint})`)
-      );
-      
-      if (deviceFingerprintCheck) {
-        // Bu cihaz parmak izi zaten kullanılmışsa
-        const existingStudentId = rows[rows.findIndex(row => 
-          row[weekColumnIndex] && 
-          row[weekColumnIndex].includes(`(DF:${deviceFingerprint})`)
-        )][1];
-
-        // Farklı bir öğrenci için kullanılmışsa engelle
-        if (existingStudentId !== studentId) {
-          return res.status(403).json({ 
-            error: 'Bu cihaz bu hafta başka bir öğrenci için kullanılmış',
-            blockedStudentId: existingStudentId 
-          });
-        }
-      }
-      
       // Gerçek satır numarası
       const studentRow = studentRowIndex + 1;
 
@@ -190,7 +168,7 @@ export default async function handler(
       });
     }
 
-    // Belirtilen fingerprint'i kontrol et ve sil
+    // Sadece map'ten sil
     if (deviceAttendanceMap.has(fingerprint)) {
       deviceAttendanceMap.delete(fingerprint);
       return res.status(200).json({ 
