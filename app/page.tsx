@@ -158,6 +158,46 @@ const PasswordModal = ({
   </div>
 );
 
+const FingerprintModal = ({ 
+  fingerprint, 
+  setFingerprint, 
+  onSubmit, 
+  onClose 
+}: {
+  fingerprint: string;
+  setFingerprint: (value: string) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+}) => (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+    <div className="bg-white rounded-xl p-6 w-full max-w-md space-y-4">
+      <h3 className="text-xl font-bold">Fingerprint Silme</h3>
+      <input
+        type="text"
+        value={fingerprint}
+        onChange={(e) => setFingerprint(e.target.value)}
+        placeholder="Fingerprint'i girin"
+        className="w-full p-3 border rounded-lg"
+        autoFocus
+      />
+      <div className="flex gap-2">
+        <button
+          onClick={onClose}
+          className="flex-1 p-3 bg-gray-500 text-white rounded-lg"
+        >
+          İptal
+        </button>
+        <button
+          onClick={onSubmit}
+          className="flex-1 p-3 bg-red-600 text-white rounded-lg"
+        >
+          Sil
+        </button>
+      </div>
+    </div>
+  </div>
+);
+
 const AttendanceSystem = () => {
   const [mode, setMode] = useState<'teacher' | 'student'>('student'); // Varsayılan olarak öğrenci modu
   const [showPasswordModal, setShowPasswordModal] = useState<boolean>(false);
@@ -178,6 +218,33 @@ const AttendanceSystem = () => {
   const [isValidLocation, setIsValidLocation] = useState<boolean>(false);
   const [classLocation, setClassLocation] = useState<Location | null>(null);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [showFingerprintModal, setShowFingerprintModal] = useState<boolean>(false);
+  const [fingerprintToDelete, setFingerprintToDelete] = useState<string>('');
+
+  const deleteFingerprint = async () => {
+    try {
+      const response = await fetch(`/api/attendance?fingerprint=${fingerprintToDelete}`, {
+        method: 'DELETE'
+      });
+  
+      const data = await response.json();
+      
+      if (response.ok) {
+        setStatus('✅ Fingerprint başarıyla silindi');
+        updateDebugLogs(`✅ Fingerprint silindi: ${fingerprintToDelete}`);
+      } else {
+        setStatus(`❌ ${data.error || 'Fingerprint silinemedi'}`);
+        updateDebugLogs(`❌ HATA: Fingerprint silinemedi: ${data.error}`);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      setStatus(`❌ Hata: ${errorMessage}`);
+      updateDebugLogs(`❌ HATA: ${errorMessage}`);
+    } finally {
+      setShowFingerprintModal(false);
+      setFingerprintToDelete('');
+    }
+  };
 
   
 
@@ -844,6 +911,18 @@ const AttendanceSystem = () => {
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
+
+      {showFingerprintModal && (
+        <FingerprintModal
+          fingerprint={fingerprintToDelete}
+          setFingerprint={setFingerprintToDelete}
+          onSubmit={deleteFingerprint}
+          onClose={() => {
+            setShowFingerprintModal(false);
+            setFingerprintToDelete('');
+          }}
+        />
+      )}
       
       {showPasswordModal && (
         <PasswordModal
@@ -908,13 +987,22 @@ const AttendanceSystem = () => {
               QR Oluştur
             </button>
 
-            <button
-              onClick={clearAllRecords}
-              className="absolute bottom-4 right-4 p-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 text-sm"
-              disabled={isLoading}
-            >
-              🗑️ Temizle
-            </button>
+            <div className="absolute bottom-4 right-4 flex gap-2">
+              <button
+                onClick={() => setShowFingerprintModal(true)}
+                className="p-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 text-sm"
+                disabled={isLoading}
+              >
+                🔑 FP Temizle
+              </button>
+              <button
+                onClick={clearAllRecords}
+                className="p-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 text-sm"
+                disabled={isLoading}
+              >
+                🗑️ Temizle
+              </button>
+            </div>
 
   
             {qrData && (

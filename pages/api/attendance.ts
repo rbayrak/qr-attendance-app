@@ -183,6 +183,24 @@ export default async function handler(
     }
   }
   else if (req.method === 'DELETE') {
+
+    const { fingerprint } = req.query;
+
+    // Belirli bir fingerprint'i silme
+    if (fingerprint) {
+      if (deviceAttendanceMap.has(fingerprint as string)) {
+        deviceAttendanceMap.delete(fingerprint as string);
+        return res.status(200).json({ 
+          success: true,
+          message: `${fingerprint} fingerprint'i silindi`
+        });
+      } else {
+        return res.status(404).json({ 
+          error: 'Fingerprint bulunamadı'
+        });
+      }
+    }
+
     // Tüm kayıtları temizle
     deviceAttendanceMap.clear();
     return res.status(200).json({ 
