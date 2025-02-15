@@ -477,76 +477,52 @@ const AttendanceSystem = () => {
   
         if (mode === 'teacher') {
           try {
-            // Sadece API'ye kaydet
+            // Önce eski konumu temizle
+            localStorage.removeItem('classLocation');
+            sessionStorage.removeItem('classLocation');
+            
+            // Sonra yeni konumu API'ye kaydet
             await fetch('/api/location', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(currentLocation)
             });
             
-            // Local ve session storage'a kaydet
+            // Yeni konumu localStorage'a kaydet
             localStorage.setItem('classLocation', JSON.stringify(currentLocation));
             sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
             
             setClassLocation(currentLocation);
             setStatus('📍 Konum alındı');
-            
-        
-  
           } catch (error) {
             setStatus('❌ Konum kaydedilemedi');
-            
           }
         } else if (mode === 'student') {
-          // Önce localStorage'dan kontrol et
-          const savedClassLocation = localStorage.getItem('classLocation');
-          if (savedClassLocation) {
-            const classLoc = JSON.parse(savedClassLocation);
-            setClassLocation(classLoc);
-            
-            const distance = calculateDistance(
-              currentLocation.lat,
-              currentLocation.lng,
-              classLoc.lat,
-              classLoc.lng
-            );
-            
-            if (distance > MAX_DISTANCE) {
-              setIsValidLocation(false);
-              setStatus('❌ Sınıf konumunda değilsiniz');
-            } else {
-              setIsValidLocation(true);
-              setStatus('✅ Konum doğrulandı');
-            }
-            return; // Eğer localStorage'da konum varsa API'ye gitme
-          }
-  
-          // localStorage'da yoksa API'den kontrol et
           try {
+            // Önce API'den kontrol et
             const response = await fetch('/api/location');
-            if (!response.ok) {
-              setStatus('❌ Öğretmen henüz konum paylaşmamış');
-              return;
-            }
-            
-            const classLoc = await response.json();
-            setClassLocation(classLoc);
-            localStorage.setItem('classLocation', JSON.stringify(classLoc));
-            sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
-            
-            const distance = calculateDistance(
-              currentLocation.lat,
-              currentLocation.lng,
-              classLoc.lat,
-              classLoc.lng
-            );
-            
-            if (distance > MAX_DISTANCE) {
-              setIsValidLocation(false);
-              setStatus('❌ Sınıf konumunda değilsiniz');
+            if (response.ok) {
+              const classLoc = await response.json();
+              setClassLocation(classLoc);
+              localStorage.setItem('classLocation', JSON.stringify(classLoc));
+              sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
+  
+              const distance = calculateDistance(
+                currentLocation.lat,
+                currentLocation.lng,
+                classLoc.lat,
+                classLoc.lng
+              );
+  
+              if (distance > MAX_DISTANCE) {
+                setIsValidLocation(false);
+                setStatus(`❌ Sınıf konumunda değilsiniz (${(distance * 1000).toFixed(0)} metre uzaktasınız)`);
+              } else {
+                setIsValidLocation(true);
+                setStatus('✅ Konum doğrulandı');
+              }
             } else {
-              setIsValidLocation(true);
-              setStatus('✅ Konum doğrulandı');
+              setStatus('❌ Öğretmen henüz konum paylaşmamış');
             }
           } catch (error) {
             setStatus('❌ Konum alınamadı');
