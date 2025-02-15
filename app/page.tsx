@@ -20,7 +20,7 @@ console.log('ENV Check:', {
 });
 
 const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID;
-const MAX_DISTANCE = 1;
+const MAX_DISTANCE = 0.8;
 
 // Google Auth yardımcı fonksiyonları
 let tokenClient: any;
@@ -158,47 +158,6 @@ const PasswordModal = ({
   </div>
 );
 
-// PasswordModal bileşeninin altına ekleyin
-const FingerprintModal = ({ 
-  fingerprint,
-  setFingerprint,
-  onSubmit,
-  onClose
-}: {
-  fingerprint: string;
-  setFingerprint: (value: string) => void;
-  onSubmit: () => void;
-  onClose: () => void;
-}) => (
-  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
-    <div className="bg-white rounded-xl p-6 w-full max-w-md space-y-4">
-      <h3 className="text-xl font-bold">Fingerprint Silme</h3>
-      <input
-        type="text"
-        value={fingerprint}
-        onChange={(e) => setFingerprint(e.target.value)}
-        placeholder="Fingerprint"
-        className="w-full p-3 border rounded-lg"
-        autoFocus
-      />
-      <div className="flex gap-2">
-        <button
-          onClick={onClose}
-          className="flex-1 p-2 bg-gray-500 text-white rounded-lg text-sm"
-        >
-          İptal
-        </button>
-        <button
-          onClick={onSubmit}
-          className="flex-1 p-2 bg-red-600 text-white rounded-lg text-sm"
-        >
-          Sil
-        </button>
-      </div>
-    </div>
-  </div>
-);
-
 const AttendanceSystem = () => {
   const [mode, setMode] = useState<'teacher' | 'student'>('student'); // Varsayılan olarak öğrenci modu
   const [showPasswordModal, setShowPasswordModal] = useState<boolean>(false);
@@ -219,8 +178,6 @@ const AttendanceSystem = () => {
   const [isValidLocation, setIsValidLocation] = useState<boolean>(false);
   const [classLocation, setClassLocation] = useState<Location | null>(null);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
-  const [showFingerprintModal, setShowFingerprintModal] = useState<boolean>(false);
-  const [fingerprintToRemove, setFingerprintToRemove] = useState<string>('');
 
   
 
@@ -520,55 +477,76 @@ const AttendanceSystem = () => {
   
         if (mode === 'teacher') {
           try {
-            // Önce eski konumu temizle
-            localStorage.removeItem('classLocation');
-            sessionStorage.removeItem('classLocation');
-            
-            // Sonra yeni konumu API'ye kaydet
+            // Sadece API'ye kaydet
             await fetch('/api/location', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(currentLocation)
             });
             
-            // Yeni konumu localStorage'a kaydet
+            // Local ve session storage'a kaydet
             localStorage.setItem('classLocation', JSON.stringify(currentLocation));
             sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
             
             setClassLocation(currentLocation);
             setStatus('📍 Konum alındı');
-          } catch (error) {
-            setStatus('❌ Konum kaydedilemedi');
-          }
-        } else if (mode === 'student') {
-          try {
-            // Önce API'den kontrol et
-            const response = await fetch('/api/location');
-            if (response.ok) {
-              const classLoc = await response.json();
-              setClassLocation(classLoc);
-              localStorage.setItem('classLocation', JSON.stringify(classLoc));
-              sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
-  
-              const distance = calculateDistance(
-                currentLocation.lat,
-                currentLocation.lng,
-                classLoc.lat,
-                classLoc.lng
-              );
-  
-              // Debug logunu oluştur
+            
         
   
-              if (distance > MAX_DISTANCE) {
-                setIsValidLocation(false);
-                setStatus(`❌ Sınıf konumunda değilsiniz (${(distance * 1000).toFixed(0)} metre uzaktasınız)`);
-              } else {
-                setIsValidLocation(true);
-                setStatus('✅ Konum doğrulandı');
-              }
+          } catch (error) {
+            setStatus('❌ Konum kaydedilemedi');
+            
+          }
+        } else if (mode === 'student') {
+          // Önce localStorage'dan kontrol et
+          const savedClassLocation = localStorage.getItem('classLocation');
+          if (savedClassLocation) {
+            const classLoc = JSON.parse(savedClassLocation);
+            setClassLocation(classLoc);
+            
+            const distance = calculateDistance(
+              currentLocation.lat,
+              currentLocation.lng,
+              classLoc.lat,
+              classLoc.lng
+            );
+            
+            if (distance > MAX_DISTANCE) {
+              setIsValidLocation(false);
+              setStatus('❌ Sınıf konumunda değilsiniz');
             } else {
+              setIsValidLocation(true);
+              setStatus('✅ Konum doğrulandı');
+            }
+            return; // Eğer localStorage'da konum varsa API'ye gitme
+          }
+  
+          // localStorage'da yoksa API'den kontrol et
+          try {
+            const response = await fetch('/api/location');
+            if (!response.ok) {
               setStatus('❌ Öğretmen henüz konum paylaşmamış');
+              return;
+            }
+            
+            const classLoc = await response.json();
+            setClassLocation(classLoc);
+            localStorage.setItem('classLocation', JSON.stringify(classLoc));
+            sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
+            
+            const distance = calculateDistance(
+              currentLocation.lat,
+              currentLocation.lng,
+              classLoc.lat,
+              classLoc.lng
+            );
+            
+            if (distance > MAX_DISTANCE) {
+              setIsValidLocation(false);
+              setStatus('❌ Sınıf konumunda değilsiniz');
+            } else {
+              setIsValidLocation(true);
+              setStatus('✅ Konum doğrulandı');
             }
           } catch (error) {
             setStatus('❌ Konum alınamadı');
@@ -721,14 +699,6 @@ const AttendanceSystem = () => {
 
         const { ip, deviceFingerprint } = clientIPData;
 
-        // Bu kısmı ekleyelim - Fingerprint logla
-        updateDebugLogs(`
-          ===== CİHAZ BİLGİLERİ =====
-        🔑 Fingerprint: ${deviceFingerprint}
-        🌐 IP: ${ip}
-        `);
-  
-
         // Konum bilgilerini logla
         const locationLog = `
         📍 KONUM BİLGİLERİ:
@@ -852,52 +822,6 @@ const AttendanceSystem = () => {
       setStatus('❌ Kayıtlar temizlenemedi');
     }
   };
-
-  const removeFingerprint = async () => {
-    if (!fingerprintToRemove.trim()) {
-      setStatus('❌ Fingerprint değeri boş olamaz');
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      updateDebugLogs(`
-===== FİNGERPRİNT SİLME İŞLEMİ =====
-🔑 Silinmeye çalışılan: ${fingerprintToRemove}
-      `);
-
-      const response = await fetch('/api/attendance', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'removeFingerprint',
-          fingerprint: fingerprintToRemove
-        })
-      });
-  
-      const data = await response.json();
-  
-      if (response.ok) {
-        // Tüm ilgili localStorage verilerini temizle
-        localStorage.removeItem('lastAttendanceCheck');
-        localStorage.removeItem('lastQrScanTime');
-        setIsValidLocation(false);
-        
-        updateDebugLogs(`✅ ${fingerprintToRemove} silindi ve tüm local veriler temizlendi`);
-        setStatus('✅ Fingerprint başarıyla silindi');
-      } else {
-        throw new Error(data.error || 'Fingerprint silinemedi');
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-      updateDebugLogs(`❌ HATA: ${errorMessage}`);
-      setStatus(`❌ ${errorMessage}`);
-    } finally {
-      setShowFingerprintModal(false);
-      setFingerprintToRemove('');
-      setIsLoading(false);
-    }
-  };
   
   
 
@@ -944,18 +868,6 @@ const AttendanceSystem = () => {
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
-      {/* Fingerprint Modal'ı buraya */}
-      {showFingerprintModal && (
-        <FingerprintModal
-          fingerprint={fingerprintToRemove}
-          setFingerprint={setFingerprintToRemove}
-          onSubmit={removeFingerprint}
-          onClose={() => {
-            setShowFingerprintModal(false);
-            setFingerprintToRemove('');
-          }}
-        />
-      )}
       
       {showPasswordModal && (
         <PasswordModal
@@ -1020,22 +932,13 @@ const AttendanceSystem = () => {
               QR Oluştur
             </button>
 
-            <div className="absolute bottom-4 right-4 flex gap-2">
-              <button
-                onClick={() => setShowFingerprintModal(true)}
-                className="p-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 text-sm"
-                disabled={isLoading}
-              >
-                🔑 FP Temizle
-              </button>
-              <button
-                onClick={clearAllRecords}
-                className="p-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 text-sm"
-                disabled={isLoading}
-              >
-                🗑️ Temizle
-              </button>
-            </div>
+            <button
+              onClick={clearAllRecords}
+              className="absolute bottom-4 right-4 p-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 text-sm"
+              disabled={isLoading}
+            >
+              🗑️ Temizle
+            </button>
 
   
             {qrData && (

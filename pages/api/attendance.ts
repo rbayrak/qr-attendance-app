@@ -4,7 +4,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 type ResponseData = {
   success?: boolean;
   error?: string;
-  message?: string;
+  message?: string;  // Add this line
   debug?: any;
   blockedStudentId?: string;
   isAlreadyAttended?: boolean;
@@ -25,6 +25,7 @@ export default async function handler(
   res: NextApiResponse<ResponseData>
 ) {
   if (req.method === 'POST') {
+
     try {
       const { studentId, week, clientIP, deviceFingerprint } = req.body;
 
@@ -109,6 +110,28 @@ export default async function handler(
       const weekColumnIndex = 3 + Number(week) - 1; // D sütunundan başlayarak
       const weekData = rows.map(row => row[weekColumnIndex]);
       
+      // Cihaz parmak izi kontrolü
+      const deviceFingerprintCheck = weekData.find(cell => 
+        cell && 
+        cell.includes(`(DF:${deviceFingerprint})`)
+      );
+      
+      if (deviceFingerprintCheck) {
+        // Bu cihaz parmak izi zaten kullanılmışsa
+        const existingStudentId = rows[rows.findIndex(row => 
+          row[weekColumnIndex] && 
+          row[weekColumnIndex].includes(`(DF:${deviceFingerprint})`)
+        )][1];
+
+        // Farklı bir öğrenci için kullanılmışsa engelle
+        if (existingStudentId !== studentId) {
+          return res.status(403).json({ 
+            error: 'Bu cihaz bu hafta başka bir öğrenci için kullanılmış',
+            blockedStudentId: existingStudentId 
+          });
+        }
+      }
+      
       // Gerçek satır numarası
       const studentRow = studentRowIndex + 1;
 
@@ -159,42 +182,6 @@ export default async function handler(
       });
     }
   }
-  else if (req.method === 'PUT' && req.body.action === 'removeFingerprint') {
-    const { fingerprint } = req.body;
-    
-    if (!fingerprint) {
-      return res.status(400).json({ 
-        error: 'Fingerprint gerekli'
-      });
-    }
-
-    // Map'ten sil
-    if (deviceAttendanceMap.has(fingerprint)) {
-      // Önce mevcut kaydı al
-      const record = deviceAttendanceMap.get(fingerprint);
-      // Kaydı sil
-      deviceAttendanceMap.delete(fingerprint);
-      
-      // Aynı studentId'ye sahip tüm kayıtları da temizle
-      if (record) {
-        for (const [key, value] of deviceAttendanceMap.entries()) {
-          if (value.studentId === record.studentId || 
-              value.firstStudentId === record.studentId) {
-            deviceAttendanceMap.delete(key);
-          }
-        }
-      }
-      
-      return res.status(200).json({ 
-        success: true,
-        message: `${fingerprint} ve ilişkili tüm kayıtlar başarıyla silindi`
-      });
-    } else {
-      return res.status(404).json({ 
-        error: 'Belirtilen fingerprint bulunamadı'
-      });
-    }
-  }
   else if (req.method === 'DELETE') {
     // Tüm kayıtları temizle
     deviceAttendanceMap.clear();
@@ -207,3 +194,4 @@ export default async function handler(
     return res.status(405).json({ error: 'Method not allowed' });
   }   
 }
+
