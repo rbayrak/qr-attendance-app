@@ -558,21 +558,7 @@ const AttendanceSystem = () => {
               );
   
               // Debug logunu oluştur
-              const locationDebugLog = `
-  ===== KONUM KARŞILAŞTIRMA (${studentId}) =====
-  ⏰ Zaman: ${new Date().toLocaleTimeString()}
-  📱 Öğrenci Konumu: [${currentLocation.lat.toFixed(6)}, ${currentLocation.lng.toFixed(6)}]
-  🏫 Sınıf Konumu: [${classLoc.lat.toFixed(6)}, ${classLoc.lng.toFixed(6)}]
-  📏 Hesaplanan Mesafe: ${(distance * 1000).toFixed(2)} metre
-  ⚠️ İzin Verilen Max Mesafe: ${(MAX_DISTANCE * 1000).toFixed(2)} metre
-              `;
-  
-              // Logları öğretmene gönder
-              await fetch('/api/logs', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ log: locationDebugLog })
-              });
+        
   
               if (distance > MAX_DISTANCE) {
                 setIsValidLocation(false);
@@ -860,7 +846,19 @@ const AttendanceSystem = () => {
   };
 
   const removeFingerprint = async () => {
+    if (!fingerprintToRemove.trim()) {
+      setStatus('❌ Fingerprint değeri boş olamaz');
+      return;
+    }
+
     try {
+      setIsLoading(true);
+      // Önce mevcut fingerprint'leri logla
+      updateDebugLogs(`
+===== FİNGERPRİNT SİLME İŞLEMİ =====
+🔑 Silinmeye çalışılan: ${fingerprintToRemove}
+      `);
+
       const response = await fetch('/api/attendance', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -885,8 +883,9 @@ const AttendanceSystem = () => {
     } finally {
       setShowFingerprintModal(false);
       setFingerprintToRemove('');
+      setIsLoading(false);
     }
-  };
+};
   
   
 
