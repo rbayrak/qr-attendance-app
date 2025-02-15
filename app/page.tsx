@@ -172,11 +172,16 @@ const FingerprintModal = ({
   <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
     <div className="bg-white rounded-xl p-6 w-full max-w-md space-y-4">
       <h3 className="text-xl font-bold">Fingerprint Silme</h3>
+      <p className="text-sm text-gray-600 mb-2">
+        Google Sheets'te görünen DF:xxxx formatındaki fingerprint'i girin.
+        <br />
+        Örnek: Eğer sheets'te "VAR (DF:123456)" yazıyorsa, "123456" girin.
+      </p>
       <input
         type="text"
         value={fingerprint}
-        onChange={(e) => setFingerprint(e.target.value)}
-        placeholder="Fingerprint'i girin"
+        onChange={(e) => setFingerprint(e.target.value.trim())}
+        placeholder="Fingerprint numarası"
         className="w-full p-3 border rounded-lg"
         autoFocus
       />
@@ -223,6 +228,9 @@ const AttendanceSystem = () => {
 
   const deleteFingerprint = async () => {
     try {
+      setIsLoading(true);
+      updateDebugLogs(`🔄 Fingerprint silme işlemi başlatıldı: ${fingerprintToDelete}`);
+      
       const response = await fetch(`/api/attendance?fingerprint=${fingerprintToDelete}`, {
         method: 'DELETE'
       });
@@ -231,16 +239,19 @@ const AttendanceSystem = () => {
       
       if (response.ok) {
         setStatus('✅ Fingerprint başarıyla silindi');
-        updateDebugLogs(`✅ Fingerprint silindi: ${fingerprintToDelete}`);
+        updateDebugLogs(`✅ Fingerprint memory ve sheets'ten silindi: ${fingerprintToDelete}`);
+        // 3 saniye sonra status'ü temizle
+        setTimeout(() => setStatus(''), 3000);
       } else {
         setStatus(`❌ ${data.error || 'Fingerprint silinemedi'}`);
-        updateDebugLogs(`❌ HATA: Fingerprint silinemedi: ${data.error}`);
+        updateDebugLogs(`❌ HATA: ${data.error}`);
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
       setStatus(`❌ Hata: ${errorMessage}`);
       updateDebugLogs(`❌ HATA: ${errorMessage}`);
     } finally {
+      setIsLoading(false);
       setShowFingerprintModal(false);
       setFingerprintToDelete('');
     }

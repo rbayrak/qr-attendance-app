@@ -172,27 +172,80 @@ export default async function handler(
   else if (req.method === 'DELETE') {
     const { fingerprint } = req.query;
 
-    // Belirli bir fingerprint'i silme
-    if (fingerprint) {
-      if (deviceAttendanceMap.has(fingerprint as string)) {
+    try {
+      // Belirli bir fingerprint'i silme
+      if (fingerprint) {
+        // 1. Memory'den sil
         deviceAttendanceMap.delete(fingerprint as string);
+
+        // 2. Google Sheets'ten fingerprint'i temizle
+        const auth = new google.auth.GoogleAuth({
+          credentials: {
+            type: 'service_account',
+            project_id: process.env.GOOGLE_PROJECT_ID,
+            private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+            client_email: process.env.GOOGLE_CLIENT_EMAIL,
+          },
+          scopes: ['https://www.googleapis.com/auth/spreadsheets']
+        });
+
+        const sheets = google.sheets({ version: 'v4', auth });
+
+        // Tüm verileri çek
+        const response = await sheets.spreadsheets.values.get({
+          spreadsheetId: process.env.SPREADSHEET_ID,
+          range: 'A:Z',
+        });
+
+        const rows = response.data.values;
+        if (!rows) {
+          return res.status(404).json({ error: 'Veri bulunamadı' });
+        }
+
+        let fingerprintFound = false;
+
+        // Fingerprint'i bul ve temizle
+        for (let i = 0; i < rows.length; i++) {
+          for (let j = 3; j < rows[i].length; j++) { // D sütunundan başla
+            const cell = rows[i][j];
+            if (cell && cell.includes(`(DF:${fingerprint})`)) {
+              fingerprintFound = true;
+              // Hücreyi güncelle - sadece "VAR" bırak
+              const range = `${String.fromCharCode(65 + j)}${i + 1}`; // A=65
+              await sheets.spreadsheets.values.update({
+                spreadsheetId: process.env.SPREADSHEET_ID,
+                range: range,
+                valueInputOption: 'RAW',
+                requestBody: {
+                  values: [['VAR']]
+                }
+              });
+            }
+          }
+        }
+
+        if (!fingerprintFound && !deviceAttendanceMap.has(fingerprint as string)) {
+          return res.status(404).json({ error: 'Fingerprint bulunamadı' });
+        }
+
         return res.status(200).json({ 
           success: true,
           message: `${fingerprint} fingerprint'i silindi`
         });
-      } else {
-        return res.status(404).json({ 
-          error: 'Fingerprint bulunamadı'
-        });
       }
-    }
 
-    // Tüm kayıtları temizle
-    deviceAttendanceMap.clear();
-    return res.status(200).json({ 
-      success: true,
-      message: 'Tüm cihaz kayıtları temizlendi'
-    });
+      // Tüm kayıtları temizle
+      deviceAttendanceMap.clear();
+      return res.status(200).json({ 
+        success: true,
+        message: 'Tüm cihaz kayıtları temizlendi'
+      });
+    } catch (error) {
+      console.error('Delete Error:', error);
+      return res.status(500).json({ 
+        error: 'İşlem sırasında bir hata oluştu'
+      });
+    }
   }
   else {
     return res.status(405).json({ error: 'Method not allowed' });
