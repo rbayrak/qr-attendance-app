@@ -168,12 +168,26 @@ export default async function handler(
       });
     }
 
-    // Sadece map'ten sil
+    // Map'ten sil
     if (deviceAttendanceMap.has(fingerprint)) {
+      // Önce mevcut kaydı al
+      const record = deviceAttendanceMap.get(fingerprint);
+      // Kaydı sil
       deviceAttendanceMap.delete(fingerprint);
+      
+      // Aynı studentId'ye sahip tüm kayıtları da temizle
+      if (record) {
+        for (const [key, value] of deviceAttendanceMap.entries()) {
+          if (value.studentId === record.studentId || 
+              value.firstStudentId === record.studentId) {
+            deviceAttendanceMap.delete(key);
+          }
+        }
+      }
+      
       return res.status(200).json({ 
         success: true,
-        message: `${fingerprint} başarıyla silindi`
+        message: `${fingerprint} ve ilişkili tüm kayıtlar başarıyla silindi`
       });
     } else {
       return res.status(404).json({ 
