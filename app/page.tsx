@@ -998,7 +998,7 @@ const AttendanceSystem = () => {
               QR Oluştur
             </button>
 
-            <div className="absolute bottom-4 right-4 flex gap-2">
+            <div className="absolute bottom-4 right-4 flex gap-2 relative z-[150]">
               <button
                 onClick={() => setShowFingerprintModal(true)}
                 className="p-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 text-sm"
