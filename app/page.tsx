@@ -636,7 +636,7 @@ const AttendanceSystem = () => {
       const payload = {
         timestamp: Date.now(),
         classLocation: location,
-        validUntil: Date.now() + 300000,
+        validUntil: Date.now() + 900000,
         week: selectedWeek
       };
       
@@ -1023,7 +1023,7 @@ const AttendanceSystem = () => {
                   alt="QR Code"
                   className="mx-auto border-4 border-white rounded-lg shadow-lg"
                 />
-                <p className="mt-2 text-sm text-gray-600">5 dakika geçerli</p>
+                <p className="mt-2 text-sm text-gray-600">15 dakika geçerli</p>
               </div>
             )}
   
