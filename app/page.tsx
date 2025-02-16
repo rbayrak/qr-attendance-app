@@ -1017,7 +1017,7 @@ const AttendanceSystem = () => {
 
   
             {qrData && (
-              <div className="mt-4 text-center">
+              <div className="mt-4 text-center relative z-[100]">
                 <img 
                   src={`https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qrData)}&size=200x200`}
                   alt="QR Code"
