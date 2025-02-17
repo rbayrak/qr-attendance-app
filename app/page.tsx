@@ -12,6 +12,7 @@ import React, { useState, useEffect } from 'react';
 //import { Camera, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { MapPin, Calendar } from 'lucide-react';
+import { generateEnhancedFingerprint } from '@/utils/clientFingerprint';
 
 console.log('ENV Check:', {
   SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID,
@@ -332,49 +333,32 @@ const AttendanceSystem = () => {
     }
   }, [mode, validStudents]); // validStudents'ı dependency olarak ekledik
 
-  const getDeviceFingerprint = () => {
-    const fingerprint = [
-      navigator.userAgent,
-      screen.width,
-      screen.height,
-      navigator.language,
-      navigator.hardwareConcurrency,
-      // Ekstra benzersiz bilgiler
-      navigator.platform,
-      new Date().getTimezoneOffset()
-    ].join('|');
   
-    // Basit bir hash oluşturma
-    let hash = 0;
-    for (let i = 0; i < fingerprint.length; i++) {
-      const char = fingerprint.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // 32-bit integer'a çevir
-    }
-  
-    return Math.abs(hash).toString();
-  };
-  
-  const getClientIP = async () => {
+  // getClientIP fonksiyonunu bu şekilde güncelleyin
+const getClientIP = async () => {
+  try {
+    const deviceFingerprint = await generateEnhancedFingerprint();
+    const response = await fetch('https://api.ipify.org?format=json');
+    const data = await response.json();
+    
+    return {
+      ip: data.ip,
+      deviceFingerprint
+    };
+  } catch (error) {
+    console.error('IP/Fingerprint alınamadı:', error);
     try {
-      const response = await fetch('https://api.ipify.org?format=json');
-      const data = await response.json();
-      const deviceFingerprint = getDeviceFingerprint();
-      return {
-        ip: data.ip,
-        deviceFingerprint
-      };
-    } catch (error) {
-      console.error('IP adresi alınamadı:', error);
-      
-      // Hata durumunda sadece device fingerprint dön
-      const deviceFingerprint = getDeviceFingerprint();
+      const deviceFingerprint = await generateEnhancedFingerprint();
       return {
         ip: 'unknown',
         deviceFingerprint
       };
+    } catch (fallbackError) {
+      setStatus('❌ Cihaz tanımlama hatası. Lütfen tarayıcınızı güncelleyin veya farklı bir tarayıcı deneyin.');
+      throw new Error('Cihaz tanımlama başarısız');
     }
-  };
+  }
+};
   
 
   const handleModeChange = () => {
@@ -701,130 +685,134 @@ const AttendanceSystem = () => {
     const lastScanTime = localStorage.getItem('lastQrScanTime');
     const currentTime = Date.now();
     
-    if (lastScanTime && currentTime - parseInt(lastScanTime) < 3000) { // 3 saniyelik bir cooldown
-        return; // Eğer son taramadan 3 saniye geçmediyse işlemi durdur
+    if (lastScanTime && currentTime - parseInt(lastScanTime) < 3000) {
+      return;
     }
     
-    // Yeni tarama zamanını kaydet
     localStorage.setItem('lastQrScanTime', currentTime.toString());
-
+  
     try {
-        const scannedData = JSON.parse(decodedText);
-        const currentTimeString = new Date().toLocaleTimeString();
-        const studentInfo = validStudents.find(s => s.studentId === studentId);
-
-        // İlk log - Tarama başladı
-        const scanLog = `
-        ===== YENİ YOKLAMA KAYDI =====
-        Zaman: ${currentTimeString}
-        Öğrenci: ${studentInfo?.studentName || 'Bilinmiyor'} (${studentId})
-        Hafta: ${scannedData.week}
-        `;
-        updateDebugLogs(scanLog);
-
-        // Öğrenci kontrolü
-        const validStudent = validStudents.find(s => s.studentId === studentId);
-        if (!validStudent) {
-            const errorLog = `❌ HATA: Öğrenci numarası (${studentId}) listede bulunamadı`;
-            updateDebugLogs(errorLog);
-            setStatus('❌ Öğrenci numarası listede bulunamadı');
-            return;
+      const scannedData = JSON.parse(decodedText);
+      const currentTimeString = new Date().toLocaleTimeString();
+      const studentInfo = validStudents.find(s => s.studentId === studentId);
+  
+      // İlk log
+      const scanLog = `
+      ===== YENİ YOKLAMA KAYDI =====
+      Zaman: ${currentTimeString}
+      Öğrenci: ${studentInfo?.studentName || 'Bilinmiyor'} (${studentId})
+      Hafta: ${scannedData.week}
+      `;
+      updateDebugLogs(scanLog);
+  
+      // Öğrenci kontrolü
+      const validStudent = validStudents.find(s => s.studentId === studentId);
+      if (!validStudent) {
+        const errorLog = `❌ HATA: Öğrenci numarası (${studentId}) listede bulunamadı`;
+        updateDebugLogs(errorLog);
+        setStatus('❌ Öğrenci numarası listede bulunamadı');
+        return;
+      }
+  
+      if (scannedData.validUntil < Date.now()) {
+        updateDebugLogs(`❌ HATA: QR kod süresi dolmuş`);
+        setStatus('❌ QR kod süresi dolmuş');
+        return;
+      }
+  
+      if (!location) {
+        updateDebugLogs(`❌ HATA: Konum bilgisi yok`);
+        setStatus('❌ Önce konum alın');
+        return;
+      }
+  
+      // IP ve fingerprint kontrolü
+      const clientIPData = await getClientIP();
+      if (!clientIPData || !clientIPData.deviceFingerprint) {
+        updateDebugLogs(`❌ HATA: Cihaz tanımlama başarısız`);
+        setStatus('❌ Cihaz tanımlama hatası. Lütfen tekrar deneyin.');
+        return;
+      }
+  
+      const { ip, deviceFingerprint } = clientIPData;
+  
+      // Konum logları
+      const locationLog = `
+      📍 KONUM BİLGİLERİ:
+      Öğrenci Konumu: ${location.lat}, ${location.lng}
+      Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
+      Konum Durumu: ${isValidLocation ? '✅ Geçerli' : '❌ Geçersiz'}
+      
+      📱 CİHAZ BİLGİLERİ:
+      IP: ${ip}
+      Fingerprint: ${deviceFingerprint.slice(0, 8)}...
+      `;
+      updateDebugLogs(locationLog);
+  
+      if (!isValidLocation) {
+        updateDebugLogs(`❌ HATA: Konum henüz doğrulanmamış`);
+        setStatus('❌ Önce konumu doğrulayın');
+        return;
+      }
+  
+      // Backend API isteği
+      const attendanceResponse = await fetch('/api/attendance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId,
+          week: scannedData.week,
+          clientIP: ip,
+          deviceFingerprint
+        })
+      });
+  
+      const responseData = await attendanceResponse.json();
+  
+      if (!attendanceResponse.ok) {
+        if (responseData.blockedStudentId) {
+          updateDebugLogs(`❌ HATA: Cihaz ${responseData.blockedStudentId} no'lu öğrenci tarafından kullanılmış`);
+          setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
+          return;
         }
-
-        if (scannedData.validUntil < Date.now()) {
-            updateDebugLogs(`❌ HATA: QR kod süresi dolmuş`);
-            setStatus('❌ QR kod süresi dolmuş');
-            return;
-        }
-
-        if (!location) {
-            updateDebugLogs(`❌ HATA: Konum bilgisi yok`);
-            setStatus('❌ Önce konum alın');
-            return;
-        }
-
-        // IP ve device fingerprint kontrolü
-        const clientIPData = await getClientIP();
-        if (!clientIPData) {
-            updateDebugLogs(`❌ HATA: IP adresi alınamadı`);
-            setStatus('❌ IP adresi alınamadı');
-            return;
-        }
-
-        const { ip, deviceFingerprint } = clientIPData;
-
-        // Konum bilgilerini logla
-        const locationLog = `
-        📍 KONUM BİLGİLERİ:
-        Öğrenci Konumu: ${location.lat}, ${location.lng}
-        Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
-        Konum Durumu: ${isValidLocation ? '✅ Geçerli' : '❌ Geçersiz'}
-        `;
-        updateDebugLogs(locationLog);
-
-        // isValidLocation kontrolü
-        if (!isValidLocation) {
-            updateDebugLogs(`❌ HATA: Konum henüz doğrulanmamış`);
-            setStatus('❌ Önce konumu doğrulayın');
-            return;
-        }
-
-        // Backend API isteği
-        const attendanceResponse = await fetch('/api/attendance', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                studentId,
-                week: scannedData.week,
-                clientIP: ip,
-                deviceFingerprint
-            })
-        });
-
-        const responseData = await attendanceResponse.json();
-
-        if (!attendanceResponse.ok) {
-            if (responseData.blockedStudentId) {
-                updateDebugLogs(`❌ HATA: Cihaz ${responseData.blockedStudentId} no'lu öğrenci tarafından kullanılmış`);
-                setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
-                return;
-            }
-            throw new Error(responseData.error || 'Yoklama kaydedilemedi');
-        }
-
-        // Başarılı kayıt
-        localStorage.setItem('lastAttendanceCheck', JSON.stringify({
-            studentId: studentId,
-            timestamp: new Date().toISOString()
-        }));
-
-        // Response'u aldıktan ve başarılı olduktan sonra status'ü güncelle
-        if (responseData.isAlreadyAttended) {
-            updateDebugLogs(`⚠️ UYARI: ${studentId} no'lu öğrenci için yoklama zaten alınmış`);
-            setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
-        } else {
-            updateDebugLogs(`✅ BAŞARILI: ${studentId} no'lu öğrenci için yoklama kaydedildi`);
-            setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
-        }
-
-        // İşlem başarılı olduktan sonra QR taramayı durdur
-        setIsScanning(false);
-        if (html5QrCode) {
-            await html5QrCode.stop();
-        }
-
+        throw new Error(responseData.error || 'Yoklama kaydedilemedi');
+      }
+  
+      localStorage.setItem('lastAttendanceCheck', JSON.stringify({
+        studentId: studentId,
+        timestamp: new Date().toISOString()
+      }));
+  
+      if (responseData.isAlreadyAttended) {
+        updateDebugLogs(`⚠️ UYARI: ${studentId} no'lu öğrenci için yoklama zaten alınmış`);
+        setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
+      } else {
+        updateDebugLogs(`✅ BAŞARILI: ${studentId} no'lu öğrenci için yoklama kaydedildi`);
+        setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
+      }
+  
+      setIsScanning(false);
+      if (html5QrCode) {
+        await html5QrCode.stop();
+      }
+  
     } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-        updateDebugLogs(`❌ HATA: ${errorMessage}`);
-        console.error('QR okuma hatası:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      
+      if (errorMessage.includes('fingerprint') || errorMessage.includes('tanımlama')) {
+        updateDebugLogs(`❌ CİHAZ TANIMA HATASI: ${errorMessage}`);
+        setStatus('❌ Cihaz tanımlama hatası. Lütfen öğretmeninize başvurun.');
+      } else {
+        updateDebugLogs(`❌ GENEL HATA: ${errorMessage}`);
         setStatus(`❌ ${errorMessage}`);
-
-        setIsScanning(false);
-        if (html5QrCode) {
-            await html5QrCode.stop();
-        }
+      }
+  
+      setIsScanning(false);
+      if (html5QrCode) {
+        await html5QrCode.stop();
+      }
     }
-};
+  };
 
   useEffect(() => {
     let scanner: Html5Qrcode;
