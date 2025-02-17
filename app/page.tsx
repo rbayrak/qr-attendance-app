@@ -12,8 +12,9 @@ import React, { useState, useEffect } from 'react';
 //import { Camera, Calendar } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { MapPin, Calendar } from 'lucide-react';
-import { generateEnhancedFingerprint } from '@/utils/clientFingerprint';
+
 import { STATIC_CLASS_LOCATION } from '../config/constants';
+import { generateEnhancedFingerprint, isValidFingerprint } from '@/utils/clientFingerprint';
 
 console.log('ENV Check:', {
   SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID,
@@ -338,30 +339,29 @@ const AttendanceSystem = () => {
 
   
   // getClientIP fonksiyonunu bu şekilde güncelleyin
-const getClientIP = async () => {
-  try {
-    const deviceFingerprint = await generateEnhancedFingerprint();
-    const response = await fetch('https://api.ipify.org?format=json');
-    const data = await response.json();
-    
-    return {
-      ip: data.ip,
-      deviceFingerprint
-    };
-  } catch (error) {
-    console.error('IP/Fingerprint alınamadı:', error);
+  const getClientIP = async () => {
     try {
-      const deviceFingerprint = await generateEnhancedFingerprint();
+      const response = await fetch('https://api.ipify.org?format=json');
+      const data = await response.json();
+      
+      // Yeni fingerprint sistemini kullan
+      const { fingerprint, hardwareSignature } = await generateEnhancedFingerprint();
+      
+      // Geçerlilik kontrolü
+      if (!isValidFingerprint(fingerprint, hardwareSignature)) {
+        throw new Error('Geçersiz cihaz tanımlama');
+      }
+      
       return {
-        ip: 'unknown',
-        deviceFingerprint
+        ip: data.ip,
+        deviceFingerprint: fingerprint,
+        hardwareSignature
       };
-    } catch (fallbackError) {
-      setStatus('❌ Cihaz tanımlama hatası. Lütfen tarayıcınızı güncelleyin veya farklı bir tarayıcı deneyin.');
+    } catch (error) {
+      console.error('IP/Fingerprint alınamadı:', error);
       throw new Error('Cihaz tanımlama başarısız');
     }
-  }
-};
+  };
   
 
   const handleModeChange = () => {
@@ -673,35 +673,31 @@ const getClientIP = async () => {
       }
   
       // IP ve fingerprint kontrolü
+      // Backend API isteği
       const clientIPData = await getClientIP();
-      if (!clientIPData || !clientIPData.deviceFingerprint) {
+      if (!clientIPData || !clientIPData.deviceFingerprint || !clientIPData.hardwareSignature) {
         updateDebugLogs(`❌ HATA: Cihaz tanımlama başarısız`);
         setStatus('❌ Cihaz tanımlama hatası. Lütfen tekrar deneyin.');
         return;
       }
-  
-      const { ip, deviceFingerprint } = clientIPData;
-  
+
+      const { ip, deviceFingerprint, hardwareSignature } = clientIPData;
+
       // Konum logları
       const locationLog = `
       📍 KONUM BİLGİLERİ:
       Öğrenci Konumu: ${location.lat}, ${location.lng}
       Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
       Konum Durumu: ${isValidLocation ? '✅ Geçerli' : '❌ Geçersiz'}
-      
+
       📱 CİHAZ BİLGİLERİ:
       IP: ${ip}
       Fingerprint: ${deviceFingerprint.slice(0, 8)}...
+      Hardware ID: ${hardwareSignature.slice(0, 8)}...
       `;
       updateDebugLogs(locationLog);
-  
-      if (!isValidLocation) {
-        updateDebugLogs(`❌ HATA: Konum henüz doğrulanmamış`);
-        setStatus('❌ Önce konumu doğrulayın');
-        return;
-      }
-  
-      // Backend API isteği
+
+      // API isteği
       const attendanceResponse = await fetch('/api/attendance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -709,7 +705,8 @@ const getClientIP = async () => {
           studentId,
           week: scannedData.week,
           clientIP: ip,
-          deviceFingerprint
+          deviceFingerprint,
+          hardwareSignature
         })
       });
   
@@ -745,14 +742,16 @@ const getClientIP = async () => {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
       
-      if (errorMessage.includes('fingerprint') || errorMessage.includes('tanımlama')) {
+      if (errorMessage.includes('fingerprint') || 
+          errorMessage.includes('tanımlama') || 
+          errorMessage.includes('hardware')) {
         updateDebugLogs(`❌ CİHAZ TANIMA HATASI: ${errorMessage}`);
         setStatus('❌ Cihaz tanımlama hatası. Lütfen öğretmeninize başvurun.');
       } else {
         updateDebugLogs(`❌ GENEL HATA: ${errorMessage}`);
         setStatus(`❌ ${errorMessage}`);
       }
-  
+    
       setIsScanning(false);
       if (html5QrCode) {
         await html5QrCode.stop();

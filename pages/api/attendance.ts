@@ -1,77 +1,9 @@
+// pages/api/attendance.ts
+
+import { NextApiRequest, NextApiResponse } from 'next';
+import { ResponseData } from '@/types/types';
+import { deviceTracker } from '@/utils/deviceTracker';
 import { google } from 'googleapis';
-import type { NextApiRequest, NextApiResponse } from 'next';
-import { validateFingerprint } from '@/utils/serverFingerprint';
-
-type ResponseData = {
-  success?: boolean;
-  error?: string;
-  message?: string;
-  debug?: any;
-  blockedStudentId?: string;
-  isAlreadyAttended?: boolean;
-};
-
-interface DeviceAttendanceRecord {
-  studentId: string;
-  timestamp: number;
-  deviceFingerprints: string[];
-}
-
-// Cihaz bazlı yoklama kayıtları
-const deviceAttendanceMap = new Map<string, DeviceAttendanceRecord>();
-
-// Fingerprint kontrolü fonksiyonu
-const checkFingerprint = async (
-  sheets: any,
-  fingerprint: string,
-  studentId: string,
-  weekColumnIndex: number
-): Promise<{
-  isBlocked: boolean;
-  existingStudentId?: string;
-  error?: string;
-}> => {
-  try {
-    // Önce fingerprint validasyonu
-    const validationResult = await validateFingerprint(fingerprint, studentId);
-    if (!validationResult.isValid) {
-      return {
-        isBlocked: true,
-        error: validationResult.error
-      };
-    }
-
-    // Tüm verileri çek
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.SPREADSHEET_ID,
-      range: 'A:Z',
-    });
-
-    const rows = response.data.values;
-    if (!rows) return { isBlocked: false };
-
-    // Search for fingerprint in sheet
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i][weekColumnIndex] && 
-          rows[i][weekColumnIndex].includes(`(DF:${fingerprint})`)) {
-        if (rows[i][1] !== studentId) {
-          return {
-            isBlocked: true,
-            existingStudentId: rows[i][1]
-          };
-        }
-      }
-    }
-
-    return { isBlocked: false };
-  } catch (error) {
-    console.error('Fingerprint check error:', error);
-    return { 
-      isBlocked: true,
-      error: 'Fingerprint kontrol hatası'
-    };
-  }
-};
 
 export default async function handler(
   req: NextApiRequest,
@@ -79,35 +11,43 @@ export default async function handler(
 ) {
   if (req.method === 'POST') {
     try {
-      const { studentId, week, clientIP, deviceFingerprint } = req.body;
+      const { 
+        studentId, 
+        week, 
+        clientIP, 
+        deviceFingerprint,
+        hardwareSignature 
+      } = req.body;
 
+      // 1. Temel validasyonlar
       if (!studentId || !week) {
-        return res.status(400).json({ error: 'Öğrenci ID ve hafta bilgisi gerekli' });
+        return res.status(400).json({ 
+          error: 'Öğrenci ID ve hafta bilgisi gerekli' 
+        });
       }
 
-      if (!deviceFingerprint) {
-        return res.status(400).json({ error: 'Cihaz tanımlayıcısı gerekli' });
+      if (!deviceFingerprint || !hardwareSignature) {
+        return res.status(400).json({ 
+          error: 'Cihaz tanımlama bilgileri eksik' 
+        });
       }
 
-      // Bugünün başlangıç timestamp'i
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      // Mevcut cihaz kaydını kontrol et
-      const existingAttendance = deviceAttendanceMap.get(deviceFingerprint);
-      
-      if (existingAttendance) {
-        if (existingAttendance.timestamp >= today.getTime()) {
-          if (studentId !== existingAttendance.studentId) {
-            return res.status(403).json({ 
-              error: 'Bu cihaz bugün başka bir öğrenci için kullanılmış',
-              blockedStudentId: existingAttendance.studentId 
-            });
-          }
-        }
+      // 2. Device Tracker kontrolü
+      const validationResult = await deviceTracker.validateDeviceAccess(
+        deviceFingerprint,
+        studentId,
+        clientIP,
+        hardwareSignature
+      );
+
+      if (!validationResult.isValid) {
+        return res.status(403).json({ 
+          error: validationResult.error,
+          blockedStudentId: validationResult.blockedStudentId 
+        });
       }
 
-      // Google Sheets yetkilendirmesi
+      // 3. Google Sheets işlemleri
       const auth = new google.auth.GoogleAuth({
         credentials: {
           type: 'service_account',
@@ -120,7 +60,7 @@ export default async function handler(
 
       const sheets = google.sheets({ version: 'v4', auth });
 
-      // Tüm verileri çek
+      // 4. Verileri çek
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: process.env.SPREADSHEET_ID,
         range: 'A:Z',
@@ -131,46 +71,28 @@ export default async function handler(
         return res.status(404).json({ error: 'Veri bulunamadı' });
       }
 
-      // Öğrenciyi bul
+      // 5. Öğrenciyi bul
       const studentRowIndex = rows.findIndex(row => row[1] === studentId);
       if (studentRowIndex === -1) {
         return res.status(404).json({ error: 'Öğrenci bulunamadı' });
       }
 
-      // Hafta kontrolü
+      // 6. Hafta kontrolü
       if (week < 1 || week > 16) {
         return res.status(400).json({ error: 'Geçersiz hafta numarası' });
       }
 
+      // 7. Hafta sütununu belirle
       const weekColumnIndex = 3 + Number(week) - 1;
-
-      // Gelişmiş fingerprint kontrolü
-      const fingerprintCheck = await checkFingerprint(sheets, deviceFingerprint, studentId, weekColumnIndex);
-      
-      if (fingerprintCheck.isBlocked) {
-        return res.status(403).json({ 
-          error: fingerprintCheck.error || 'Bu cihaz başka bir öğrenci için kullanılmış',
-          blockedStudentId: fingerprintCheck.existingStudentId
-        });
-      }
-
-      // Yoklama kaydı için değerleri hesapla
       const studentRow = studentRowIndex + 1;
       const weekColumn = String.fromCharCode(68 + Number(week) - 1);
       const range = `${weekColumn}${studentRow}`;
 
-      // Mevcut yoklama kontrolü
+      // 8. Mevcut yoklama kontrolü
       const isAlreadyAttended = rows[studentRowIndex][weekColumnIndex] && 
-                               rows[studentRowIndex][weekColumnIndex].includes('VAR');
+                              rows[studentRowIndex][weekColumnIndex].includes('VAR');
 
-      // Cihaz kaydını güncelle
-      deviceAttendanceMap.set(deviceFingerprint, {
-        studentId,
-        timestamp: Date.now(),
-        deviceFingerprints: [deviceFingerprint]
-      });
-
-      // Yoklamayı kaydet
+      // 9. Yoklamayı kaydet
       const updateResult = await sheets.spreadsheets.values.update({
         spreadsheetId: process.env.SPREADSHEET_ID,
         range: range,
@@ -180,6 +102,7 @@ export default async function handler(
         }
       });
 
+      // 10. Başarılı yanıt
       res.status(200).json({ 
         success: true,
         isAlreadyAttended,
@@ -190,7 +113,7 @@ export default async function handler(
             sutun: weekColumn,
             aralik: range,
             weekNumber: week,
-            deviceFingerprint: deviceFingerprint
+            deviceFingerprint: deviceFingerprint.slice(0, 8) + '...' // Güvenlik için kısalt
           },
           updateResult: updateResult.data
         }
@@ -199,7 +122,7 @@ export default async function handler(
     } catch (error) {
       console.error('Error:', error);
       res.status(500).json({ 
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : 'Bilinmeyen hata'
       });
     }
   }
@@ -208,10 +131,7 @@ export default async function handler(
 
     try {
       if (fingerprint) {
-        // Memory'den sil
-        deviceAttendanceMap.delete(fingerprint as string);
-
-        // Google Sheets'ten temizle
+        // 1. Google Sheets'ten fingerprint'i temizle
         const auth = new google.auth.GoogleAuth({
           credentials: {
             type: 'service_account',
@@ -254,7 +174,7 @@ export default async function handler(
           }
         }
 
-        if (!fingerprintFound && !deviceAttendanceMap.has(fingerprint as string)) {
+        if (!fingerprintFound) {
           return res.status(404).json({ error: 'Fingerprint bulunamadı' });
         }
 
@@ -264,8 +184,6 @@ export default async function handler(
         });
       }
 
-      // Tüm kayıtları temizle
-      deviceAttendanceMap.clear();
       return res.status(200).json({ 
         success: true,
         message: 'Tüm cihaz kayıtları temizlendi'
