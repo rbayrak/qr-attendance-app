@@ -63,106 +63,47 @@ async function sha256(message: string): Promise<string> {
   }
 }
 
-// Platform bilgisini güvenli şekilde al
-const getPlatform = (): string => {
-  try {
-    // Modern yöntem
-    if ('userAgentData' in navigator && navigator.userAgentData?.platform) {
-      return navigator.userAgentData.platform;
-    }
-    // Eski yöntem (deprecated ama hala çalışıyor)
-    else if (navigator.platform) {
-      return navigator.platform;
-    }
-    // Fallback
-    return 'unknown';
-  } catch {
-    return 'unknown';
-  }
-};
-
-// Hardware özellikleri al
-const getHardwareInfo = (): string[] => {
-  return [
-    navigator.userAgent,
-    `${screen.width},${screen.height}`,
-    `${screen.colorDepth},${screen.pixelDepth}`,
-    navigator.language,
-    navigator.hardwareConcurrency?.toString() || '',
-    getPlatform(),
-    new Date().getTimezoneOffset().toString(),
-    navigator.deviceMemory?.toString() || '',
-    navigator.maxTouchPoints?.toString() || ''
-  ];
-};
-
-// Hardware signature oluştur
-const generateHardwareSignature = async (): Promise<string> => {
-  const hardwareInfo = getHardwareInfo();
-  const stableInfo = hardwareInfo.slice(0, 6); // Daha stabil özellikleri al
-  return await sha256(stableInfo.join('|'));
-};
-
 // Ana fingerprint oluşturma fonksiyonu
 export const generateEnhancedFingerprint = async (): Promise<{
   fingerprint: string;
   hardwareSignature: string;
 }> => {
   try {
-    // 1. Hardware bilgileri
-    const hardwareInfo = getHardwareInfo();
-    const hardwareSignature = await generateHardwareSignature();
+    // 1. Sadece stabil hardware bilgileri
+    const stableHardwareInfo = [
+      `${screen.width},${screen.height}`,
+      `${screen.colorDepth}`,
+      navigator.hardwareConcurrency?.toString() || '',
+      navigator.platform || '',
+      navigator.userAgent
+    ].join('|');
 
-    // 2. Canvas fingerprint
-    const canvasFingerprint = getCanvasFingerprint();
+    // 2. Hardware signature (değişmesi çok zor)
+    const hardwareSignature = await sha256(stableHardwareInfo);
 
-    // 3. Stored ID
-    const storedId = getStoredId();
+    // 3. İkincil özellikler (fingerprint için)
+    const secondaryFeatures = [
+      navigator.language,
+      new Date().getTimezoneOffset(),
+      'deviceMemory' in navigator ? navigator.deviceMemory : '',
+      'maxTouchPoints' in navigator ? navigator.maxTouchPoints : '',
+      getCanvasFingerprint(),
+      getStoredId()
+    ].join('|');
 
-    // 4. Tarayıcı özellikleri
-    const browserFeatures = [
-      'FileReader' in window,
-      'WebSocket' in window,
-      'localStorage' in window,
-      'indexedDB' in window,
-      'Intl' in window,
-      'WebGL2RenderingContext' in window,
-      'Bluetooth' in navigator,
-      'speechSynthesis' in window
-    ].map(f => f ? '1' : '0').join('');
-
-    // 5. Medya özellikleri
-    let mediaFeatures = '';
-    if ('mediaDevices' in navigator) {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        mediaFeatures = devices.map(d => d.kind).join(',');
-      } catch {
-        mediaFeatures = 'error';
-      }
-    }
-
-    // Birincil fingerprint oluştur
-    const components = [
-      hardwareInfo.join('|'),
-      canvasFingerprint,
-      storedId,
-      browserFeatures,
-      mediaFeatures
-    ];
-
-    const primaryFingerprint = await sha256(components.join('::'));
+    // 4. Ana fingerprint
+    const fingerprint = await sha256(stableHardwareInfo + "::" + secondaryFeatures);
 
     // Debug log
     console.debug('Fingerprint bileşenleri oluşturuldu', {
       hardwareSignatureLength: hardwareSignature.length,
-      fingerprintLength: primaryFingerprint.length,
-      hasCanvas: !!canvasFingerprint,
-      hasStoredId: !!storedId
+      fingerprintLength: fingerprint.length,
+      hasCanvas: !!getCanvasFingerprint(),
+      hasStoredId: !!getStoredId()
     });
 
     return {
-      fingerprint: primaryFingerprint,
+      fingerprint,
       hardwareSignature
     };
   } catch (error) {
@@ -197,10 +138,10 @@ export const getDeviceDebugInfo = async (): Promise<object> => {
       pixelDepth: screen.pixelDepth
     },
     navigator: {
-      platform: getPlatform(),
+      platform: navigator.platform || 'unknown',
       language: navigator.language,
       hardwareConcurrency: navigator.hardwareConcurrency,
-      deviceMemory: navigator.deviceMemory,
+      deviceMemory: 'deviceMemory' in navigator ? navigator.deviceMemory : undefined,
       maxTouchPoints: navigator.maxTouchPoints
     },
     hasLocalStorage: 'localStorage' in window,

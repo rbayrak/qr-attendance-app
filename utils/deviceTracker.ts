@@ -28,16 +28,20 @@ export class DeviceTracker {
     hardwareSignature: string
   ): Promise<{ isAllowed: boolean; blockedReason?: string }> {
     try {
-      // 1. Bugünün başlangıç timestamp'i
+      // 1. Bugünün başlangıç ve bitiş zamanını ayarla
       const today = new Date();
       today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
 
       // 2. Aynı gün içinde kullanılmış cihaz kontrolü
       for (const [_, record] of this.memoryStore) {
         const recordDate = new Date(record.lastUsedDate);
-        if (recordDate >= today) {
-          // 2.1 Fingerprint kontrolü
-          if (record.fingerprints.includes(deviceFingerprint)) {
+        
+        // Gün bazında karşılaştırma yap
+        if (recordDate >= today && recordDate < tomorrow) {
+          // Önce hardware signature kontrolü (daha güvenilir)
+          if (record.hardwareSignature === hardwareSignature) {
             if (record.studentId !== studentId) {
               return {
                 isAllowed: false,
@@ -45,13 +49,16 @@ export class DeviceTracker {
               };
             }
           }
-
-          // 2.2 Hardware signature kontrolü
-          if (record.hardwareSignature === hardwareSignature) {
+          
+          // Sonra fingerprint kontrolü
+          else if (record.fingerprints.includes(deviceFingerprint)) {
             if (record.studentId !== studentId) {
+              // Eğer fingerprint eşleşti ama hardware signature farklıysa,
+              // hardware signature'ı da kaydet
+              record.hardwareSignature = hardwareSignature;
               return {
                 isAllowed: false,
-                blockedReason: `Bu cihaz bugün başka bir öğrenci için kullanılmış`
+                blockedReason: `Bu cihaz bugün ${record.studentId} numaralı öğrenci için kullanılmış`
               };
             }
           }
@@ -59,7 +66,9 @@ export class DeviceTracker {
       }
 
       // 3. Yeni kayıt oluştur veya güncelle
-      const existingRecord = this.memoryStore.get(hardwareSignature);
+      const existingRecord = this.memoryStore.get(hardwareSignature) || 
+                          Array.from(this.memoryStore.values()).find(record => 
+                            record.fingerprints.includes(deviceFingerprint));
       
       if (existingRecord) {
         // Mevcut kaydı güncelle
