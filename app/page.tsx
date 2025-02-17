@@ -656,23 +656,6 @@ const getClientIP = async () => {
       return;
     }
     
-    // O gün için daha önce kullanılmış bir cihaz kontrolü
-    const lastAttendanceCheck = localStorage.getItem('lastAttendanceCheck');
-    
-    if (lastAttendanceCheck) {
-      const checkData = JSON.parse(lastAttendanceCheck);
-      const now = new Date();
-      const checkTime = new Date(checkData.timestamp);
-      
-      // Aynı gün içinde başka bir öğrenci numarası ile yoklama alınmış mı?
-      if (now.toDateString() === checkTime.toDateString()) {
-        if (checkData.studentId !== newId) {
-          setStatus(`❌ Bu cihazda zaten ${checkData.studentId} numaralı öğrenci yoklaması alınmış`);
-          return;
-        }
-      }
-    }
-    
     // Tüm kontrolleri geçtiyse
     setStatus('✅ Öğrenci numarası doğrulandı');
   };
