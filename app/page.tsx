@@ -716,6 +716,11 @@ const AttendanceSystem = () => {
         if (responseData.blockedStudentId) {
           updateDebugLogs(`❌ HATA: Cihaz ${responseData.blockedStudentId} no'lu öğrenci tarafından kullanılmış`);
           setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
+          // Burada kamerayı kapatacağız
+          setIsScanning(false);
+          if (html5QrCode) {
+            await html5QrCode.stop();
+          }
           return;
         }
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
