@@ -6,11 +6,11 @@ const getCanvasFingerprint = (): string => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) return '';
-
+ 
     // Canvas boyutunu ayarla
     canvas.width = 200;
     canvas.height = 200;
-
+ 
     // Temel metin özellikleri
     ctx.textBaseline = "alphabetic";
     ctx.font = "14px 'Arial'";
@@ -22,22 +22,22 @@ const getCanvasFingerprint = (): string => {
     ctx.fillText("YTU-Attendance-2024", 2, 15);
     ctx.fillStyle = "rgba(102, 204, 0, 0.7)";
     ctx.fillText("YTU-Attendance-2024", 4, 17);
-
+ 
     // Ek grafik öğeleri
     ctx.beginPath();
     ctx.arc(50, 50, 25, 0, Math.PI * 2);
     ctx.fillStyle = "#FF0000";
     ctx.fill();
-
+ 
     return canvas.toDataURL();
   } catch (error) {
     console.error('Canvas fingerprint hatası:', error);
     return '';
   }
-};
-
-// Saklanan ID'yi al veya oluştur
-const getStoredId = (): string => {
+ };
+ 
+ // Saklanan ID'yi al veya oluştur
+ const getStoredId = (): string => {
   const key = 'ytu_device_id';
   let storedId = localStorage.getItem(key);
   
@@ -47,10 +47,10 @@ const getStoredId = (): string => {
   }
   
   return storedId;
-};
-
-// SHA-256 hash fonksiyonu
-async function sha256(message: string): Promise<string> {
+ };
+ 
+ // SHA-256 hash fonksiyonu
+ async function sha256(message: string): Promise<string> {
   try {
     const msgBuffer = new TextEncoder().encode(message);
     const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
@@ -61,47 +61,61 @@ async function sha256(message: string): Promise<string> {
     console.error('Hash oluşturma hatası:', error);
     throw new Error('Hash oluşturulamadı');
   }
-}
-
-// Ana fingerprint oluşturma fonksiyonu
-export const generateEnhancedFingerprint = async (): Promise<{
+ }
+ 
+ // Ana fingerprint oluşturma fonksiyonu
+ export const generateEnhancedFingerprint = async (): Promise<{
   fingerprint: string;
   hardwareSignature: string;
-}> => {
+ }> => {
   try {
     // 1. Sadece stabil hardware bilgileri
-    const stableHardwareInfo = [
-      `${screen.width},${screen.height}`,
-      `${screen.colorDepth}`,
+    const hardwareInfo = [
+      // Ekran bilgileri (en stabil olanlar)
+      `${screen.width},${screen.height}`, // Ekran çözünürlüğü
+      `${screen.colorDepth}`,            // Renk derinliği
+      `${window.devicePixelRatio}`,      // Piksel oranı (telefon için önemli)
+      
+      // İşlemci bilgisi
       navigator.hardwareConcurrency?.toString() || '',
-      navigator.platform || '',
-      navigator.userAgent
-    ].join('|');
-
-    // 2. Hardware signature (değişmesi çok zor)
-    const hardwareSignature = await sha256(stableHardwareInfo);
-
-    // 3. İkincil özellikler (fingerprint için)
-    const secondaryFeatures = [
+      
+      // Dil bilgisi (genelde değişmez)
       navigator.language,
-      new Date().getTimezoneOffset(),
-      'deviceMemory' in navigator ? navigator.deviceMemory : '',
-      'maxTouchPoints' in navigator ? navigator.maxTouchPoints : '',
+      
+      // Dokunmatik özellik (telefon/tablet ayrımı için)
+      `${navigator.maxTouchPoints}`,
+      
+      // Zaman dilimi (genelde değişmez)
+      new Date().getTimezoneOffset().toString()
+    ];
+ 
+    // Stabil bilgileri birleştir
+    const stableInfo = hardwareInfo.join('|');
+ 
+    // 2. Hardware signature oluştur
+    const hardwareSignature = await sha256(stableInfo);
+ 
+    // 3. Değişken özellikleri ekle (fingerprint için)
+    const volatileFeatures = [
+      navigator.userAgent,
       getCanvasFingerprint(),
       getStoredId()
     ].join('|');
-
+ 
     // 4. Ana fingerprint
-    const fingerprint = await sha256(stableHardwareInfo + "::" + secondaryFeatures);
-
+    const fingerprint = await sha256(stableInfo + "::" + volatileFeatures);
+ 
     // Debug log
-    console.debug('Fingerprint bileşenleri oluşturuldu', {
-      hardwareSignatureLength: hardwareSignature.length,
-      fingerprintLength: fingerprint.length,
-      hasCanvas: !!getCanvasFingerprint(),
-      hasStoredId: !!getStoredId()
+    console.debug('Device Info:', {
+      screen: `${screen.width}x${screen.height}`,
+      colorDepth: screen.colorDepth,
+      pixelRatio: window.devicePixelRatio,
+      cores: navigator.hardwareConcurrency,
+      language: navigator.language,
+      touchPoints: navigator.maxTouchPoints,
+      timezone: new Date().getTimezoneOffset()
     });
-
+ 
     return {
       fingerprint,
       hardwareSignature
@@ -110,23 +124,23 @@ export const generateEnhancedFingerprint = async (): Promise<{
     console.error('Fingerprint oluşturma hatası:', error);
     throw new Error('Cihaz tanımlama başarısız');
   }
-};
-
-// Fingerprint geçerliliğini kontrol et
-export const isValidFingerprint = (
+ };
+ 
+ // Fingerprint geçerliliğini kontrol et
+ export const isValidFingerprint = (
   fingerprint: string,
   hardwareSignature: string
-): boolean => {
+ ): boolean => {
   return (
     typeof fingerprint === 'string' &&
     typeof hardwareSignature === 'string' &&
     fingerprint.length >= 32 &&
     hardwareSignature.length >= 32
   );
-};
-
-// Debug fonksiyonu
-export const getDeviceDebugInfo = async (): Promise<object> => {
+ };
+ 
+ // Debug fonksiyonu
+ export const getDeviceDebugInfo = async (): Promise<object> => {
   const { fingerprint, hardwareSignature } = await generateEnhancedFingerprint();
   return {
     fingerprint: fingerprint.slice(0, 8) + '...',
@@ -148,4 +162,4 @@ export const getDeviceDebugInfo = async (): Promise<object> => {
     hasWebGL: 'WebGL2RenderingContext' in window,
     timestamp: new Date().toISOString()
   };
-};
+ };
