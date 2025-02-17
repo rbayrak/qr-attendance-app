@@ -13,6 +13,7 @@ import React, { useState, useEffect } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { MapPin, Calendar } from 'lucide-react';
 import { generateEnhancedFingerprint } from '@/utils/clientFingerprint';
+import { STATIC_CLASS_LOCATION } from '../config/constants';
 
 console.log('ENV Check:', {
   SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID,
@@ -22,6 +23,8 @@ console.log('ENV Check:', {
 
 const SPREADSHEET_ID = process.env.NEXT_PUBLIC_SHEET_ID;
 const MAX_DISTANCE = 0.8;
+
+
 
 // Google Auth yardımcı fonksiyonları
 let tokenClient: any;
@@ -537,58 +540,23 @@ const getClientIP = async () => {
         };
         setLocation(currentLocation);
   
-        if (mode === 'teacher') {
-          try {
-            // Önce eski konumu temizle
-            localStorage.removeItem('classLocation');
-            sessionStorage.removeItem('classLocation');
-            
-            // Sonra yeni konumu API'ye kaydet
-            await fetch('/api/location', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(currentLocation)
-            });
-            
-            // Yeni konumu localStorage'a kaydet
-            localStorage.setItem('classLocation', JSON.stringify(currentLocation));
-            sessionStorage.setItem('classLocation', JSON.stringify(currentLocation));
-            
-            setClassLocation(currentLocation);
-            setStatus('📍 Konum alındı');
-          } catch (error) {
-            setStatus('❌ Konum kaydedilemedi');
-          }
-        } else if (mode === 'student') {
-          try {
-            // Önce API'den kontrol et
-            const response = await fetch('/api/location');
-            if (response.ok) {
-              const classLoc = await response.json();
-              setClassLocation(classLoc);
-              localStorage.setItem('classLocation', JSON.stringify(classLoc));
-              sessionStorage.setItem('classLocation', JSON.stringify(classLoc));
+        try {
+          const distance = calculateDistance(
+            currentLocation.lat,
+            currentLocation.lng,
+            STATIC_CLASS_LOCATION.lat,
+            STATIC_CLASS_LOCATION.lng
+          );
   
-              const distance = calculateDistance(
-                currentLocation.lat,
-                currentLocation.lng,
-                classLoc.lat,
-                classLoc.lng
-              );
-  
-              if (distance > MAX_DISTANCE) {
-                setIsValidLocation(false);
-                setStatus(`❌ Sınıf konumunda değilsiniz (${(distance * 1000).toFixed(0)} metre uzaktasınız)`);
-              } else {
-                setIsValidLocation(true);
-                setStatus('✅ Konum doğrulandı');
-              }
-            } else {
-              setStatus('❌ Öğretmen henüz konum paylaşmamış');
-            }
-          } catch (error) {
-            setStatus('❌ Konum alınamadı');
+          if (distance > MAX_DISTANCE) {
+            setIsValidLocation(false);
+            setStatus(`❌ Sınıf konumunda değilsiniz (${(distance * 1000).toFixed(0)} metre uzaktasınız)`);
+          } else {
+            setIsValidLocation(true);
+            setStatus('✅ Konum doğrulandı');
           }
+        } catch (error) {
+          setStatus('❌ Konum kontrolü yapılamadı');
         }
       },
       (error) => {
@@ -604,22 +572,17 @@ const getClientIP = async () => {
   
 
   const generateQR = async () => {
-    if (!location) {
-      setStatus('❌ Önce konum alın');
-      return;
-    }
-    
     try {
-      // Sadece API'ye kaydet
+      // Statik konumu API'ye kaydet
       await fetch('/api/location', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(location)
+        body: JSON.stringify(STATIC_CLASS_LOCATION)
       });
       
       const payload = {
         timestamp: Date.now(),
-        classLocation: location,
+        classLocation: STATIC_CLASS_LOCATION,
         validUntil: Date.now() + 900000,
         week: selectedWeek
       };
@@ -627,7 +590,7 @@ const getClientIP = async () => {
       setQrData(JSON.stringify(payload));
       setStatus('✅ QR kod oluşturuldu');
     } catch (error) {
-      setStatus('❌ Konum kaydedilemedi');
+      setStatus('❌ QR kod oluşturulamadı');
     }
   };
 
@@ -954,17 +917,9 @@ const getClientIP = async () => {
               </div>
   
             <button
-              onClick={getLocation}
-              className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700"
-              disabled={isLoading}
-            >
-              <MapPin size={18} /> Konum Al
-            </button>
-  
-            <button
               onClick={generateQR}
               className="w-full p-3 bg-purple-600 text-white rounded-lg disabled:opacity-50 hover:bg-purple-700"
-              disabled={!location || isLoading}
+              disabled={isLoading}
             >
               QR Oluştur
             </button>
