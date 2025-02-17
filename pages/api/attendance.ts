@@ -93,12 +93,13 @@ export default async function handler(
                               rows[studentRowIndex][weekColumnIndex].includes('VAR');
 
       // 9. Yoklamayı kaydet
+      // 9. Yoklamayı kaydet
       const updateResult = await sheets.spreadsheets.values.update({
         spreadsheetId: process.env.SPREADSHEET_ID,
         range: range,
         valueInputOption: 'RAW',
         requestBody: {
-          values: [[`VAR (DF:${deviceFingerprint})`]]
+          values: [[`VAR (DF:${deviceFingerprint}) (HW:${hardwareSignature}) (DATE:${Date.now()})`]]
         }
       });
 

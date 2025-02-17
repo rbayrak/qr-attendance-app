@@ -127,11 +127,16 @@ export class DeviceTracker {
   ): Promise<ValidationResult> {
     try {
       // 1. Google Sheets kontrolü
-      const sheetsCheck = await this.checkGoogleSheets(fingerprint, studentId);
+      const sheetsCheck = await this.checkGoogleSheets(
+        fingerprint,
+        hardwareSignature, // hardwareSignature'ı ekledik
+        studentId
+      );
+      
       if (!sheetsCheck.isValid) {
         return sheetsCheck;
       }
-
+  
       // 2. Memory store kontrolü
       const memoryCheck = await this.trackDevice(
         fingerprint,
@@ -139,14 +144,14 @@ export class DeviceTracker {
         ip,
         hardwareSignature
       );
-
+  
       if (!memoryCheck.isAllowed) {
         return {
           isValid: false,
           error: memoryCheck.blockedReason
         };
       }
-
+  
       return { isValid: true };
     } catch (error) {
       console.error('Device validation error:', error);
@@ -159,6 +164,7 @@ export class DeviceTracker {
 
   private async checkGoogleSheets(
     fingerprint: string,
+    hardwareSignature: string,
     studentId: string
   ): Promise<ValidationResult> {
     try {
@@ -171,33 +177,52 @@ export class DeviceTracker {
         },
         scopes: ['https://www.googleapis.com/auth/spreadsheets']
       });
-
+  
       const sheets = google.sheets({ version: 'v4', auth });
       
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: process.env.SPREADSHEET_ID,
         range: 'A:Z',
       });
-
+  
       const rows = response.data.values;
       if (!rows) return { isValid: true };
-
-      // Fingerprint'i sheets'te ara
+  
+      // Bugünün başlangıcı
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+  
+      // Tüm hücreleri kontrol et
       for (let i = 1; i < rows.length; i++) {
         for (let j = 3; j < rows[i].length; j++) {
           const cell = rows[i][j];
-          if (cell && cell.includes(`(DF:${fingerprint})`)) {
-            if (rows[i][1] !== studentId) {
-              return {
-                isValid: false,
-                error: 'Bu cihaz başka bir öğrenci için kullanılmış',
-                blockedStudentId: rows[i][1]
-              };
+          if (cell) {
+            // Fingerprint veya hardware signature kontrolü
+            const hasFingerprint = cell.includes(`(DF:${fingerprint})`);
+            const hasHardware = cell.includes(`(HW:${hardwareSignature})`);
+            
+            if ((hasFingerprint || hasHardware) && rows[i][1] !== studentId) {
+              // Kayıt tarihini kontrol et
+              try {
+                const dateMatch = cell.match(/\(DATE:(\d+)\)/);
+                if (dateMatch) {
+                  const recordDate = new Date(parseInt(dateMatch[1]));
+                  if (recordDate >= today) {
+                    return {
+                      isValid: false,
+                      error: 'Bu cihaz bugün başka bir öğrenci için kullanılmış',
+                      blockedStudentId: rows[i][1]
+                    };
+                  }
+                }
+              } catch (error) {
+                console.error('Tarih parse hatası:', error);
+              }
             }
           }
         }
       }
-
+  
       return { isValid: true };
     } catch (error) {
       console.error('Sheets check error:', error);
