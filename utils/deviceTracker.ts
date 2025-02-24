@@ -34,35 +34,52 @@ export class DeviceTracker {
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
 
-      // 2. Aynı gün içinde kullanılmış cihaz kontrolü
+      // 2. Aynı gün içinde kullanılmış cihaz kontrolü - YENİ: Skorlama sistemi
+      let potentialBlockingRecord = null;
+      let matchScore = 0;
+      
       for (const [_, record] of this.memoryStore) {
         const recordDate = new Date(record.lastUsedDate);
         
         // Gün bazında karşılaştırma yap
         if (recordDate >= today && recordDate < tomorrow) {
-          // Önce hardware signature kontrolü (daha güvenilir)
+          // YENİ: Skorlama sistemi
+          let currentScore = 0;
+          
+          // Hardware signature tam eşleşme (en güvenilir) (+3 puan)
           if (record.hardwareSignature === hardwareSignature) {
-            if (record.studentId !== studentId) {
-              return {
-                isAllowed: false,
-                blockedReason: `Bu cihaz bugün ${record.studentId} numaralı öğrenci için kullanılmış`
-              };
-            }
+            currentScore += 3;
           }
           
-          // Sonra fingerprint kontrolü
-          else if (record.fingerprints.includes(deviceFingerprint)) {
-            if (record.studentId !== studentId) {
-              // Eğer fingerprint eşleşti ama hardware signature farklıysa,
-              // hardware signature'ı da kaydet
-              record.hardwareSignature = hardwareSignature;
-              return {
-                isAllowed: false,
-                blockedReason: `Bu cihaz bugün ${record.studentId} numaralı öğrenci için kullanılmış`
-              };
+          // Fingerprint tam eşleşme (+3 puan)
+          if (record.fingerprints.includes(deviceFingerprint)) {
+            currentScore += 3;
+          }
+          
+          // IP adresi eşleşme (daha az güvenilir) (+1 puan)
+          if (record.lastKnownIP === ip) {
+            currentScore += 0.1;
+          }
+          
+          // Eğer toplam skor 3 veya daha yüksekse ve farklı öğrenciyse
+          // Bu cihazı potansiyel bloke edeceğiz
+          if (currentScore >= 4 && record.studentId !== studentId) {
+            // En yüksek skora sahip kaydı tut
+            if (currentScore > matchScore) {
+              matchScore = currentScore;
+              potentialBlockingRecord = record;
             }
           }
         }
+      }
+      
+      // Eğer güçlü bir eşleşme bulduysan (skorlama sistemi) ve farklı öğrenciyse
+      if (potentialBlockingRecord && potentialBlockingRecord.studentId !== studentId) {
+        console.log(`Cihaz eşleşmesi bulundu: Skor=${matchScore}, Öğrenci=${potentialBlockingRecord.studentId}`);
+        return {
+          isAllowed: false,
+          blockedReason: `Bu cihaz bugün ${potentialBlockingRecord.studentId} numaralı öğrenci için kullanılmış`
+        };
       }
 
       // 3. Yeni kayıt oluştur veya güncelle
@@ -126,14 +143,19 @@ export class DeviceTracker {
     hardwareSignature: string
   ): Promise<ValidationResult> {
     try {
-      // 1. Google Sheets kontrolü
+      // YENİ: Öğrenci ID ve cihaz imzalarını logla (debug için)
+      console.log(`Yoklama Girişi - Öğrenci: ${studentId}, FP: ${fingerprint.substring(0, 8)}..., HW: ${hardwareSignature.substring(0, 8)}...`);
+      
+      // 1. Google Sheets kontrolü - ip parametresini ekliyoruz
       const sheetsCheck = await this.checkGoogleSheets(
         fingerprint,
-        hardwareSignature, // hardwareSignature'ı ekledik
-        studentId
+        hardwareSignature,
+        studentId,
+        ip // ip parametresini ekliyoruz
       );
       
       if (!sheetsCheck.isValid) {
+        console.log(`Google Sheets kontrolünde engellendi: ${sheetsCheck.error}`);
         return sheetsCheck;
       }
   
@@ -146,6 +168,7 @@ export class DeviceTracker {
       );
   
       if (!memoryCheck.isAllowed) {
+        console.log(`Memory kontrolünde engellendi: ${memoryCheck.blockedReason}`);
         return {
           isValid: false,
           error: memoryCheck.blockedReason
@@ -162,10 +185,12 @@ export class DeviceTracker {
     }
   }
 
+  // ip parametresini ekliyoruz
   private async checkGoogleSheets(
     fingerprint: string,
     hardwareSignature: string,
-    studentId: string
+    studentId: string,
+    ip: string // YENİ: ip parametresi eklendi
   ): Promise<ValidationResult> {
     try {
       const auth = new google.auth.GoogleAuth({
@@ -192,35 +217,73 @@ export class DeviceTracker {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
   
+      // YENİ: Eşleşme skoru ve eşleşen kayıt
+      let highestScore = 0;
+      let matchedStudent = null;
+      
       // Tüm hücreleri kontrol et
       for (let i = 1; i < rows.length; i++) {
-        for (let j = 3; j < rows[i].length; j++) {
-          const cell = rows[i][j];
-          if (cell) {
-            // Fingerprint veya hardware signature kontrolü
-            const hasFingerprint = cell.includes(`(DF:${fingerprint})`);
-            const hasHardware = cell.includes(`(HW:${hardwareSignature})`);
-            
-            if ((hasFingerprint || hasHardware) && rows[i][1] !== studentId) {
-              // Kayıt tarihini kontrol et
-              try {
-                const dateMatch = cell.match(/\(DATE:(\d+)\)/);
-                if (dateMatch) {
-                  const recordDate = new Date(parseInt(dateMatch[1]));
-                  if (recordDate >= today) {
-                    return {
-                      isValid: false,
-                      error: 'Bu cihaz bugün başka bir öğrenci için kullanılmış',
-                      blockedStudentId: rows[i][1]
-                    };
+        // Farklı öğrenci ID'si
+        if (rows[i][1] !== studentId) {
+          let studentScore = 0;
+          
+          for (let j = 3; j < rows[i].length; j++) {
+            const cell = rows[i][j] || '';
+            if (typeof cell === 'string') {
+              // YENİ: Başka bir öğrencinin fingerprint/hardware bilgilerine bak
+              
+              // Tam fingerprint eşleşme kontrolü (partial değil)
+              const hasFingerprint = cell.includes(`(DF:${fingerprint})`);
+              if (hasFingerprint) {
+                studentScore += 3;
+              }
+              
+              // Tam hardware signature eşleşme
+              const hasHardware = cell.includes(`(HW:${hardwareSignature})`);
+              if (hasHardware) {
+                studentScore += 3;
+              }
+              
+              // IP Adresi kontrolü (daha az güvenilir)
+              const ipMatch = cell.match(/\(IP:([^)]+)\)/);
+              if (ipMatch && ip && ip.startsWith(ipMatch[1])) {
+                studentScore += 0.1;
+              }
+              
+              // Skorları değerlendir - en yüksek skorlu eşleşmeyi tut
+              if (studentScore > highestScore) {
+                highestScore = studentScore;
+                matchedStudent = rows[i][1]; // Öğrenci ID'sini tut
+                
+                // Tarih kontrolü - güncel mi?
+                try {
+                  const dateMatch = cell.match(/\(DATE:(\d+)\)/);
+                  if (dateMatch) {
+                    const recordDate = new Date(parseInt(dateMatch[1]));
+                    // Sadece bugünün kayıtları için blokla
+                    if (recordDate < today) {
+                      // Eski kayıt, skorunu düşür
+                      highestScore = 0;
+                      matchedStudent = null;
+                    }
                   }
+                } catch (error) {
+                  console.error('Tarih parse hatası:', error);
                 }
-              } catch (error) {
-                console.error('Tarih parse hatası:', error);
               }
             }
           }
         }
+      }
+      
+      // YENİ: Eşleşme skoruna göre değerlendir
+      if (highestScore >= 4 && matchedStudent) {
+        console.log(`Google Sheets'te cihaz eşleşmesi: Öğrenci=${matchedStudent}, Skor=${highestScore}`);
+        return {
+          isValid: false,
+          error: 'Bu cihaz bugün başka bir öğrenci için kullanılmış',
+          blockedStudentId: matchedStudent
+        };
       }
   
       return { isValid: true };
@@ -231,6 +294,21 @@ export class DeviceTracker {
         error: 'Google Sheets kontrolü sırasında hata oluştu'
       };
     }
+  }
+
+  // YENİ: Debug için tüm cihaz kayıtlarını göster
+  getAllDeviceRecords(): Record<string, any> {
+    const records: Record<string, any> = {};
+    
+    for (const [key, record] of this.memoryStore.entries()) {
+      records[key] = {
+        ...record,
+        fingerprints: record.fingerprints.map(fp => fp.substring(0, 8) + '...'),
+        hardwareSignature: record.hardwareSignature.substring(0, 8) + '...'
+      };
+    }
+    
+    return records;
   }
 }
 

@@ -99,7 +99,7 @@ export default async function handler(
         range: range,
         valueInputOption: 'RAW',
         requestBody: {
-          values: [[`VAR (DF:${deviceFingerprint}) (HW:${hardwareSignature}) (DATE:${Date.now()})`]]
+          values: [[`VAR (DF:${deviceFingerprint.slice(0, 8)}) (HW:${hardwareSignature.slice(0, 8)}) (IP:${clientIP.split('.').slice(0, 2).join('.')}) (DATE:${Date.now()})`]]
         }
       });
 
