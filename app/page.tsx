@@ -15,7 +15,6 @@ import { MapPin, Calendar } from 'lucide-react';
 
 import { STATIC_CLASS_LOCATION } from '../config/constants';
 import { generateEnhancedFingerprint, isValidFingerprint } from '@/utils/clientFingerprint';
-import { google } from 'googleapis';
 
 console.log('ENV Check:', {
   SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID,
