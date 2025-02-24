@@ -310,6 +310,12 @@ export class DeviceTracker {
     
     return records;
   }
+  clearMemoryStore(): void {
+    this.memoryStore.clear();
+    this.fingerprintIndex.clear();
+    console.log('Memory store temizlendi');
+    return;
+  }
 }
 
 // Singleton instance'ı export et

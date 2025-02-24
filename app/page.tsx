@@ -15,6 +15,7 @@ import { MapPin, Calendar } from 'lucide-react';
 
 import { STATIC_CLASS_LOCATION } from '../config/constants';
 import { generateEnhancedFingerprint, isValidFingerprint } from '@/utils/clientFingerprint';
+import { google } from 'googleapis';
 
 console.log('ENV Check:', {
   SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID,
@@ -230,6 +231,34 @@ const AttendanceSystem = () => {
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const [showFingerprintModal, setShowFingerprintModal] = useState<boolean>(false);
   const [fingerprintToDelete, setFingerprintToDelete] = useState<string>('');
+
+  const clearMemoryStore = async () => {
+    try {
+      setIsLoading(true);
+      updateDebugLogs(`🔄 Memory store temizleme işlemi başlatıldı`);
+      
+      const response = await fetch('/api/memory', {
+        method: 'DELETE'
+      });
+  
+      const data = await response.json();
+      
+      if (response.ok) {
+        setStatus('✅ Memory store başarıyla temizlendi');
+        updateDebugLogs(`✅ Memory store temizlendi`);
+        setTimeout(() => setStatus(''), 3000);
+      } else {
+        setStatus(`❌ ${data.error || 'Memory store temizlenemedi'}`);
+        updateDebugLogs(`❌ HATA: ${data.error}`);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+      setStatus(`❌ Hata: ${errorMessage}`);
+      updateDebugLogs(`❌ HATA: ${errorMessage}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const deleteFingerprint = async () => {
     try {
@@ -942,6 +971,14 @@ const AttendanceSystem = () => {
                 disabled={isLoading}
               >
                 🗑️ Temizle
+              </button>
+
+              <button
+                onClick={clearMemoryStore}
+                className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 text-sm"
+                disabled={isLoading}
+              >
+                💾 RAM Temizle
               </button>
             </div>
 
