@@ -446,7 +446,7 @@ export class DeviceTracker {
         },
         scopes: ['https://www.googleapis.com/auth/spreadsheets']
       });
-
+  
       const sheets = google.sheets({ version: 'v4', auth });
       
       // Önce StudentDevices sayfasının var olup olmadığını kontrol et
@@ -484,6 +484,59 @@ export class DeviceTracker {
         
         const rows = response.data.values || [];
         
+        if (rows.length > 1) {
+          // YENİ: Bu hardware signature veya fingerprint ile kayıtlı başka bir öğrenci var mı kontrol et
+          for (let i = 1; i < rows.length; i++) {
+            // Bu öğrencinin kendisi değilse ve temizlenmemiş bir kayıt ise kontrol et
+            if (rows[i][0] !== studentId && 
+                rows[i][1] !== 'TEMIZLENDI' && 
+                rows[i][2] !== 'TEMIZLENDI') {
+              
+              // Hardware signature tam eşleşme kontrolü
+              if (rows[i][2] === hardwareSignature) {
+                console.log(`Cihaz başka öğrenciye ait: ${rows[i][0]}`);
+                return { 
+                  isValid: false, 
+                  error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
+                };
+              }
+              
+              // Kısaltılmış hardware signature kontrolü (Sheets'te kısaltılmış değer saklanıyor olabilir)
+              if (rows[i][2] && (
+                  hardwareSignature.startsWith(rows[i][2]) || 
+                  rows[i][2].startsWith(hardwareSignature.slice(0, 8))
+                )) {
+                console.log(`Cihaz başka öğrenciye ait (kısmi eşleşme): ${rows[i][0]}`);
+                return { 
+                  isValid: false, 
+                  error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
+                };
+              }
+              
+              // Fingerprint tam eşleşme kontrolü
+              if (rows[i][1] === fingerprint) {
+                console.log(`Cihaz fingerprinti başka öğrenciye ait: ${rows[i][0]}`);
+                return { 
+                  isValid: false, 
+                  error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
+                };
+              }
+              
+              // Kısaltılmış fingerprint kontrolü
+              if (rows[i][1] && (
+                  fingerprint.startsWith(rows[i][1]) || 
+                  rows[i][1].startsWith(fingerprint.slice(0, 8))
+                )) {
+                console.log(`Cihaz fingerprinti başka öğrenciye ait (kısmi eşleşme): ${rows[i][0]}`);
+                return { 
+                  isValid: false, 
+                  error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
+                };
+              }
+            }
+          }
+        }
+        
         // Başlık satırını atla (ilk satır)
         const studentRow = rows.slice(1).find(row => row[0] === studentId);
         
@@ -511,8 +564,17 @@ export class DeviceTracker {
         const fingerprintMatches = fingerprint === storedFingerprint;
         const hardwareMatches = hardwareSignature === storedHardwareSignature;
         
+        // Kısmi eşleşme kontrolü (sheets'te kısaltılmış olabilir)
+        const partialFingerprintMatches = 
+          fingerprint.startsWith(storedFingerprint) || 
+          storedFingerprint.startsWith(fingerprint.slice(0, 8));
+          
+        const partialHardwareMatches = 
+          hardwareSignature.startsWith(storedHardwareSignature) || 
+          storedHardwareSignature.startsWith(hardwareSignature.slice(0, 8));
+        
         // Hardware signature veya fingerprint eşleşiyorsa onay ver
-        if (hardwareMatches || fingerprintMatches) {
+        if (hardwareMatches || fingerprintMatches || partialHardwareMatches || partialFingerprintMatches) {
           console.log(`Öğrenci ${studentId} için cihaz doğrulandı`);
           return { isValid: true };
         }
