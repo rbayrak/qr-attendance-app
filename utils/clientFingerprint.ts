@@ -162,16 +162,14 @@ const getStoredId = (): string => {
   let storedId = localStorage.getItem(key);
   
   if (!storedId) {
-    // YENİ: Daha güçlü ve benzersiz bir ID oluşturalım
-    const timestamp = Date.now().toString(36);
-    const randomPart = Math.random().toString(36).substring(2, 10);
-    // YENİ: Tarayıcı ve işletim sistemi bilgisini ekleyelim (anonim)
-    const platformPart = (navigator.platform || 'unknown').replace(/\s/g, '').toLowerCase().substring(0, 3);
+    // Sabit değerlerden oluşan ID kullan
+    const hardwareBase = getSafeHardwareID();
     
-    storedId = `ytu-${platformPart}-${timestamp}-${randomPart}`;
+    // Tüm tarayıcı sıfırlamalarda bile aynı kalacak özellikleri kullan
+    storedId = `ytu-${hardwareBase}`;
     localStorage.setItem(key, storedId);
     
-    // YENİ: Gizli mod sorununa karşı sessionStorage'a da kaydedelim
+    // Gizli mod sorununa karşı sessionStorage'a da kaydedelim
     sessionStorage.setItem(key, storedId);
   }
   
@@ -198,74 +196,23 @@ export const generateEnhancedFingerprint = async (): Promise<{
   hardwareSignature: string;
 }> => {
   try {
-    // 1. Cihazı daha iyi tanımlamak için ek bilgiler ekleyelim
-    const hardwareInfo = [
-      // Ekran bilgileri (en stabil olanlar)
-      `${screen.width},${screen.height}`, // Ekran çözünürlüğü
-      `${screen.colorDepth}`,            // Renk derinliği
-      `${window.devicePixelRatio}`,      // Piksel oranı (telefon için önemli)
-      
-      // İşlemci bilgisi
-      navigator.hardwareConcurrency?.toString() || '',
-      
-      // Dil bilgisi (genelde değişmez)
-      navigator.language,
-      
-      // Dokunmatik özellik (telefon/tablet ayrımı için)
-      `${navigator.maxTouchPoints}`,
-      
-      // Zaman dilimi (genelde değişmez)
-      new Date().getTimezoneOffset().toString(),
-      
-      // YENİ: Ek bilgiler ekleyelim
-      navigator.platform || 'unknown',  // Platform bilgisi
-      ('plugins' in navigator && navigator.plugins) ? navigator.plugins.length.toString() : '0', // Plugin sayısı
-      `${window.innerWidth},${window.innerHeight}`, // Pencere boyutu
-      
-      // YENİ: Ekran oryantasyonu - tipini güvenli şekilde erişim
-      screen.orientation ? (screen.orientation.type || 'unknown') : 'not-supported'
-    ];
- 
-    // Stabil bilgileri birleştir
-    const stableInfo = hardwareInfo.join('|');
- 
-    // 2. Hardware signature oluştur
-    const hardwareSignature = await sha256(stableInfo);
- 
-    // 3. Değişken özellikleri ekle (fingerprint için)
-    const volatileFeatures = [
-      navigator.userAgent,
-      getCanvasFingerprint(),
-      getStoredId(),
-      
-      // YENİ: WebGL bilgisi ekle
-      getWebGLInfo(),
-      
-      // YENİ: Font listesi bilgisi
-      getFontList(),
-      
-      // YENİ: Ses/Video donanım bilgisi için Promise kullanıyoruz
-      await getMediaDevicesInfo()
-    ].join('|');
- 
-    // 4. Ana fingerprint
-    const fingerprint = await sha256(stableInfo + "::" + volatileFeatures);
- 
-    // Debug log
+    // 1. Sabit donanım bilgilerini kullanalım
+    const safeHardwareID = getSafeHardwareID();
+    
+    // 2. Hardware signature doğrudan donanım özelliklerinden oluşsun
+    const hardwareSignature = await sha256(safeHardwareID);
+    
+    // 3. Fingerprint'i de değişkenlerden değil, hardwareSignature'dan üretelim
+    // Böylece her ikisi de tutarlı olur
+    const fingerprint = await sha256(hardwareSignature + navigator.userAgent);
+    
     console.debug('Device Info:', {
-      screen: `${screen.width}x${screen.height}`,
-      colorDepth: screen.colorDepth,
-      pixelRatio: window.devicePixelRatio,
-      cores: navigator.hardwareConcurrency,
-      language: navigator.language,
-      touchPoints: navigator.maxTouchPoints,
-      timezone: new Date().getTimezoneOffset(),
-      // YENİ: Ek debug bilgileri
+      safeHardwareID,
+      screenSize: `${screen.width}x${screen.height}`,
       platform: navigator.platform,
-      webgl: getWebGLInfo().substring(0, 20) + '...',
-      orientation: screen.orientation ? screen.orientation.type : 'not-supported'
+      hardwareSignature: hardwareSignature.substring(0, 8)
     });
- 
+    
     return {
       fingerprint,
       hardwareSignature
@@ -287,6 +234,51 @@ export const isValidFingerprint = (
     fingerprint.length >= 32 &&
     hardwareSignature.length >= 32
   );
+};
+
+// 1. getSafeHardwareID fonksiyonu ekleyelim - bu donanıma odaklanıp değişmez bilgiler kullanır
+const getSafeHardwareID = (): string => {
+  try {
+    // Mevcut özellikleri koruyalım
+    const screenProps = `${screen.width}x${screen.height}x${screen.colorDepth}`;
+    const pixelRatio = `${window.devicePixelRatio}`.replace('.', '_');
+    const cores = navigator.hardwareConcurrency || 0;
+    const platform = (navigator.platform || 'unknown').replace(/\s/g, '');
+    const timezone = new Date().getTimezoneOffset();
+    const language = navigator.language || '';
+    
+    // GPU bilgisi
+    const gpuInfo = getWebGLInfo().split('|');
+    const gpuVendor = (gpuInfo[0] || 'unknown').replace(/\s/g, '').toLowerCase();
+    const gpuRenderer = (gpuInfo[1] || 'unknown').replace(/\s/g, '').toLowerCase();
+    
+    // Ek benzersizlik bilgileri ekleyelim
+    const fontList = getFontList().substring(0, 100); // Yüklü fontlar benzersizlik sağlar
+    const screenAvail = `${screen.availWidth}x${screen.availHeight}`; // Kullanılabilir ekran alanı
+    const plugins = ('plugins' in navigator && navigator.plugins) ? 
+                     navigator.plugins.length.toString() : '0'; // Plugin sayısı
+    
+    // Tüm özellikleri birleştir
+    return [
+      screenProps,
+      pixelRatio,
+      cores,
+      platform.substring(0, 5),
+      timezone,
+      language.substring(0, 2),
+      gpuVendor.substring(0, 10),
+      gpuRenderer.substring(0, 10),
+      navigator.maxTouchPoints || 0,
+      screenAvail,
+      plugins,
+      // Güvenlik için fontList'ten bir hash kullanın (aşırı uzun olabilir)
+      fontList.length.toString() + (fontList.charCodeAt(0) || 0) + (fontList.charCodeAt(fontList.length - 1) || 0)
+    ].join('-').replace(/[^a-z0-9\-_]/gi, '');
+    
+  } catch (error) {
+    console.error('Güvenli donanım ID oluşturma hatası:', error);
+    return '';
+  }
 };
  
 // Debug fonksiyonu
