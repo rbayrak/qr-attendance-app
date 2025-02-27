@@ -428,6 +428,9 @@ export class DeviceTracker {
   /**
    * Öğrencinin kendi cihazını kullanıp kullanmadığını doğrula
    */
+  /**
+ * Öğrencinin kendi cihazını kullanıp kullanmadığını doğrula
+ */
   async validateStudentDevice(
     studentId: string,
     fingerprint: string,
@@ -446,46 +449,89 @@ export class DeviceTracker {
 
       const sheets = google.sheets({ version: 'v4', auth });
       
+      // Önce StudentDevices sayfasının var olup olmadığını kontrol et
+      try {
+        const spreadsheet = await sheets.spreadsheets.get({
+          spreadsheetId: process.env.SPREADSHEET_ID
+        });
+        
+        let sheetExists = false;
+        const sheetsList = spreadsheet.data.sheets || [];
+        for (const sheet of sheetsList) {
+          if (sheet.properties?.title === 'StudentDevices') {
+            sheetExists = true;
+            break;
+          }
+        }
+        
+        if (!sheetExists) {
+          // Sayfa yoksa ilk kez yoklama alıyormuş gibi işlem yap
+          console.log('StudentDevices sayfası bulunamadı, yeni sayfa oluşturulacak');
+          await this.registerStudentDevice(studentId, fingerprint, hardwareSignature);
+          return { isValid: true };
+        }
+      } catch (error) {
+        console.error('Sheet kontrol hatası:', error);
+        // Hata durumunda devam et, sonraki adımlarda yeni kayıt oluşturmaya çalışacak
+      }
+      
       // Öğrenci-cihaz bilgilerini getir
-      const response = await sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.SPREADSHEET_ID,
-        range: 'StudentDevices!A:C'
-      });
-      
-      const rows = response.data.values || [];
-      
-      // Başlık satırını atla (ilk satır)
-      const studentRow = rows.slice(1).find(row => row[0] === studentId);
-      
-      if (!studentRow) {
-        // Öğrenci daha önce cihaz kaydetmemiş, ilk kez yoklama alıyor
-        console.log(`Öğrenci ${studentId} için ilk cihaz kaydı yapılacak`);
+      try {
+        const response = await sheets.spreadsheets.values.get({
+          spreadsheetId: process.env.SPREADSHEET_ID,
+          range: 'StudentDevices!A:C'
+        });
+        
+        const rows = response.data.values || [];
+        
+        // Başlık satırını atla (ilk satır)
+        const studentRow = rows.slice(1).find(row => row[0] === studentId);
+        
+        if (!studentRow) {
+          // Öğrenci daha önce cihaz kaydetmemiş, ilk kez yoklama alıyor
+          console.log(`Öğrenci ${studentId} için ilk cihaz kaydı yapılacak`);
+          await this.registerStudentDevice(studentId, fingerprint, hardwareSignature);
+          return { isValid: true };
+        }
+        
+        // Kayıtlı fingerprint ve hardware signature ile karşılaştır
+        const storedFingerprint = studentRow[1];
+        const storedHardwareSignature = studentRow[2];
+        
+        console.log(`Cihaz kontrolü: Öğrenci=${studentId}, Kayıtlı FP=${storedFingerprint}, Kayıtlı HW=${storedHardwareSignature}`);
+        
+        // TEMIZLENDI değeri varsa, yeni cihaz bilgisini kaydet
+        if (storedFingerprint === 'TEMIZLENDI' || storedHardwareSignature === 'TEMIZLENDI') {
+          console.log(`Öğrenci ${studentId} için temizlenmiş cihaz kaydı bulundu, yenisi kaydediliyor`);
+          await this.registerStudentDevice(studentId, fingerprint, hardwareSignature);
+          return { isValid: true };
+        }
+        
+        // Tam eşleşme kontrolü
+        const fingerprintMatches = fingerprint === storedFingerprint;
+        const hardwareMatches = hardwareSignature === storedHardwareSignature;
+        
+        // Hardware signature veya fingerprint eşleşiyorsa onay ver
+        if (hardwareMatches || fingerprintMatches) {
+          console.log(`Öğrenci ${studentId} için cihaz doğrulandı`);
+          return { isValid: true };
+        }
+        
+        console.log(`Öğrenci ${studentId} için cihaz doğrulanamadı!`);
+        return { 
+          isValid: false, 
+          error: `Bu cihaz ${studentId} numaralı öğrenciye ait değil` 
+        };
+      } catch (error) {
+        console.error('Student devices veri alma hatası:', error);
+        // Bu tür hatalarda, öğrencinin ilk kez yoklama almasına izin ver
         await this.registerStudentDevice(studentId, fingerprint, hardwareSignature);
         return { isValid: true };
       }
-      
-      // Kayıtlı fingerprint ve hardware signature ile karşılaştır
-      const storedFingerprint = studentRow[1];
-      const storedHardwareSignature = studentRow[2];
-      
-      // Tam eşleşme kontrolü
-      const fingerprintMatches = fingerprint === storedFingerprint;
-      const hardwareMatches = hardwareSignature === storedHardwareSignature;
-      
-      // Hardware signature veya fingerprint eşleşiyorsa onay ver
-      if (hardwareMatches || fingerprintMatches) {
-        console.log(`Öğrenci ${studentId} için cihaz doğrulandı`);
-        return { isValid: true };
-      }
-      
-      console.log(`Öğrenci ${studentId} için cihaz doğrulanamadı!`);
-      return { 
-        isValid: false, 
-        error: `Bu cihaz ${studentId} numaralı öğrenciye ait değil` 
-      };
     } catch (error) {
       console.error('Cihaz doğrulama hatası:', error);
-      return { isValid: false, error: 'Cihaz doğrulama hatası' };
+      // Genel hata durumunda da yoklamaya izin ver, güvenlik yerine kullanılabilirliği tercih edelim
+      return { isValid: true, error: 'Cihaz doğrulama sırasında hata oluştu, ancak yoklama alınmasına izin verildi' };
     }
   }
 
