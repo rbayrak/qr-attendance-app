@@ -488,6 +488,71 @@ export class DeviceTracker {
       return { isValid: false, error: 'Cihaz doğrulama hatası' };
     }
   }
+
+  async clearStudentDevices(): Promise<void> {
+    try {
+      const auth = new google.auth.GoogleAuth({
+        credentials: {
+          type: 'service_account',
+          project_id: process.env.GOOGLE_PROJECT_ID,
+          private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+          client_email: process.env.GOOGLE_CLIENT_EMAIL,
+        },
+        scopes: ['https://www.googleapis.com/auth/spreadsheets']
+      });
+  
+      const sheets = google.sheets({ version: 'v4', auth });
+      
+      // Önce StudentDevices sayfasının var olup olmadığını kontrol et
+      const spreadsheet = await sheets.spreadsheets.get({
+        spreadsheetId: process.env.SPREADSHEET_ID
+      });
+      
+      let sheetExists = false;
+      const sheetsList = spreadsheet.data.sheets || [];
+      for (const sheet of sheetsList) {
+        if (sheet.properties?.title === 'StudentDevices') {
+          sheetExists = true;
+          break;
+        }
+      }
+      
+      if (!sheetExists) {
+        console.log('StudentDevices sayfası bulunamadı, temizleme işlemi atlanıyor');
+        return;
+      }
+      
+      // Tüm verileri getir
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: process.env.SPREADSHEET_ID,
+        range: 'StudentDevices!A:D'
+      });
+      
+      const rows = response.data.values || [];
+      if (rows.length <= 1) {
+        console.log('StudentDevices sayfasında temizlenecek veri yok');
+        return; // Sadece başlık satırı var veya hiç satır yok
+      }
+      
+      // Başlık satırını koru, tüm cihaz bilgilerini temizle
+      for (let i = 1; i < rows.length; i++) {
+        // Sadece fingerprint ve hardware signature sütunlarını temizle, öğrenci ID'sini ve tarihi koru
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: process.env.SPREADSHEET_ID,
+          range: `StudentDevices!B${i + 1}:C${i + 1}`,
+          valueInputOption: 'RAW',
+          requestBody: {
+            values: [['TEMIZLENDI', 'TEMIZLENDI']]
+          }
+        });
+      }
+      
+      console.log('Tüm öğrenci cihaz eşleştirmeleri temizlendi');
+    } catch (error) {
+      console.error('StudentDevices temizleme hatası:', error);
+      throw new Error('Öğrenci cihaz kayıtları temizlenemedi');
+    }
+  }
 }
 
 // Singleton instance'ı export et

@@ -231,23 +231,25 @@ const AttendanceSystem = () => {
   const [showFingerprintModal, setShowFingerprintModal] = useState<boolean>(false);
   const [fingerprintToDelete, setFingerprintToDelete] = useState<string>('');
 
+  // page.tsx içindeki clearMemoryStore fonksiyonu
+
   const clearMemoryStore = async () => {
     try {
       setIsLoading(true);
-      updateDebugLogs(`🔄 Memory store temizleme işlemi başlatıldı`);
+      updateDebugLogs(`🔄 Cihaz kayıtları temizleme işlemi başlatıldı`);
       
       const response = await fetch('/api/memory', {
         method: 'DELETE'
       });
-  
+    
       const data = await response.json();
       
       if (response.ok) {
-        setStatus('✅ Memory store başarıyla temizlendi');
-        updateDebugLogs(`✅ Memory store temizlendi`);
+        setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
+        updateDebugLogs(`✅ Memory store ve Google Sheets'teki cihaz kayıtları temizlendi`);
         setTimeout(() => setStatus(''), 3000);
       } else {
-        setStatus(`❌ ${data.error || 'Memory store temizlenemedi'}`);
+        setStatus(`❌ ${data.error || 'Cihaz kayıtları temizlenemedi'}`);
         updateDebugLogs(`❌ HATA: ${data.error}`);
       }
     } catch (error) {
@@ -990,7 +992,7 @@ const AttendanceSystem = () => {
                 className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 text-sm"
                 disabled={isLoading}
               >
-                💾 RAM Temizle
+                🔄 Cihaz Kayıtlarını Temizle
               </button>
             </div>
 
