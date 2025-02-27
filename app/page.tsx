@@ -654,6 +654,8 @@ const AttendanceSystem = () => {
   
 
   // handleQrScan fonksiyonu (page.tsx içinde):
+  // page.tsx dosyasındaki handleQrScan fonksiyonunda yapılacak değişiklikler
+
   const handleQrScan = async (decodedText: string) => {
     // Öncelikle son tarama zamanını kontrol et
     const lastScanTime = localStorage.getItem('lastQrScanTime');
@@ -664,12 +666,12 @@ const AttendanceSystem = () => {
     }
     
     localStorage.setItem('lastQrScanTime', currentTime.toString());
-  
+
     try {
       const scannedData = JSON.parse(decodedText);
       const currentTimeString = new Date().toLocaleTimeString();
       const studentInfo = validStudents.find(s => s.studentId === studentId);
-  
+
       // İlk log
       const scanLog = `
       ===== YENİ YOKLAMA KAYDI =====
@@ -678,7 +680,7 @@ const AttendanceSystem = () => {
       Hafta: ${scannedData.week}
       `;
       updateDebugLogs(scanLog);
-  
+
       // Öğrenci kontrolü
       const validStudent = validStudents.find(s => s.studentId === studentId);
       if (!validStudent) {
@@ -687,21 +689,20 @@ const AttendanceSystem = () => {
         setStatus('❌ Öğrenci numarası listede bulunamadı');
         return;
       }
-  
+
       if (scannedData.validUntil < Date.now()) {
         updateDebugLogs(`❌ HATA: QR kod süresi dolmuş`);
         setStatus('❌ QR kod süresi dolmuş');
         return;
       }
-  
+
       if (!location) {
         updateDebugLogs(`❌ HATA: Konum bilgisi yok`);
         setStatus('❌ Önce konum alın');
         return;
       }
-  
+
       // IP ve fingerprint kontrolü
-      // Backend API isteği
       const clientIPData = await getClientIP();
       if (!clientIPData || !clientIPData.deviceFingerprint || !clientIPData.hardwareSignature) {
         updateDebugLogs(`❌ HATA: Cihaz tanımlama başarısız`);
@@ -737,28 +738,40 @@ const AttendanceSystem = () => {
           hardwareSignature
         })
       });
-  
+
       const responseData = await attendanceResponse.json();
-  
+
       if (!attendanceResponse.ok) {
-        if (responseData.blockedStudentId) {
-          updateDebugLogs(`❌ HATA: Cihaz ${responseData.blockedStudentId} no'lu öğrenci tarafından kullanılmış`);
-          setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
-          // Burada kamerayı kapatacağız
+        // YENİ: Cihaz yetkilendirme hatası kontrolü
+        if (responseData.unauthorizedDevice) {
+          updateDebugLogs(`❌ HATA: Bu cihaz bu öğrenciye ait değil`);
+          setStatus(`❌ Bu cihaz ${studentId} numaralı öğrenciye ait değil. Kendi cihazınızı kullanmalısınız!`);
           setIsScanning(false);
           if (html5QrCode) {
             await html5QrCode.stop();
           }
           return;
         }
+        
+        // Mevcut cihaz engelleme kontrolü
+        if (responseData.blockedStudentId) {
+          updateDebugLogs(`❌ HATA: Cihaz ${responseData.blockedStudentId} no'lu öğrenci tarafından kullanılmış`);
+          setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
+          setIsScanning(false);
+          if (html5QrCode) {
+            await html5QrCode.stop();
+          }
+          return;
+        }
+        
         throw new Error(responseData.error || 'Yoklama kaydedilemedi');
       }
-  
+
       localStorage.setItem('lastAttendanceCheck', JSON.stringify({
         studentId: studentId,
         timestamp: new Date().toISOString()
       }));
-  
+
       if (responseData.isAlreadyAttended) {
         updateDebugLogs(`⚠️ UYARI: ${studentId} no'lu öğrenci için yoklama zaten alınmış`);
         setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
@@ -766,12 +779,12 @@ const AttendanceSystem = () => {
         updateDebugLogs(`✅ BAŞARILI: ${studentId} no'lu öğrenci için yoklama kaydedildi`);
         setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
       }
-  
+
       setIsScanning(false);
       if (html5QrCode) {
         await html5QrCode.stop();
       }
-  
+
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
       

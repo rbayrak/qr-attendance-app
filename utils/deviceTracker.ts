@@ -310,11 +310,183 @@ export class DeviceTracker {
     
     return records;
   }
+  
   clearMemoryStore(): void {
     this.memoryStore.clear();
     this.fingerprintIndex.clear();
     console.log('Memory store temizlendi');
     return;
+  }
+
+  /**
+   * Öğrencinin cihaz bilgilerini Google Sheets'te sakla
+   * İlk yoklama alımında çağrılacak
+   */
+  async registerStudentDevice(
+    studentId: string, 
+    fingerprint: string,
+    hardwareSignature: string
+  ): Promise<void> {
+    try {
+      const auth = new google.auth.GoogleAuth({
+        credentials: {
+          type: 'service_account',
+          project_id: process.env.GOOGLE_PROJECT_ID,
+          private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+          client_email: process.env.GOOGLE_CLIENT_EMAIL,
+        },
+        scopes: ['https://www.googleapis.com/auth/spreadsheets']
+      });
+
+      const sheets = google.sheets({ version: 'v4', auth });
+      
+      // "StudentDevices" sayfası var mı kontrol et, yoksa oluştur
+      const spreadsheet = await sheets.spreadsheets.get({
+        spreadsheetId: process.env.SPREADSHEET_ID
+      });
+      
+      let sheetExists = false;
+      const sheetsList = spreadsheet.data.sheets || [];
+      for (const sheet of sheetsList) {
+        if (sheet.properties?.title === 'StudentDevices') {
+          sheetExists = true;
+          break;
+        }
+      }
+      
+      if (!sheetExists) {
+        // Yeni sayfa oluştur
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId: process.env.SPREADSHEET_ID,
+          requestBody: {
+            requests: [
+              {
+                addSheet: {
+                  properties: {
+                    title: 'StudentDevices',
+                    gridProperties: {
+                      rowCount: 1000,
+                      columnCount: 4
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        });
+        
+        // Başlık satırını ekle
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: process.env.SPREADSHEET_ID,
+          range: 'StudentDevices!A1:D1',
+          valueInputOption: 'RAW',
+          requestBody: {
+            values: [['StudentID', 'Fingerprint', 'HardwareSignature', 'RegistrationDate']]
+          }
+        });
+      }
+      
+      // Öğrenci kayıtlı mı kontrol et
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: process.env.SPREADSHEET_ID,
+        range: 'StudentDevices!A:D'
+      });
+      
+      const rows = response.data.values || [];
+      const studentRowIndex = rows.findIndex(row => row[0] === studentId);
+      
+      if (studentRowIndex === -1) {
+        // Öğrenci yoksa yeni kayıt ekle
+        await sheets.spreadsheets.values.append({
+          spreadsheetId: process.env.SPREADSHEET_ID,
+          range: 'StudentDevices!A:D',
+          valueInputOption: 'RAW',
+          insertDataOption: 'INSERT_ROWS',
+          requestBody: {
+            values: [[studentId, fingerprint, hardwareSignature, new Date().toISOString()]]
+          }
+        });
+        console.log(`Öğrenci ${studentId} için yeni cihaz kaydedildi`);
+      } else {
+        // Öğrenci varsa güncelle
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: process.env.SPREADSHEET_ID,
+          range: `StudentDevices!B${studentRowIndex + 1}:D${studentRowIndex + 1}`,
+          valueInputOption: 'RAW',
+          requestBody: {
+            values: [[fingerprint, hardwareSignature, new Date().toISOString()]]
+          }
+        });
+        console.log(`Öğrenci ${studentId} için cihaz güncellendi`);
+      }
+    } catch (error) {
+      console.error('Cihaz kayıt hatası:', error);
+      throw new Error('Öğrenci cihazı kaydedilemedi');
+    }
+  }
+
+  /**
+   * Öğrencinin kendi cihazını kullanıp kullanmadığını doğrula
+   */
+  async validateStudentDevice(
+    studentId: string,
+    fingerprint: string,
+    hardwareSignature: string
+  ): Promise<{isValid: boolean; error?: string}> {
+    try {
+      const auth = new google.auth.GoogleAuth({
+        credentials: {
+          type: 'service_account',
+          project_id: process.env.GOOGLE_PROJECT_ID,
+          private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+          client_email: process.env.GOOGLE_CLIENT_EMAIL,
+        },
+        scopes: ['https://www.googleapis.com/auth/spreadsheets']
+      });
+
+      const sheets = google.sheets({ version: 'v4', auth });
+      
+      // Öğrenci-cihaz bilgilerini getir
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: process.env.SPREADSHEET_ID,
+        range: 'StudentDevices!A:C'
+      });
+      
+      const rows = response.data.values || [];
+      
+      // Başlık satırını atla (ilk satır)
+      const studentRow = rows.slice(1).find(row => row[0] === studentId);
+      
+      if (!studentRow) {
+        // Öğrenci daha önce cihaz kaydetmemiş, ilk kez yoklama alıyor
+        console.log(`Öğrenci ${studentId} için ilk cihaz kaydı yapılacak`);
+        await this.registerStudentDevice(studentId, fingerprint, hardwareSignature);
+        return { isValid: true };
+      }
+      
+      // Kayıtlı fingerprint ve hardware signature ile karşılaştır
+      const storedFingerprint = studentRow[1];
+      const storedHardwareSignature = studentRow[2];
+      
+      // Tam eşleşme kontrolü
+      const fingerprintMatches = fingerprint === storedFingerprint;
+      const hardwareMatches = hardwareSignature === storedHardwareSignature;
+      
+      // Hardware signature veya fingerprint eşleşiyorsa onay ver
+      if (hardwareMatches || fingerprintMatches) {
+        console.log(`Öğrenci ${studentId} için cihaz doğrulandı`);
+        return { isValid: true };
+      }
+      
+      console.log(`Öğrenci ${studentId} için cihaz doğrulanamadı!`);
+      return { 
+        isValid: false, 
+        error: `Bu cihaz ${studentId} numaralı öğrenciye ait değil` 
+      };
+    } catch (error) {
+      console.error('Cihaz doğrulama hatası:', error);
+      return { isValid: false, error: 'Cihaz doğrulama hatası' };
+    }
   }
 }
 

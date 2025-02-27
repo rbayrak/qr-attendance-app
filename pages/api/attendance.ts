@@ -32,7 +32,21 @@ export default async function handler(
         });
       }
 
-      // 2. Device Tracker kontrolü
+      // 2. YENİ: Öğrenci kendi cihazını mı kullanıyor kontrolü
+      const studentDeviceCheck = await deviceTracker.validateStudentDevice(
+        studentId, 
+        deviceFingerprint,
+        hardwareSignature
+      );
+      
+      if (!studentDeviceCheck.isValid) {
+        return res.status(403).json({
+          error: studentDeviceCheck.error || 'Bu cihaz bu öğrenciye ait değil',
+          unauthorizedDevice: true
+        });
+      }
+
+      // 3. Device Tracker kontrolü
       const validationResult = await deviceTracker.validateDeviceAccess(
         deviceFingerprint,
         studentId,
@@ -47,7 +61,7 @@ export default async function handler(
         });
       }
 
-      // 3. Google Sheets işlemleri
+      // 4. Google Sheets işlemleri
       const auth = new google.auth.GoogleAuth({
         credentials: {
           type: 'service_account',
@@ -60,7 +74,7 @@ export default async function handler(
 
       const sheets = google.sheets({ version: 'v4', auth });
 
-      // 4. Verileri çek
+      // 5. Verileri çek
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: process.env.SPREADSHEET_ID,
         range: 'A:Z',
@@ -71,29 +85,37 @@ export default async function handler(
         return res.status(404).json({ error: 'Veri bulunamadı' });
       }
 
-      // 5. Öğrenciyi bul
+      // 6. Öğrenciyi bul
       const studentRowIndex = rows.findIndex(row => row[1] === studentId);
       if (studentRowIndex === -1) {
         return res.status(404).json({ error: 'Öğrenci bulunamadı' });
       }
 
-      // 6. Hafta kontrolü
+      // 7. Hafta kontrolü
       if (week < 1 || week > 16) {
         return res.status(400).json({ error: 'Geçersiz hafta numarası' });
       }
 
-      // 7. Hafta sütununu belirle
+      // 8. Hafta sütununu belirle
       const weekColumnIndex = 3 + Number(week) - 1;
       const studentRow = studentRowIndex + 1;
       const weekColumn = String.fromCharCode(68 + Number(week) - 1);
       const range = `${weekColumn}${studentRow}`;
 
-      // 8. Mevcut yoklama kontrolü
+      // 9. Mevcut yoklama kontrolü
       const isAlreadyAttended = rows[studentRowIndex][weekColumnIndex] && 
                               rows[studentRowIndex][weekColumnIndex].includes('VAR');
 
-      // 9. Yoklamayı kaydet
-      // 9. Yoklamayı kaydet
+      // YENİ: Eğer zaten yoklama alınmışsa, tekrar yoklama almayı engelle
+      if (isAlreadyAttended) {
+        return res.status(200).json({ 
+          success: true,
+          isAlreadyAttended: true,
+          message: 'Bu hafta için yoklama zaten alınmış'
+        });
+      }
+
+      // 10. Yoklamayı kaydet
       const updateResult = await sheets.spreadsheets.values.update({
         spreadsheetId: process.env.SPREADSHEET_ID,
         range: range,
@@ -103,10 +125,10 @@ export default async function handler(
         }
       });
 
-      // 10. Başarılı yanıt
+      // 11. Başarılı yanıt
       res.status(200).json({ 
         success: true,
-        isAlreadyAttended,
+        isAlreadyAttended: false,
         debug: {
           operationDetails: {
             ogrenciNo: studentId,
@@ -177,6 +199,35 @@ export default async function handler(
 
         if (!fingerprintFound) {
           return res.status(404).json({ error: 'Fingerprint bulunamadı' });
+        }
+
+        // YENİ: StudentDevices sayfasında da temizle
+        try {
+          const devicesResponse = await sheets.spreadsheets.values.get({
+            spreadsheetId: process.env.SPREADSHEET_ID,
+            range: 'StudentDevices!A:C',
+          });
+          
+          const deviceRows = devicesResponse.data.values || [];
+          let deviceFound = false;
+          
+          for (let i = 1; i < deviceRows.length; i++) {
+            if (deviceRows[i][1] && deviceRows[i][1].includes(fingerprint)) {
+              deviceFound = true;
+              await sheets.spreadsheets.values.update({
+                spreadsheetId: process.env.SPREADSHEET_ID,
+                range: `StudentDevices!B${i + 1}`,
+                valueInputOption: 'RAW',
+                requestBody: {
+                  values: [['TEMIZLENDI']]
+                }
+              });
+              console.log(`StudentDevices tablosunda ${fingerprint} temizlendi`);
+            }
+          }
+        } catch (error) {
+          console.error('StudentDevices temizleme hatası:', error);
+          // Bu hata kritik değil, devam et
         }
 
         return res.status(200).json({ 
