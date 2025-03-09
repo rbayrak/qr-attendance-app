@@ -464,7 +464,7 @@ export class DeviceTracker {
         if (!sheetExists) {
           // Sayfa yoksa ilk kez yoklama alıyormuş gibi işlem yap
           console.log('StudentDevices sayfası bulunamadı, yeni sayfa oluşturulacak');
-          await this.registerStudentDevice(studentId, fingerprint, hardwareSignature);
+          await this.registerStudentDevice(studentId, fingerprint, hardwareSignature, clientIP);
           return { isValid: true };
         }
       } catch (error) {
@@ -540,7 +540,7 @@ export class DeviceTracker {
         if (!studentRow) {
           // Öğrenci daha önce cihaz kaydetmemiş, ilk kez yoklama alıyor
           console.log(`Öğrenci ${studentId} için ilk cihaz kaydı yapılacak`);
-          await this.registerStudentDevice(studentId, fingerprint, hardwareSignature);
+          await this.registerStudentDevice(studentId, fingerprint, hardwareSignature, clientIP);
           return { isValid: true };
         }
         
@@ -553,7 +553,7 @@ export class DeviceTracker {
         // TEMIZLENDI değeri varsa, yeni cihaz bilgisini kaydet
         if (storedFingerprint === 'TEMIZLENDI' || storedHardwareSignature === 'TEMIZLENDI') {
           console.log(`Öğrenci ${studentId} için temizlenmiş cihaz kaydı bulundu, yenisi kaydediliyor`);
-          await this.registerStudentDevice(studentId, fingerprint, hardwareSignature);
+          await this.registerStudentDevice(studentId, fingerprint, hardwareSignature, clientIP);
           return { isValid: true };
         }
         
@@ -584,7 +584,7 @@ export class DeviceTracker {
       } catch (error) {
         console.error('Student devices veri alma hatası:', error);
         // Bu tür hatalarda, öğrencinin ilk kez yoklama almasına izin ver
-        await this.registerStudentDevice(studentId, fingerprint, hardwareSignature);
+        await this.registerStudentDevice(studentId, fingerprint, hardwareSignature, clientIP);
         return { isValid: true };
       }
     } catch (error) {
