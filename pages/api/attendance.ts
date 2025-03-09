@@ -36,7 +36,8 @@ export default async function handler(
       const studentDeviceCheck = await deviceTracker.validateStudentDevice(
         studentId, 
         deviceFingerprint,
-        hardwareSignature
+        hardwareSignature,
+        clientIP // YENİ: IP bilgisini de gönderiyoruz
       );
       
       if (!studentDeviceCheck.isValid) {

@@ -33,42 +33,40 @@ export class DeviceTracker {
       today.setHours(0, 0, 0, 0);
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
-
-      // 2. Aynı gün içinde kullanılmış cihaz kontrolü - YENİ: Skorlama sistemi
+  
+      // 2. Aynı gün içinde kullanılmış cihaz kontrolü - Skorlama sistemi
       let potentialBlockingRecord = null;
       let matchScore = 0;
       
+      // Skorlama sistemi yerine, önce IP kontrolü yapmalı
       for (const [_, record] of this.memoryStore) {
         const recordDate = new Date(record.lastUsedDate);
         
         // Gün bazında karşılaştırma yap
         if (recordDate >= today && recordDate < tomorrow) {
-          // YENİ: Skorlama sistemi
-          let currentScore = 0;
+          // YENİ: Önce IP kontrolü yap
+          // Eğer IP farklıysa, farklı cihaz olarak kabul et ve devam et
+          if (record.lastKnownIP !== ip) {
+            continue; // IP farklı, bu farklı bir cihaz kabul ediliyor, bloklamayı atla
+          }
           
-          // Hardware signature tam eşleşme (en güvenilir) (+3 puan)
+          // IP'ler aynı ise artık fingerprint ve hardware'e bak
+          let isMatchedDevice = false;
+          
+          // Hardware signature eşleşmesi (en güvenilir)
           if (record.hardwareSignature === hardwareSignature) {
-            currentScore += 3;
+            isMatchedDevice = true;
           }
           
-          // Fingerprint tam eşleşme (+3 puan)
+          // Fingerprint eşleşmesi
           if (record.fingerprints.includes(deviceFingerprint)) {
-            currentScore += 3;
+            isMatchedDevice = true;
           }
           
-          // IP adresi eşleşme (daha az güvenilir) (+1 puan)
-          if (record.lastKnownIP === ip) {
-            currentScore += 0.1;
-          }
-          
-          // Eğer toplam skor 3 veya daha yüksekse ve farklı öğrenciyse
-          // Bu cihazı potansiyel bloke edeceğiz
-          if (currentScore >= 4 && record.studentId !== studentId) {
-            // En yüksek skora sahip kaydı tut
-            if (currentScore > matchScore) {
-              matchScore = currentScore;
-              potentialBlockingRecord = record;
-            }
+          // Eğer aynı IP ve (aynı fingerprint veya hardware) ise ve farklı öğrenciyse engelle
+          if (isMatchedDevice && record.studentId !== studentId) {
+            potentialBlockingRecord = record;
+            break;
           }
         }
       }
@@ -81,7 +79,7 @@ export class DeviceTracker {
           blockedReason: `Bu cihaz bugün ${potentialBlockingRecord.studentId} numaralı öğrenci için kullanılmış`
         };
       }
-
+  
       // 3. Yeni kayıt oluştur veya güncelle
       const existingRecord = this.memoryStore.get(hardwareSignature) || 
                           Array.from(this.memoryStore.values()).find(record => 
@@ -117,10 +115,10 @@ export class DeviceTracker {
         };
         this.memoryStore.set(hardwareSignature, newRecord);
       }
-
+  
       // 4. Fingerprint indeksini güncelle
       this.updateFingerprintIndex(deviceFingerprint, hardwareSignature);
-
+  
       return { isAllowed: true };
     } catch (error) {
       console.error('Device tracking error:', error);
@@ -143,15 +141,15 @@ export class DeviceTracker {
     hardwareSignature: string
   ): Promise<ValidationResult> {
     try {
-      // YENİ: Öğrenci ID ve cihaz imzalarını logla (debug için)
-      console.log(`Yoklama Girişi - Öğrenci: ${studentId}, FP: ${fingerprint.substring(0, 8)}..., HW: ${hardwareSignature.substring(0, 8)}...`);
+      // Öğrenci ID ve cihaz imzalarını logla (debug için)
+      console.log(`Yoklama Girişi - Öğrenci: ${studentId}, FP: ${fingerprint.substring(0, 8)}..., HW: ${hardwareSignature.substring(0, 8)}..., IP: ${ip}`);
       
-      // 1. Google Sheets kontrolü - ip parametresini ekliyoruz
+      // 1. Google Sheets kontrolü
       const sheetsCheck = await this.checkGoogleSheets(
         fingerprint,
         hardwareSignature,
         studentId,
-        ip // ip parametresini ekliyoruz
+        ip
       );
       
       if (!sheetsCheck.isValid) {
@@ -159,7 +157,7 @@ export class DeviceTracker {
         return sheetsCheck;
       }
   
-      // 2. Memory store kontrolü
+      // 2. Memory store kontrolü - Değişiklik yok, trackDevice zaten yeni IP mantığıyla güncellendi
       const memoryCheck = await this.trackDevice(
         fingerprint,
         studentId,
@@ -190,7 +188,7 @@ export class DeviceTracker {
     fingerprint: string,
     hardwareSignature: string,
     studentId: string,
-    ip: string // YENİ: ip parametresi eklendi
+    ip: string
   ): Promise<ValidationResult> {
     try {
       const auth = new google.auth.GoogleAuth({
@@ -217,68 +215,60 @@ export class DeviceTracker {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
   
-      // YENİ: Eşleşme skoru ve eşleşen kayıt
-      let highestScore = 0;
+      // Eşleşen öğrenciyi takip etmek için değişken
       let matchedStudent = null;
       
       // Tüm hücreleri kontrol et
       for (let i = 1; i < rows.length; i++) {
         // Farklı öğrenci ID'si
         if (rows[i][1] !== studentId) {
-          let studentScore = 0;
-          
           for (let j = 3; j < rows[i].length; j++) {
             const cell = rows[i][j] || '';
             if (typeof cell === 'string') {
-              // YENİ: Başka bir öğrencinin fingerprint/hardware bilgilerine bak
-              
-              // Tam fingerprint eşleşme kontrolü (partial değil)
-              const hasFingerprint = cell.includes(`(DF:${fingerprint})`);
-              if (hasFingerprint) {
-                studentScore += 3;
-              }
-              
-              // Tam hardware signature eşleşme
-              const hasHardware = cell.includes(`(HW:${hardwareSignature})`);
-              if (hasHardware) {
-                studentScore += 3;
-              }
-              
-              // IP Adresi kontrolü (daha az güvenilir)
-              const ipMatch = cell.match(/\(IP:([^)]+)\)/);
-              if (ipMatch && ip && ip.startsWith(ipMatch[1])) {
-                studentScore += 0.1;
-              }
-              
-              // Skorları değerlendir - en yüksek skorlu eşleşmeyi tut
-              if (studentScore > highestScore) {
-                highestScore = studentScore;
-                matchedStudent = rows[i][1]; // Öğrenci ID'sini tut
-                
-                // Tarih kontrolü - güncel mi?
-                try {
-                  const dateMatch = cell.match(/\(DATE:(\d+)\)/);
-                  if (dateMatch) {
-                    const recordDate = new Date(parseInt(dateMatch[1]));
-                    // Sadece bugünün kayıtları için blokla
-                    if (recordDate < today) {
-                      // Eski kayıt, skorunu düşür
-                      highestScore = 0;
-                      matchedStudent = null;
+              // Tarih kontrolü - güncel mi?
+              try {
+                const dateMatch = cell.match(/\(DATE:(\d+)\)/);
+                if (dateMatch) {
+                  const recordDate = new Date(parseInt(dateMatch[1]));
+                  // Sadece bugünün kayıtları için kontrol et
+                  if (recordDate >= today) {
+                    // YENİ: Önce IP Adresi kontrolü
+                    const ipMatch = cell.match(/\(IP:([^)]+)\)/);
+                    if (ipMatch && ip) {
+                      // IP aynı mı kontrol et (ilk iki okteti karşılaştırıyoruz)
+                      const cellIpPrefix = ipMatch[1];
+                      const currentIpPrefix = ip.split('.').slice(0, 2).join('.');
+                      
+                      // IP farklıysa, bu farklı bir cihaz demektir, kontrole devam et
+                      if (cellIpPrefix !== currentIpPrefix) {
+                        continue;
+                      }
+                      
+                      // IP aynıysa, donanım/fingerprint kontrolü yap
+                      const hasFingerprint = cell.includes(`(DF:${fingerprint.slice(0, 8)})`);
+                      const hasHardware = cell.includes(`(HW:${hardwareSignature.slice(0, 8)})`);
+                      
+                      // Fingerprint veya hardware eşleşiyorsa bu aynı cihazdır
+                      if (hasFingerprint || hasHardware) {
+                        matchedStudent = rows[i][1]; // Öğrenci ID'sini tut
+                        break;
+                      }
                     }
                   }
-                } catch (error) {
-                  console.error('Tarih parse hatası:', error);
                 }
+              } catch (error) {
+                console.error('Tarih parse hatası:', error);
               }
             }
           }
+          
+          if (matchedStudent) break;
         }
       }
       
-      // YENİ: Eşleşme skoruna göre değerlendir
-      if (highestScore >= 4 && matchedStudent) {
-        console.log(`Google Sheets'te cihaz eşleşmesi: Öğrenci=${matchedStudent}, Skor=${highestScore}`);
+      // Eşleşme bulduysan engelle
+      if (matchedStudent) {
+        console.log(`Google Sheets'te cihaz eşleşmesi: Öğrenci=${matchedStudent}`);
         return {
           isValid: false,
           error: 'Bu cihaz bugün başka bir öğrenci için kullanılmış',
@@ -325,7 +315,8 @@ export class DeviceTracker {
   async registerStudentDevice(
     studentId: string, 
     fingerprint: string,
-    hardwareSignature: string
+    hardwareSignature: string,
+    ipAddress?: string // ?: işareti bu parametreyi opsiyonel yapar
   ): Promise<void> {
     try {
       const auth = new google.auth.GoogleAuth({
@@ -337,7 +328,7 @@ export class DeviceTracker {
         },
         scopes: ['https://www.googleapis.com/auth/spreadsheets']
       });
-
+  
       const sheets = google.sheets({ version: 'v4', auth });
       
       // "StudentDevices" sayfası var mı kontrol et, yoksa oluştur
@@ -355,7 +346,7 @@ export class DeviceTracker {
       }
       
       if (!sheetExists) {
-        // Yeni sayfa oluştur
+        // Yeni sayfa oluştur - 5 sütun (IP için ek sütun)
         await sheets.spreadsheets.batchUpdate({
           spreadsheetId: process.env.SPREADSHEET_ID,
           requestBody: {
@@ -366,7 +357,7 @@ export class DeviceTracker {
                     title: 'StudentDevices',
                     gridProperties: {
                       rowCount: 1000,
-                      columnCount: 4
+                      columnCount: 5 // YENİ: IP sütunu için artırıldı
                     }
                   }
                 }
@@ -375,56 +366,58 @@ export class DeviceTracker {
           }
         });
         
-        // Başlık satırını ekle
+        // Başlık satırını güncelle - IP sütunu eklendi
         await sheets.spreadsheets.values.update({
           spreadsheetId: process.env.SPREADSHEET_ID,
-          range: 'StudentDevices!A1:D1',
+          range: 'StudentDevices!A1:E1',
           valueInputOption: 'RAW',
           requestBody: {
-            values: [['StudentID', 'Fingerprint', 'HardwareSignature', 'RegistrationDate']]
+            values: [['StudentID', 'Fingerprint', 'HardwareSignature', 'IPAddress', 'RegistrationDate']]
           }
         });
       }
       
-      // Öğrenci kayıtlı mı kontrol et
+      // IP değeri yoksa varsayılan değer kullan
+      const ip = ipAddress || 'unknown';
+      
+      // Öğrenci kayıtlı mı kontrol et - IP sütunu için aralık genişletildi
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: process.env.SPREADSHEET_ID,
-        range: 'StudentDevices!A:D'
+        range: 'StudentDevices!A:E'
       });
       
       const rows = response.data.values || [];
       const studentRowIndex = rows.findIndex(row => row[0] === studentId);
       
       if (studentRowIndex === -1) {
-        // Öğrenci yoksa yeni kayıt ekle
+        // Öğrenci yoksa yeni kayıt ekle - IP sütunu eklendi
         await sheets.spreadsheets.values.append({
           spreadsheetId: process.env.SPREADSHEET_ID,
-          range: 'StudentDevices!A:D',
+          range: 'StudentDevices!A:E',
           valueInputOption: 'RAW',
           insertDataOption: 'INSERT_ROWS',
           requestBody: {
-            values: [[studentId, fingerprint, hardwareSignature, new Date().toISOString()]]
+            values: [[studentId, fingerprint, hardwareSignature, ip, new Date().toISOString()]]
           }
         });
-        console.log(`Öğrenci ${studentId} için yeni cihaz kaydedildi`);
+        console.log(`Öğrenci ${studentId} için yeni cihaz kaydedildi (IP: ${ip})`);
       } else {
-        // Öğrenci varsa güncelle
+        // Öğrenci varsa güncelle - IP sütunu eklendi
         await sheets.spreadsheets.values.update({
           spreadsheetId: process.env.SPREADSHEET_ID,
-          range: `StudentDevices!B${studentRowIndex + 1}:D${studentRowIndex + 1}`,
+          range: `StudentDevices!B${studentRowIndex + 1}:E${studentRowIndex + 1}`,
           valueInputOption: 'RAW',
           requestBody: {
-            values: [[fingerprint, hardwareSignature, new Date().toISOString()]]
+            values: [[fingerprint, hardwareSignature, ip, new Date().toISOString()]]
           }
         });
-        console.log(`Öğrenci ${studentId} için cihaz güncellendi`);
+        console.log(`Öğrenci ${studentId} için cihaz güncellendi (IP: ${ip})`);
       }
     } catch (error) {
       console.error('Cihaz kayıt hatası:', error);
       throw new Error('Öğrenci cihazı kaydedilemedi');
     }
   }
-
   /**
    * Öğrencinin kendi cihazını kullanıp kullanmadığını doğrula
    */
@@ -434,7 +427,8 @@ export class DeviceTracker {
   async validateStudentDevice(
     studentId: string,
     fingerprint: string,
-    hardwareSignature: string
+    hardwareSignature: string,
+    clientIP?: string // Opsiyonel olarak IP parametresi eklendi
   ): Promise<{isValid: boolean; error?: string}> {
     try {
       const auth = new google.auth.GoogleAuth({
@@ -485,7 +479,7 @@ export class DeviceTracker {
         const rows = response.data.values || [];
         
         if (rows.length > 1) {
-          // YENİ: Bu hardware signature veya fingerprint ile kayıtlı başka bir öğrenci var mı kontrol et
+          // Bu hardware signature veya fingerprint ile kayıtlı başka bir öğrenci var mı kontrol et
           for (let i = 1; i < rows.length; i++) {
             // Bu öğrencinin kendisi değilse ve temizlenmemiş bir kayıt ise kontrol et
             if (rows[i][0] !== studentId && 
@@ -630,10 +624,10 @@ export class DeviceTracker {
         return;
       }
       
-      // Tüm verileri getir
+      // Tüm verileri getir - IP sütunu için aralık genişletildi
       const response = await sheets.spreadsheets.values.get({
         spreadsheetId: process.env.SPREADSHEET_ID,
-        range: 'StudentDevices!A:D'
+        range: 'StudentDevices!A:E'
       });
       
       const rows = response.data.values || [];
@@ -644,13 +638,13 @@ export class DeviceTracker {
       
       // Başlık satırını koru, tüm cihaz bilgilerini temizle
       for (let i = 1; i < rows.length; i++) {
-        // Sadece fingerprint ve hardware signature sütunlarını temizle, öğrenci ID'sini ve tarihi koru
+        // Sadece fingerprint, hardware signature ve IP sütunlarını temizle, öğrenci ID'sini ve tarihi koru
         await sheets.spreadsheets.values.update({
           spreadsheetId: process.env.SPREADSHEET_ID,
-          range: `StudentDevices!B${i + 1}:C${i + 1}`,
+          range: `StudentDevices!B${i + 1}:D${i + 1}`, // IP sütunu da dahil edildi
           valueInputOption: 'RAW',
           requestBody: {
-            values: [['TEMIZLENDI', 'TEMIZLENDI']]
+            values: [['TEMIZLENDI', 'TEMIZLENDI', 'TEMIZLENDI']] // IP için de 'TEMIZLENDI' değeri
           }
         });
       }
