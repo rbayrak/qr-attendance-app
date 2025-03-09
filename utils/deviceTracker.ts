@@ -230,6 +230,7 @@ export class DeviceTracker {
                 const dateMatch = cell.match(/\(DATE:(\d+)\)/);
                 if (dateMatch) {
                   const recordDate = new Date(parseInt(dateMatch[1]));
+                  
                   // Sadece bugünün kayıtları için kontrol et
                   if (recordDate >= today) {
                     // YENİ: Önce IP Adresi kontrolü
