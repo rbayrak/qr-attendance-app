@@ -41,14 +41,13 @@ export default async function handler(
         for (let i = 0; i < rows.length; i++) {
           for (let j = 3; j < rows[i].length; j++) {
             const cell = rows[i][j];
-            if (cell && (cell.includes('(DF:') || cell.includes('(HW:'))) {
-              // Cihaz bilgisi içeren hücreyi sadece "VAR" olarak değiştir
+            if (cell && (cell.includes('(DF:') || cell.includes('(HW:') || cell.includes('(DATE:'))) {
               await sheets.spreadsheets.values.update({
                 spreadsheetId: process.env.SPREADSHEET_ID,
                 range: `${String.fromCharCode(65 + j)}${i + 1}`,
                 valueInputOption: 'RAW',
                 requestBody: {
-                  values: [['VAR']]
+                  values: [['VAR']] // Bu artık DATE bilgisini de silecek
                 }
               });
             }
