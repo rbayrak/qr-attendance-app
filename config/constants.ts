@@ -1,5 +1,5 @@
 // config/constants.ts
 export const STATIC_CLASS_LOCATION = {
-    lat: 41.053679,//41.0526702,  //41.0536666,//41.052967,  // Gerçek sınıf koordinatları
-    lng: 28.976382//29.0103006//28.9763150//29.0103606   // Gerçek sınıf koordinatları
+    lat: 41.0526702,//41.053679,  Gerçek sınıf koordinatları
+    lng: 29.0103006//28.976382 Gerçek sınıf koordinatları
   };

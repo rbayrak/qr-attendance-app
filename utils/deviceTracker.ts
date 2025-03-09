@@ -50,20 +50,15 @@ export class DeviceTracker {
             continue; // IP farklı, bu farklı bir cihaz kabul ediliyor, bloklamayı atla
           }
           
-          // IP'ler aynı ise artık fingerprint ve hardware'e bak
-          let isMatchedDevice = false;
+          // IP'ler aynı ise artık fingerprint VE hardware'in BERABER eşleşmesini kontrol et
+          // Yalnızca ikisi de eşleşirse aynı cihaz olarak kabul ediyoruz (AND mantığı)
+          const hardwareMatches = record.hardwareSignature === hardwareSignature;
+          const fingerprintMatches = record.fingerprints.includes(deviceFingerprint);
           
-          // Hardware signature eşleşmesi (en güvenilir)
-          if (record.hardwareSignature === hardwareSignature) {
-            isMatchedDevice = true;
-          }
+          // Hem hardware hem de fingerprint eşleşiyorsa bu kesinlikle aynı cihazdır
+          const isMatchedDevice = hardwareMatches && fingerprintMatches;
           
-          // Fingerprint eşleşmesi
-          if (record.fingerprints.includes(deviceFingerprint)) {
-            isMatchedDevice = true;
-          }
-          
-          // Eğer aynı IP ve (aynı fingerprint veya hardware) ise ve farklı öğrenciyse engelle
+          // Eğer aynı IP ve (hem fingerprint hem de hardware eşleşiyorsa) ve farklı öğrenciyse engelle
           if (isMatchedDevice && record.studentId !== studentId) {
             potentialBlockingRecord = record;
             break;
@@ -250,7 +245,7 @@ export class DeviceTracker {
                       const hasHardware = cell.includes(`(HW:${hardwareSignature.slice(0, 8)})`);
                       
                       // Fingerprint veya hardware eşleşiyorsa bu aynı cihazdır
-                      if (hasFingerprint || hasHardware) {
+                      if (hasFingerprint && hasHardware) {
                         matchedStudent = rows[i][1]; // Öğrenci ID'sini tut
                         break;
                       }
