@@ -397,17 +397,20 @@ export class DeviceTracker {
           valueInputOption: 'RAW',
           insertDataOption: 'INSERT_ROWS',
           requestBody: {
+            // Sıralama düzeltildi: StudentID, Fingerprint, HardwareSignature, IPAddress, RegistrationDate
             values: [[studentId, fingerprint, hardwareSignature, ip, new Date().toISOString()]]
           }
         });
         console.log(`Öğrenci ${studentId} için yeni cihaz kaydedildi (IP: ${ip})`);
       } else {
         // Öğrenci varsa güncelle - IP sütunu eklendi
+        // Öğrenci varsa güncelle
         await sheets.spreadsheets.values.update({
           spreadsheetId: process.env.SPREADSHEET_ID,
           range: `StudentDevices!B${studentRowIndex + 1}:E${studentRowIndex + 1}`,
           valueInputOption: 'RAW',
           requestBody: {
+            // Sıralama düzeltildi: Fingerprint, HardwareSignature, IPAddress, RegistrationDate
             values: [[fingerprint, hardwareSignature, ip, new Date().toISOString()]]
           }
         });
