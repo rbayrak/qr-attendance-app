@@ -236,6 +236,7 @@ const AttendanceSystem = () => {
   const clearMemoryStore = async () => {
     try {
       setIsLoading(true);
+      setStatus('🔄 Cihaz kayıtları temizleniyor...');  // İşlem devam ediyor mesajı
       updateDebugLogs(`🔄 Cihaz kayıtları temizleme işlemi başlatıldı`);
       
       const response = await fetch('/api/memory', {
