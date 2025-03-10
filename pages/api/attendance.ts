@@ -235,6 +235,17 @@ export default async function handler(
           success: true,
           message: `${fingerprint} fingerprint'i silindi`
         });
+      } else {
+        // YENİ: Fingerprint belirtilmediğinde tüm cihaz kayıtlarını temizle
+        console.log('Tüm cihaz kayıtları temizleme işlemi başlatıldı');
+        
+        // 1. Memory store'u temizle
+        deviceTracker.clearMemoryStore();
+        
+        // 2. Google Sheets'teki öğrenci-cihaz eşleştirmelerini temizle
+        await deviceTracker.clearStudentDevices();
+        
+        console.log('Tüm cihaz kayıtları temizlendi');
       }
 
       return res.status(200).json({ 
