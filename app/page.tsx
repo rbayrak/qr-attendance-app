@@ -233,44 +233,41 @@ const AttendanceSystem = () => {
 
   // page.tsx içindeki clearMemoryStore fonksiyonu
 
+  // page.tsx içindeki clearMemoryStore fonksiyonu
   const clearMemoryStore = async () => {
     try {
       setIsLoading(true);
-      setStatus('🔄 Cihaz kayıtları temizleniyor...');  // İşlem devam ediyor mesajı
+      setStatus('🔄 Cihaz kayıtları temizleniyor...');
       updateDebugLogs(`🔄 Cihaz kayıtları temizleme işlemi başlatıldı`);
       
-      // Timeout kontrolü ekleyin
+      // /api/memory yerine /api/attendance endpointini kullan (parametresiz DELETE)
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000);
       
       try {
-        const response = await fetch('/api/memory', {
+        // Değişiklik burada: /api/memory yerine /api/attendance kullanıyoruz
+        const response = await fetch('/api/attendance', {
           method: 'DELETE',
           signal: controller.signal
         });
         
         clearTimeout(timeoutId);
         
-        // Yanıtı bir kez okuyun ve saklayın
-        const responseText = await response.text();
-        let data;
-        
-        // JSON olarak ayrıştırmayı deneyin
-        try {
-          data = JSON.parse(responseText);
-        } catch (parseError) {
-          // JSON ayrıştırma başarısız olursa, ham metin yanıtını kullanın
-          console.error('JSON parse hatası:', responseText);
-          throw new Error(`API yanıtı geçerli bir JSON değil: ${responseText.substring(0, 50)}...`);
-        }
-        
         if (response.ok) {
           setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
           updateDebugLogs(`✅ Memory store ve Google Sheets'teki cihaz kayıtları temizlendi`);
           setTimeout(() => setStatus(''), 3000);
         } else {
-          setStatus(`❌ ${data.error || 'Cihaz kayıtları temizlenemedi'}`);
-          updateDebugLogs(`❌ HATA: ${data.error || 'Bilinmeyen hata'}`);
+          // Hata durumunda yanıtı güvenli bir şekilde okuyalım
+          try {
+            const data = await response.json();
+            setStatus(`❌ ${data.error || 'Cihaz kayıtları temizlenemedi'}`);
+            updateDebugLogs(`❌ HATA: ${data.error}`);
+          } catch (jsonError) {
+            // JSON parse hatası olursa, durum kodunu gösterelim
+            setStatus(`❌ API hatası (${response.status}): Cihaz kayıtları temizlenemedi`);
+            updateDebugLogs(`❌ API Hatası: HTTP ${response.status}`);
+          }
         }
       } catch (fetchError: any) {
         if (fetchError.name === 'AbortError') {
