@@ -265,38 +265,30 @@ async function processPostRequest(
     const isAlreadyAttended = rows[studentRowIndex][weekColumnIndex] && 
                             rows[studentRowIndex][weekColumnIndex].includes('VAR');
 
-    if (isAlreadyAttended) {
-      return res.status(200).json({ 
-        success: true,
-        isAlreadyAttended: true,
-        message: 'Bu hafta için yoklama zaten alınmış'
-      });
-    }
-
+    
     // 9. Sheets client'ı al
     const sheets = await getSheetsClient();
 
-    // 10. Yoklamayı kaydet (yeniden deneme ile)
-    const updateResult = await retryableOperation(() =>
-      sheets.spreadsheets.values.update({
-        spreadsheetId: process.env.SPREADSHEET_ID,
-        range: range,
-        valueInputOption: 'RAW',
-        requestBody: {
-          values: [[`VAR (DF:${deviceFingerprint.slice(0, 8)}) (HW:${hardwareSignature.slice(0, 8)}) (IP:${clientIP.split('.').slice(0, 2).join('.')}) (DATE:${Date.now()})`]]
-        }
-      })
-    );
+    // 10. Yoklamayı kaydet (her durumda)
+    const updateResult = await sheets.spreadsheets.values.update({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      range: range,
+      valueInputOption: 'RAW',
+      requestBody: {
+        values: [[`VAR (DF:${deviceFingerprint.slice(0, 8)}) (HW:${hardwareSignature.slice(0, 8)}) (IP:${clientIP.split('.').slice(0, 2).join('.')}) (DATE:${Date.now()})`]]
+      }
+    });
+
 
     // 11. Önbelleği güncelle (yoklama bilgileri değişti)
     if (rows[studentRowIndex]) {
       rows[studentRowIndex][weekColumnIndex] = `VAR (DF:${deviceFingerprint.slice(0, 8)}) (HW:${hardwareSignature.slice(0, 8)}) (IP:${clientIP.split('.').slice(0, 2).join('.')}) (DATE:${Date.now()})`;
     }
 
-    // 12. Başarılı yanıt
+    // 11. Başarılı yanıt
     res.status(200).json({ 
       success: true,
-      isAlreadyAttended: false,
+      isAlreadyAttended: isAlreadyAttended, // Burada öğrencinin önceden yoklama alıp almadığı bilgisini gönderiyoruz
       debug: {
         operationDetails: {
           ogrenciNo: studentId,
@@ -304,7 +296,7 @@ async function processPostRequest(
           sutun: weekColumn,
           aralik: range,
           weekNumber: week,
-          deviceFingerprint: deviceFingerprint.slice(0, 8) + '...'
+          deviceFingerprint: deviceFingerprint.slice(0, 8) + '...' // Güvenlik için kısalt
         },
         updateResult: updateResult.data
       }
