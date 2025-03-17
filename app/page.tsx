@@ -236,22 +236,37 @@ const AttendanceSystem = () => {
   const clearMemoryStore = async () => {
     try {
       setIsLoading(true);
-      setStatus('🔄 Cihaz kayıtları temizleniyor...');  // İşlem devam ediyor mesajı
+      setStatus('🔄 Cihaz kayıtları temizleniyor...');
       updateDebugLogs(`🔄 Cihaz kayıtları temizleme işlemi başlatıldı`);
       
-      const response = await fetch('/api/memory', {
-        method: 'DELETE'
-      });
-    
-      const data = await response.json();
+      // Timeout kontrolü ekleyin
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
       
-      if (response.ok) {
-        setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
-        updateDebugLogs(`✅ Memory store ve Google Sheets'teki cihaz kayıtları temizlendi`);
-        setTimeout(() => setStatus(''), 3000);
-      } else {
-        setStatus(`❌ ${data.error || 'Cihaz kayıtları temizlenemedi'}`);
-        updateDebugLogs(`❌ HATA: ${data.error}`);
+      try {
+        const response = await fetch('/api/memory', {
+          method: 'DELETE',
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        const data = await response.json();
+        
+        if (response.ok) {
+          setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
+          updateDebugLogs(`✅ Memory store ve Google Sheets'teki cihaz kayıtları temizlendi`);
+          setTimeout(() => setStatus(''), 3000);
+        } else {
+          setStatus(`❌ ${data.error || 'Cihaz kayıtları temizlenemedi'}`);
+          updateDebugLogs(`❌ HATA: ${data.error}`);
+        }
+      } catch (fetchError: any) {  // any tipini ekledik
+        if (fetchError.name === 'AbortError') {
+          setStatus('⚠️ İşlem zaman aşımına uğradı, daha sonra tekrar deneyin');
+          updateDebugLogs(`⚠️ TIMEOUT: Cihaz kayıtlarını temizleme işlemi zaman aşımına uğradı`);
+        } else {
+          throw fetchError;
+        }
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
@@ -659,6 +674,11 @@ const AttendanceSystem = () => {
   // handleQrScan fonksiyonu (page.tsx içinde):
   // page.tsx dosyasındaki handleQrScan fonksiyonunda yapılacak değişiklikler
 
+  // Component içinde useState ile ekle
+  const [qrSubmitCount, setQrSubmitCount] = useState<number>(0);
+  const [connectionError, setConnectionError] = useState<boolean>(false);
+
+  // Güncellenmiş handleQrScan fonksiyonu
   const handleQrScan = async (decodedText: string) => {
     // Öncelikle son tarama zamanını kontrol et
     const lastScanTime = localStorage.getItem('lastQrScanTime');
@@ -669,6 +689,13 @@ const AttendanceSystem = () => {
     }
     
     localStorage.setItem('lastQrScanTime', currentTime.toString());
+
+    // İşlem sayacını artır ve durumu güncelle
+    const newCount = qrSubmitCount + 1;
+    setQrSubmitCount(newCount);
+    if (newCount > 0) { // Doğrudan yeni değeri kontrol et
+      setStatus('🔄 İşlem sürüyor, lütfen bekleyin...');
+    }
 
     try {
       const scannedData = JSON.parse(decodedText);
@@ -729,66 +756,91 @@ const AttendanceSystem = () => {
       `;
       updateDebugLogs(locationLog);
 
-      // API isteği
-      const attendanceResponse = await fetch('/api/attendance', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          studentId,
-          week: scannedData.week,
-          clientIP: ip,
-          deviceFingerprint,
-          hardwareSignature
-        })
-      });
+      // *** YENİ: API isteği için timeout kontrolü ***
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 saniye timeout
+      
+      try {
+        // API isteği
+        const attendanceResponse = await fetch('/api/attendance', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            studentId,
+            week: scannedData.week,
+            clientIP: ip,
+            deviceFingerprint,
+            hardwareSignature
+          }),
+          signal: controller.signal // AbortController sinyali
+        });
+        
+        // Timeout'u temizle
+        clearTimeout(timeoutId);
+        setConnectionError(false);
 
-      const responseData = await attendanceResponse.json();
+        const responseData = await attendanceResponse.json();
 
-      if (!attendanceResponse.ok) {
-        // YENİ: Cihaz yetkilendirme hatası kontrolü
-        if (responseData.unauthorizedDevice) {
-          updateDebugLogs(`❌ HATA: Bu cihaz bu öğrenciye ait değil`);
-          setStatus(`❌ Bu cihaz ${studentId} numaralı öğrenciye ait değil. Kendi cihazınızı kullanmalısınız!`);
-          setIsScanning(false);
-          if (html5QrCode) {
-            await html5QrCode.stop();
+        if (!attendanceResponse.ok) {
+          // Cihaz yetkilendirme hatası kontrolü
+          if (responseData.unauthorizedDevice) {
+            updateDebugLogs(`❌ HATA: Bu cihaz bu öğrenciye ait değil`);
+            setStatus(`❌ Bu cihaz ${studentId} numaralı öğrenciye ait değil. Kendi cihazınızı kullanmalısınız!`);
+            setIsScanning(false);
+            if (html5QrCode) {
+              await html5QrCode.stop();
+            }
+            return;
           }
+          
+          // Mevcut cihaz engelleme kontrolü
+          if (responseData.blockedStudentId) {
+            updateDebugLogs(`❌ HATA: Cihaz ${responseData.blockedStudentId} no'lu öğrenci tarafından kullanılmış`);
+            setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
+            setIsScanning(false);
+            if (html5QrCode) {
+              await html5QrCode.stop();
+            }
+            return;
+          }
+          
+          throw new Error(responseData.error || 'Yoklama kaydedilemedi');
+        }
+
+        localStorage.setItem('lastAttendanceCheck', JSON.stringify({
+          studentId: studentId,
+          timestamp: new Date().toISOString()
+        }));
+
+        if (responseData.isAlreadyAttended) {
+          updateDebugLogs(`⚠️ UYARI: ${studentId} no'lu öğrenci için yoklama zaten alınmış`);
+          setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
+        } else {
+          updateDebugLogs(`✅ BAŞARILI: ${studentId} no'lu öğrenci için yoklama kaydedildi`);
+          setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
+        }
+
+      } catch (fetchError: any) {
+        // Timeout hatası kontrolü
+        if (fetchError.name === 'AbortError') {
+          updateDebugLogs(`⚠️ API TIMEOUT: İstek zaman aşımına uğradı (30 saniye)`);
+          setStatus('⚠️ Sunucu yoğun, lütfen biraz sonra tekrar deneyin');
+          setConnectionError(true);
           return;
         }
         
-        // Mevcut cihaz engelleme kontrolü
-        if (responseData.blockedStudentId) {
-          updateDebugLogs(`❌ HATA: Cihaz ${responseData.blockedStudentId} no'lu öğrenci tarafından kullanılmış`);
-          setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
-          setIsScanning(false);
-          if (html5QrCode) {
-            await html5QrCode.stop();
-          }
+        // Network bağlantı hatası kontrolü
+        if (fetchError instanceof TypeError && fetchError.message.includes('fetch')) {
+          updateDebugLogs(`❌ NETWORK HATASI: Sunucuya bağlanılamadı`);
+          setStatus('❌ Bağlantı hatası, internet bağlantınızı kontrol edin');
+          setConnectionError(true);
           return;
         }
         
-        throw new Error(responseData.error || 'Yoklama kaydedilemedi');
+        throw fetchError; // Diğer hataları dışarıdaki catch bloğuna yönlendir
       }
 
-      localStorage.setItem('lastAttendanceCheck', JSON.stringify({
-        studentId: studentId,
-        timestamp: new Date().toISOString()
-      }));
-
-      if (responseData.isAlreadyAttended) {
-        updateDebugLogs(`⚠️ UYARI: ${studentId} no'lu öğrenci için yoklama zaten alınmış`);
-        setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
-      } else {
-        updateDebugLogs(`✅ BAŞARILI: ${studentId} no'lu öğrenci için yoklama kaydedildi`);
-        setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
-      }
-
-      setIsScanning(false);
-      if (html5QrCode) {
-        await html5QrCode.stop();
-      }
-
-    } catch (error) {
+    } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
       
       if (errorMessage.includes('fingerprint') || 
@@ -800,10 +852,16 @@ const AttendanceSystem = () => {
         updateDebugLogs(`❌ GENEL HATA: ${errorMessage}`);
         setStatus(`❌ ${errorMessage}`);
       }
-    
-      setIsScanning(false);
-      if (html5QrCode) {
-        await html5QrCode.stop();
+    } finally {
+      // İşlem sayacını sıfırla
+      setQrSubmitCount(0);
+      
+      // Eğer bağlantı hatası yoksa taramayı durdur
+      if (!connectionError) {
+        setIsScanning(false);
+        if (html5QrCode) {
+          await html5QrCode.stop();
+        }
       }
     }
   };
@@ -1105,6 +1163,20 @@ const AttendanceSystem = () => {
                     </div>
                   </div>
                 )}
+                {/* Bağlantı hatası yeniden deneme butonu */}
+                {connectionError && (
+                  <button
+                    onClick={() => {
+                      setConnectionError(false);
+                      // QR taramayı yeniden başlat (isteğe bağlı)
+                      setIsScanning(true);
+                    }}
+                    className="w-full p-3 mt-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600"
+                  >
+                    🔄 Bağlantıyı Yeniden Dene
+                  </button>
+                )}
+
               </div>
             </div>
   

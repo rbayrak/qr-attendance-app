@@ -7,10 +7,24 @@ export class DeviceTracker {
   private static instance: DeviceTracker;
   private memoryStore: Map<string, DeviceRecord>;
   private fingerprintIndex: Map<string, string[]>;
+  
+  // Önbellek ekleyelim - Google Sheets sorguları için
+  private sheetsCache: {
+    mainSheet: { data: any[] | null; timestamp: number } | null;
+    devicesSheet: { data: any[] | null; timestamp: number } | null;
+  };
+  
+  // API istekleri için hız sınırlama değişkenleri
+  private lastSheetsApiCall: number = 0;
+  private readonly API_CALL_DELAY: number = 100; // 100ms minimum gecikme
 
   private constructor() {
     this.memoryStore = new Map();
     this.fingerprintIndex = new Map();
+    this.sheetsCache = {
+      mainSheet: null,
+      devicesSheet: null
+    };
   }
 
   // Singleton pattern
@@ -19,6 +33,61 @@ export class DeviceTracker {
       DeviceTracker.instance = new DeviceTracker();
     }
     return DeviceTracker.instance;
+  }
+
+  // Yeniden deneme mekanizması ekleyelim
+  private async retryableOperation<T>(operation: () => Promise<T>, maxRetries = 5): Promise<T> {
+    let lastError;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        // API çağrıları arasında minimum gecikme ekleyelim
+        const now = Date.now();
+        const timeSinceLastCall = now - this.lastSheetsApiCall;
+        
+        if (timeSinceLastCall < this.API_CALL_DELAY) {
+          await new Promise(resolve => setTimeout(resolve, this.API_CALL_DELAY - timeSinceLastCall));
+        }
+        
+        this.lastSheetsApiCall = Date.now();
+        return await operation();
+      } catch (error: any) {
+        lastError = error;
+        
+        // API limit aşımı veya geçici hata durumlarında yeniden dene
+        if (error.code === 429 || error.code === 503 || error.code === 'ECONNRESET') {
+          // Exponential backoff (her denemede daha uzun süre bekle)
+          const delay = Math.min(Math.pow(2, attempt) * 1000, 10000); // Max 10 saniye
+          console.log(`API hatası, ${delay}ms bekleyip yeniden deneniyor. Deneme: ${attempt + 1}/${maxRetries}`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        // Diğer hatalarda yeniden deneme yapma
+        throw error;
+      }
+    }
+    
+    throw lastError;
+  }
+
+  // Google Auth yardımcı fonksiyonu
+  private async getGoogleAuth() {
+    return new google.auth.GoogleAuth({
+      credentials: {
+        type: 'service_account',
+        project_id: process.env.GOOGLE_PROJECT_ID,
+        private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        client_email: process.env.GOOGLE_CLIENT_EMAIL,
+      },
+      scopes: ['https://www.googleapis.com/auth/spreadsheets']
+    });
+  }
+
+  // Sheets API çağrısı için yardımcı fonksiyon
+  private async getSheetsClient() {
+    const auth = await this.getGoogleAuth();
+    return google.sheets({ version: 'v4', auth });
   }
 
   async trackDevice(
@@ -34,31 +103,28 @@ export class DeviceTracker {
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
   
-      // 2. Aynı gün içinde kullanılmış cihaz kontrolü - Skorlama sistemi
+      // 2. Aynı gün içinde kullanılmış cihaz kontrolü
       let potentialBlockingRecord = null;
-      let matchScore = 0;
       
-      // Skorlama sistemi yerine, önce IP kontrolü yapmalı
+      // Önce IP kontrolü yap
       for (const [_, record] of this.memoryStore) {
         const recordDate = new Date(record.lastUsedDate);
         
         // Gün bazında karşılaştırma yap
         if (recordDate >= today && recordDate < tomorrow) {
-          // YENİ: Önce IP kontrolü yap
           // Eğer IP farklıysa, farklı cihaz olarak kabul et ve devam et
           if (record.lastKnownIP !== ip) {
-            continue; // IP farklı, bu farklı bir cihaz kabul ediliyor, bloklamayı atla
+            continue; // IP farklı, bu farklı bir cihaz kabul ediliyor
           }
           
           // IP'ler aynı ise artık fingerprint VE hardware'in BERABER eşleşmesini kontrol et
-          // Yalnızca ikisi de eşleşirse aynı cihaz olarak kabul ediyoruz (AND mantığı)
           const hardwareMatches = record.hardwareSignature === hardwareSignature;
           const fingerprintMatches = record.fingerprints.includes(deviceFingerprint);
           
           // Hem hardware hem de fingerprint eşleşiyorsa bu kesinlikle aynı cihazdır
           const isMatchedDevice = hardwareMatches && fingerprintMatches;
           
-          // Eğer aynı IP ve (hem fingerprint hem de hardware eşleşiyorsa) ve farklı öğrenciyse engelle
+          // Eğer aynı cihaz ve farklı öğrenciyse engelle
           if (isMatchedDevice && record.studentId !== studentId) {
             potentialBlockingRecord = record;
             break;
@@ -66,9 +132,9 @@ export class DeviceTracker {
         }
       }
       
-      // Eğer güçlü bir eşleşme bulduysan (skorlama sistemi) ve farklı öğrenciyse
+      // Eğer eşleşme bulduysan ve farklı öğrenciyse
       if (potentialBlockingRecord && potentialBlockingRecord.studentId !== studentId) {
-        console.log(`Cihaz eşleşmesi bulundu: Skor=${matchScore}, Öğrenci=${potentialBlockingRecord.studentId}`);
+        console.log(`Cihaz eşleşmesi bulundu: Öğrenci=${potentialBlockingRecord.studentId}`);
         return {
           isAllowed: false,
           blockedReason: `Bu cihaz bugün ${potentialBlockingRecord.studentId} numaralı öğrenci için kullanılmış`
@@ -139,7 +205,7 @@ export class DeviceTracker {
       // Öğrenci ID ve cihaz imzalarını logla (debug için)
       console.log(`Yoklama Girişi - Öğrenci: ${studentId}, FP: ${fingerprint.substring(0, 8)}..., HW: ${hardwareSignature.substring(0, 8)}..., IP: ${ip}`);
       
-      // 1. Google Sheets kontrolü
+      // 1. Google Sheets kontrolü (yeniden deneme mekanizması ile)
       const sheetsCheck = await this.checkGoogleSheets(
         fingerprint,
         hardwareSignature,
@@ -152,7 +218,7 @@ export class DeviceTracker {
         return sheetsCheck;
       }
   
-      // 2. Memory store kontrolü - Değişiklik yok, trackDevice zaten yeni IP mantığıyla güncellendi
+      // 2. Memory store kontrolü
       const memoryCheck = await this.trackDevice(
         fingerprint,
         studentId,
@@ -178,7 +244,78 @@ export class DeviceTracker {
     }
   }
 
-  // ip parametresini ekliyoruz
+  // Google Sheets ana sayfasını önbellekten veya API'den alır
+  private async getMainSheetData(): Promise<any[] | null> {
+    const CACHE_DURATION = 60000; // 1 dakika önbellek süresi
+    const now = Date.now();
+    
+    // Önbellekte geçerli veri var mı kontrol et
+    if (this.sheetsCache.mainSheet && 
+        (now - this.sheetsCache.mainSheet.timestamp) < CACHE_DURATION) {
+      return this.sheetsCache.mainSheet.data;
+    }
+    
+    // Yoksa API'den al
+    try {
+      const sheets = await this.getSheetsClient();
+      
+      const response = await this.retryableOperation(() => 
+        sheets.spreadsheets.values.get({
+          spreadsheetId: process.env.SPREADSHEET_ID,
+          range: 'A:Z',
+        })
+      );
+      
+      // Önbelleğe al
+      this.sheetsCache.mainSheet = {
+        data: response.data.values || [],
+        timestamp: now
+      };
+      
+      return response.data.values || [];
+    } catch (error) {
+      console.error('Sheets veri alma hatası:', error);
+      throw error;
+    }
+  }
+
+  // Google Sheets StudentDevices sayfasını önbellekten veya API'den alır
+  private async getStudentDevicesSheetData(): Promise<any[]> {
+    const CACHE_DURATION = 60000; // 1 dakika önbellek süresi
+    const now = Date.now();
+    
+    // Önbellekte geçerli veri var mı kontrol et
+    if (this.sheetsCache.devicesSheet && 
+        (now - this.sheetsCache.devicesSheet.timestamp) < CACHE_DURATION) {
+      return this.sheetsCache.devicesSheet.data || [];
+    }
+    
+    // Yoksa API'den al
+    try {
+      const sheets = await this.getSheetsClient();
+      
+      const response = await this.retryableOperation(() => 
+        sheets.spreadsheets.values.get({
+          spreadsheetId: process.env.SPREADSHEET_ID,
+          range: 'StudentDevices!A:E',
+        })
+      );
+      
+      // Önbelleğe al
+      this.sheetsCache.devicesSheet = {
+        data: response.data.values || [],
+        timestamp: now
+      };
+      
+      return response.data.values || [];
+    } catch (error) {
+      console.error('StudentDevices veri alma hatası:', error);
+      // Boş dizi döndürerek sonraki logicteki null kontrollerini atla
+      return [];
+    }
+  }
+
+  // ip parametresi ekliyoruz
   private async checkGoogleSheets(
     fingerprint: string,
     hardwareSignature: string,
@@ -186,24 +323,8 @@ export class DeviceTracker {
     ip: string
   ): Promise<ValidationResult> {
     try {
-      const auth = new google.auth.GoogleAuth({
-        credentials: {
-          type: 'service_account',
-          project_id: process.env.GOOGLE_PROJECT_ID,
-          private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-          client_email: process.env.GOOGLE_CLIENT_EMAIL,
-        },
-        scopes: ['https://www.googleapis.com/auth/spreadsheets']
-      });
-  
-      const sheets = google.sheets({ version: 'v4', auth });
-      
-      const response = await sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.SPREADSHEET_ID,
-        range: 'A:Z',
-      });
-  
-      const rows = response.data.values;
+      // Ana sayfayı önbellekten al (veya API'den çekilir)
+      const rows = await this.getMainSheetData();
       if (!rows) return { isValid: true };
   
       // Bugünün başlangıcı
@@ -213,7 +334,7 @@ export class DeviceTracker {
       // Eşleşen öğrenciyi takip etmek için değişken
       let matchedStudent = null;
       
-      // Tüm hücreleri kontrol et
+      // Tüm hücreleri kontrol et (önbellekten alındığı için daha hızlı)
       for (let i = 1; i < rows.length; i++) {
         // Farklı öğrenci ID'si
         if (rows[i][1] !== studentId) {
@@ -228,7 +349,7 @@ export class DeviceTracker {
                   
                   // Sadece bugünün kayıtları için kontrol et
                   if (recordDate >= today) {
-                    // YENİ: Önce IP Adresi kontrolü
+                    // Önce IP Adresi kontrolü
                     const ipMatch = cell.match(/\(IP:([^)]+)\)/);
                     if (ipMatch && ip) {
                       // IP aynı mı kontrol et (ilk iki okteti karşılaştırıyoruz)
@@ -275,14 +396,12 @@ export class DeviceTracker {
       return { isValid: true };
     } catch (error) {
       console.error('Sheets check error:', error);
-      return {
-        isValid: false,
-        error: 'Google Sheets kontrolü sırasında hata oluştu'
-      };
+      // Hata durumunda geçişi engelleme, devam et
+      return { isValid: true };
     }
   }
 
-  // YENİ: Debug için tüm cihaz kayıtlarını göster
+  // Debug için tüm cihaz kayıtlarını göster
   getAllDeviceRecords(): Record<string, any> {
     const records: Record<string, any> = {};
     
@@ -300,7 +419,12 @@ export class DeviceTracker {
   clearMemoryStore(): void {
     this.memoryStore.clear();
     this.fingerprintIndex.clear();
-    console.log('Memory store temizlendi');
+    // Önbelleği de temizle
+    this.sheetsCache = {
+      mainSheet: null,
+      devicesSheet: null
+    };
+    console.log('Memory store ve önbellek temizlendi');
     return;
   }
 
@@ -312,324 +436,271 @@ export class DeviceTracker {
     studentId: string, 
     fingerprint: string,
     hardwareSignature: string,
-    ipAddress?: string // ?: işareti bu parametreyi opsiyonel yapar
+    ipAddress?: string
   ): Promise<void> {
     try {
-      const auth = new google.auth.GoogleAuth({
-        credentials: {
-          type: 'service_account',
-          project_id: process.env.GOOGLE_PROJECT_ID,
-          private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-          client_email: process.env.GOOGLE_CLIENT_EMAIL,
-        },
-        scopes: ['https://www.googleapis.com/auth/spreadsheets']
-      });
-  
-      const sheets = google.sheets({ version: 'v4', auth });
+      const sheets = await this.getSheetsClient();
       
       // "StudentDevices" sayfası var mı kontrol et, yoksa oluştur
-      const spreadsheet = await sheets.spreadsheets.get({
-        spreadsheetId: process.env.SPREADSHEET_ID
-      });
-      
-      let sheetExists = false;
-      const sheetsList = spreadsheet.data.sheets || [];
-      for (const sheet of sheetsList) {
-        if (sheet.properties?.title === 'StudentDevices') {
-          sheetExists = true;
-          break;
-        }
-      }
+      const sheetExists = await this.checkStudentDevicesSheetExists(sheets);
       
       if (!sheetExists) {
         // Yeni sayfa oluştur - 5 sütun (IP için ek sütun)
-        await sheets.spreadsheets.batchUpdate({
-          spreadsheetId: process.env.SPREADSHEET_ID,
-          requestBody: {
-            requests: [
-              {
-                addSheet: {
-                  properties: {
-                    title: 'StudentDevices',
-                    gridProperties: {
-                      rowCount: 1000,
-                      columnCount: 5 // YENİ: IP sütunu için artırıldı
+        await this.retryableOperation(() => 
+          sheets.spreadsheets.batchUpdate({
+            spreadsheetId: process.env.SPREADSHEET_ID,
+            requestBody: {
+              requests: [
+                {
+                  addSheet: {
+                    properties: {
+                      title: 'StudentDevices',
+                      gridProperties: {
+                        rowCount: 1000,
+                        columnCount: 5
+                      }
                     }
                   }
                 }
-              }
-            ]
-          }
-        });
+              ]
+            }
+          })
+        );
         
         // Başlık satırını güncelle - IP sütunu eklendi
-        await sheets.spreadsheets.values.update({
-          spreadsheetId: process.env.SPREADSHEET_ID,
-          range: 'StudentDevices!A1:E1',
-          valueInputOption: 'RAW',
-          requestBody: {
-            values: [['StudentID', 'Fingerprint', 'HardwareSignature', 'IPAddress', 'RegistrationDate']]
-          }
-        });
+        await this.retryableOperation(() => 
+          sheets.spreadsheets.values.update({
+            spreadsheetId: process.env.SPREADSHEET_ID,
+            range: 'StudentDevices!A1:E1',
+            valueInputOption: 'RAW',
+            requestBody: {
+              values: [['StudentID', 'Fingerprint', 'HardwareSignature', 'IPAddress', 'RegistrationDate']]
+            }
+          })
+        );
       }
       
       // IP değeri yoksa varsayılan değer kullan
       const ip = ipAddress || 'unknown';
       
-      // Öğrenci kayıtlı mı kontrol et - IP sütunu için aralık genişletildi
-      const response = await sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.SPREADSHEET_ID,
-        range: 'StudentDevices!A:E'
-      });
-      
-      const rows = response.data.values || [];
+      // Öğrenci-cihaz verilerini al (önbellekten)
+      const rows = await this.getStudentDevicesSheetData();
       const studentRowIndex = rows.findIndex(row => row[0] === studentId);
       
       if (studentRowIndex === -1) {
-        // Öğrenci yoksa yeni kayıt ekle - IP sütunu eklendi
-        await sheets.spreadsheets.values.append({
-          spreadsheetId: process.env.SPREADSHEET_ID,
-          range: 'StudentDevices!A:E',
-          valueInputOption: 'RAW',
-          insertDataOption: 'INSERT_ROWS',
-          requestBody: {
-            // Sıralama düzeltildi: StudentID, Fingerprint, HardwareSignature, IPAddress, RegistrationDate
-            values: [[studentId, fingerprint, hardwareSignature, ip, new Date().toISOString()]]
-          }
-        });
+        // Öğrenci yoksa yeni kayıt ekle
+        await this.retryableOperation(() => 
+          sheets.spreadsheets.values.append({
+            spreadsheetId: process.env.SPREADSHEET_ID,
+            range: 'StudentDevices!A:E',
+            valueInputOption: 'RAW',
+            insertDataOption: 'INSERT_ROWS',
+            requestBody: {
+              values: [[studentId, fingerprint, hardwareSignature, ip, new Date().toISOString()]]
+            }
+          })
+        );
+        
+        // Önbelleği temizle
+        this.sheetsCache.devicesSheet = null;
+        
         console.log(`Öğrenci ${studentId} için yeni cihaz kaydedildi (IP: ${ip})`);
       } else {
-        // Öğrenci varsa güncelle - IP sütunu eklendi
         // Öğrenci varsa güncelle
-        await sheets.spreadsheets.values.update({
-          spreadsheetId: process.env.SPREADSHEET_ID,
-          range: `StudentDevices!B${studentRowIndex + 1}:E${studentRowIndex + 1}`,
-          valueInputOption: 'RAW',
-          requestBody: {
-            // Sıralama düzeltildi: Fingerprint, HardwareSignature, IPAddress, RegistrationDate
-            values: [[fingerprint, hardwareSignature, ip, new Date().toISOString()]]
-          }
-        });
+        await this.retryableOperation(() => 
+          sheets.spreadsheets.values.update({
+            spreadsheetId: process.env.SPREADSHEET_ID,
+            range: `StudentDevices!B${studentRowIndex + 1}:E${studentRowIndex + 1}`,
+            valueInputOption: 'RAW',
+            requestBody: {
+              values: [[fingerprint, hardwareSignature, ip, new Date().toISOString()]]
+            }
+          })
+        );
+        
+        // Önbelleği temizle
+        this.sheetsCache.devicesSheet = null;
+        
         console.log(`Öğrenci ${studentId} için cihaz güncellendi (IP: ${ip})`);
       }
     } catch (error) {
       console.error('Cihaz kayıt hatası:', error);
-      throw new Error('Öğrenci cihazı kaydedilemedi');
+      // Kritik olmayan hatada devam et
+      console.log('Hataya rağmen işleme devam ediliyor');
     }
   }
+
+  // StudentDevices sayfasının var olup olmadığını kontrol et
+  // StudentDevices sayfasının var olup olmadığını kontrol et
+  private async checkStudentDevicesSheetExists(sheets: any): Promise<boolean> {
+    try {
+      // 'any' tipi kullanarak tip hatasını engelleyelim
+      const response: any = await this.retryableOperation(() => 
+        sheets.spreadsheets.get({
+          spreadsheetId: process.env.SPREADSHEET_ID
+        })
+      );
+      
+      const sheetsList = response.data.sheets || [];
+      for (const sheet of sheetsList) {
+        if (sheet.properties?.title === 'StudentDevices') {
+          return true;
+        }
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('Sheet kontrol hatası:', error);
+      return false;
+    }
+  }
+
   /**
    * Öğrencinin kendi cihazını kullanıp kullanmadığını doğrula
    */
-  /**
- * Öğrencinin kendi cihazını kullanıp kullanmadığını doğrula
- */
   async validateStudentDevice(
     studentId: string,
     fingerprint: string,
     hardwareSignature: string,
-    clientIP?: string // Opsiyonel olarak IP parametresi eklendi
+    clientIP?: string
   ): Promise<{isValid: boolean; error?: string}> {
     try {
-      const auth = new google.auth.GoogleAuth({
-        credentials: {
-          type: 'service_account',
-          project_id: process.env.GOOGLE_PROJECT_ID,
-          private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-          client_email: process.env.GOOGLE_CLIENT_EMAIL,
-        },
-        scopes: ['https://www.googleapis.com/auth/spreadsheets']
-      });
-  
-      const sheets = google.sheets({ version: 'v4', auth });
+      const sheets = await this.getSheetsClient();
       
       // Önce StudentDevices sayfasının var olup olmadığını kontrol et
-      try {
-        const spreadsheet = await sheets.spreadsheets.get({
-          spreadsheetId: process.env.SPREADSHEET_ID
-        });
-        
-        let sheetExists = false;
-        const sheetsList = spreadsheet.data.sheets || [];
-        for (const sheet of sheetsList) {
-          if (sheet.properties?.title === 'StudentDevices') {
-            sheetExists = true;
-            break;
-          }
-        }
-        
-        if (!sheetExists) {
-          // Sayfa yoksa ilk kez yoklama alıyormuş gibi işlem yap
-          console.log('StudentDevices sayfası bulunamadı, yeni sayfa oluşturulacak');
-          await this.registerStudentDevice(studentId, fingerprint, hardwareSignature, clientIP);
-          return { isValid: true };
-        }
-      } catch (error) {
-        console.error('Sheet kontrol hatası:', error);
-        // Hata durumunda devam et, sonraki adımlarda yeni kayıt oluşturmaya çalışacak
-      }
+      const sheetExists = await this.checkStudentDevicesSheetExists(sheets);
       
-      // Öğrenci-cihaz bilgilerini getir
-      try {
-        const response = await sheets.spreadsheets.values.get({
-          spreadsheetId: process.env.SPREADSHEET_ID,
-          range: 'StudentDevices!A:C'
-        });
-        
-        const rows = response.data.values || [];
-        
-        if (rows.length > 1) {
-          // Bu hardware signature veya fingerprint ile kayıtlı başka bir öğrenci var mı kontrol et
-          for (let i = 1; i < rows.length; i++) {
-            // Bu öğrencinin kendisi değilse ve temizlenmemiş bir kayıt ise kontrol et
-            if (rows[i][0] !== studentId && 
-                rows[i][1] !== 'TEMIZLENDI' && 
-                rows[i][2] !== 'TEMIZLENDI') {
-              
-              // Hardware signature tam eşleşme kontrolü
-              if (rows[i][2] === hardwareSignature) {
-                console.log(`Cihaz başka öğrenciye ait: ${rows[i][0]}`);
-                return { 
-                  isValid: false, 
-                  error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
-                };
-              }
-              
-              // Kısaltılmış hardware signature kontrolü (Sheets'te kısaltılmış değer saklanıyor olabilir)
-              if (rows[i][2] && (
-                  hardwareSignature.startsWith(rows[i][2]) || 
-                  rows[i][2].startsWith(hardwareSignature.slice(0, 8))
-                )) {
-                console.log(`Cihaz başka öğrenciye ait (kısmi eşleşme): ${rows[i][0]}`);
-                return { 
-                  isValid: false, 
-                  error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
-                };
-              }
-              
-              // Fingerprint tam eşleşme kontrolü
-              if (rows[i][1] === fingerprint) {
-                console.log(`Cihaz fingerprinti başka öğrenciye ait: ${rows[i][0]}`);
-                return { 
-                  isValid: false, 
-                  error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
-                };
-              }
-              
-              // Kısaltılmış fingerprint kontrolü
-              if (rows[i][1] && (
-                  fingerprint.startsWith(rows[i][1]) || 
-                  rows[i][1].startsWith(fingerprint.slice(0, 8))
-                )) {
-                console.log(`Cihaz fingerprinti başka öğrenciye ait (kısmi eşleşme): ${rows[i][0]}`);
-                return { 
-                  isValid: false, 
-                  error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
-                };
-              }
-            }
-          }
-        }
-        
-        // Başlık satırını atla (ilk satır)
-        const studentRow = rows.slice(1).find(row => row[0] === studentId);
-        
-        if (!studentRow) {
-          // Öğrenci daha önce cihaz kaydetmemiş, ilk kez yoklama alıyor
-          console.log(`Öğrenci ${studentId} için ilk cihaz kaydı yapılacak`);
-          await this.registerStudentDevice(studentId, fingerprint, hardwareSignature, clientIP);
-          return { isValid: true };
-        }
-        
-        // Kayıtlı fingerprint ve hardware signature ile karşılaştır
-        const storedFingerprint = studentRow[1];
-        const storedHardwareSignature = studentRow[2];
-        
-        console.log(`Cihaz kontrolü: Öğrenci=${studentId}, Kayıtlı FP=${storedFingerprint}, Kayıtlı HW=${storedHardwareSignature}`);
-        
-        // TEMIZLENDI değeri varsa, yeni cihaz bilgisini kaydet
-        if (storedFingerprint === 'TEMIZLENDI' || storedHardwareSignature === 'TEMIZLENDI') {
-          console.log(`Öğrenci ${studentId} için temizlenmiş cihaz kaydı bulundu, yenisi kaydediliyor`);
-          await this.registerStudentDevice(studentId, fingerprint, hardwareSignature, clientIP);
-          return { isValid: true };
-        }
-        
-        // Tam eşleşme kontrolü
-        const fingerprintMatches = fingerprint === storedFingerprint;
-        const hardwareMatches = hardwareSignature === storedHardwareSignature;
-        
-        // Kısmi eşleşme kontrolü (sheets'te kısaltılmış olabilir)
-        const partialFingerprintMatches = 
-          fingerprint.startsWith(storedFingerprint) || 
-          storedFingerprint.startsWith(fingerprint.slice(0, 8));
-          
-        const partialHardwareMatches = 
-          hardwareSignature.startsWith(storedHardwareSignature) || 
-          storedHardwareSignature.startsWith(hardwareSignature.slice(0, 8));
-        
-        // Hardware signature veya fingerprint eşleşiyorsa onay ver
-        if (hardwareMatches || fingerprintMatches || partialHardwareMatches || partialFingerprintMatches) {
-          console.log(`Öğrenci ${studentId} için cihaz doğrulandı`);
-          return { isValid: true };
-        }
-        
-        console.log(`Öğrenci ${studentId} için cihaz doğrulanamadı!`);
-        return { 
-          isValid: false, 
-          error: `Bu cihaz ${studentId} numaralı öğrenciye ait değil` 
-        };
-      } catch (error) {
-        console.error('Student devices veri alma hatası:', error);
-        // Bu tür hatalarda, öğrencinin ilk kez yoklama almasına izin ver
+      if (!sheetExists) {
+        // Sayfa yoksa ilk kez yoklama alıyormuş gibi işlem yap
+        console.log('StudentDevices sayfası bulunamadı, yeni sayfa oluşturulacak');
         await this.registerStudentDevice(studentId, fingerprint, hardwareSignature, clientIP);
         return { isValid: true };
       }
+      
+      // Öğrenci-cihaz bilgilerini getir (önbellekten)
+      const rows = await this.getStudentDevicesSheetData();
+      
+      if (rows.length > 1) {
+        // Bu hardware signature veya fingerprint ile kayıtlı başka bir öğrenci var mı kontrol et
+        for (let i = 1; i < rows.length; i++) {
+          // Bu öğrencinin kendisi değilse ve temizlenmemiş bir kayıt ise kontrol et
+          if (rows[i][0] !== studentId && 
+              rows[i][1] !== 'TEMIZLENDI' && 
+              rows[i][2] !== 'TEMIZLENDI') {
+            
+            // Hardware signature tam eşleşme kontrolü
+            if (rows[i][2] === hardwareSignature) {
+              console.log(`Cihaz başka öğrenciye ait: ${rows[i][0]}`);
+              return { 
+                isValid: false, 
+                error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
+              };
+            }
+            
+            // Kısaltılmış hardware signature kontrolü (Sheets'te kısaltılmış değer saklanıyor olabilir)
+            if (rows[i][2] && (
+                hardwareSignature.startsWith(rows[i][2]) || 
+                rows[i][2].startsWith(hardwareSignature.slice(0, 8))
+              )) {
+              console.log(`Cihaz başka öğrenciye ait (kısmi eşleşme): ${rows[i][0]}`);
+              return { 
+                isValid: false, 
+                error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
+              };
+            }
+            
+            // Fingerprint tam eşleşme kontrolü
+            if (rows[i][1] === fingerprint) {
+              console.log(`Cihaz fingerprinti başka öğrenciye ait: ${rows[i][0]}`);
+              return { 
+                isValid: false, 
+                error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
+              };
+            }
+            
+            // Kısaltılmış fingerprint kontrolü
+            if (rows[i][1] && (
+                fingerprint.startsWith(rows[i][1]) || 
+                rows[i][1].startsWith(fingerprint.slice(0, 8))
+              )) {
+              console.log(`Cihaz fingerprinti başka öğrenciye ait (kısmi eşleşme): ${rows[i][0]}`);
+              return { 
+                isValid: false, 
+                error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
+              };
+            }
+          }
+        }
+      }
+      
+      // Başlık satırını atla (ilk satır)
+      const studentRow = rows.slice(1).find(row => row[0] === studentId);
+      
+      if (!studentRow) {
+        // Öğrenci daha önce cihaz kaydetmemiş, ilk kez yoklama alıyor
+        console.log(`Öğrenci ${studentId} için ilk cihaz kaydı yapılacak`);
+        await this.registerStudentDevice(studentId, fingerprint, hardwareSignature, clientIP);
+        return { isValid: true };
+      }
+      
+      // Kayıtlı fingerprint ve hardware signature ile karşılaştır
+      const storedFingerprint = studentRow[1];
+      const storedHardwareSignature = studentRow[2];
+      
+      console.log(`Cihaz kontrolü: Öğrenci=${studentId}, Kayıtlı FP=${storedFingerprint}, Kayıtlı HW=${storedHardwareSignature}`);
+      
+      // TEMIZLENDI değeri varsa, yeni cihaz bilgisini kaydet
+      if (storedFingerprint === 'TEMIZLENDI' || storedHardwareSignature === 'TEMIZLENDI') {
+        console.log(`Öğrenci ${studentId} için temizlenmiş cihaz kaydı bulundu, yenisi kaydediliyor`);
+        await this.registerStudentDevice(studentId, fingerprint, hardwareSignature, clientIP);
+        return { isValid: true };
+      }
+      
+      // Tam eşleşme kontrolü
+      const fingerprintMatches = fingerprint === storedFingerprint;
+      const hardwareMatches = hardwareSignature === storedHardwareSignature;
+      
+      // Kısmi eşleşme kontrolü (sheets'te kısaltılmış olabilir)
+      const partialFingerprintMatches = 
+        fingerprint.startsWith(storedFingerprint) || 
+        storedFingerprint.startsWith(fingerprint.slice(0, 8));
+        
+      const partialHardwareMatches = 
+        hardwareSignature.startsWith(storedHardwareSignature) || 
+        storedHardwareSignature.startsWith(hardwareSignature.slice(0, 8));
+      
+      // Hardware signature veya fingerprint eşleşiyorsa onay ver
+      if (hardwareMatches || fingerprintMatches || partialHardwareMatches || partialFingerprintMatches) {
+        console.log(`Öğrenci ${studentId} için cihaz doğrulandı`);
+        return { isValid: true };
+      }
+      
+      console.log(`Öğrenci ${studentId} için cihaz doğrulanamadı!`);
+      return { 
+        isValid: false, 
+        error: `Bu cihaz ${studentId} numaralı öğrenciye ait değil` 
+      };
     } catch (error) {
       console.error('Cihaz doğrulama hatası:', error);
-      // Genel hata durumunda da yoklamaya izin ver, güvenlik yerine kullanılabilirliği tercih edelim
+      // Genel hata durumunda yoklamaya izin ver, kullanılabilirliği tercih edelim
       return { isValid: true, error: 'Cihaz doğrulama sırasında hata oluştu, ancak yoklama alınmasına izin verildi' };
     }
   }
 
   async clearStudentDevices(): Promise<void> {
     try {
-      const auth = new google.auth.GoogleAuth({
-        credentials: {
-          type: 'service_account',
-          project_id: process.env.GOOGLE_PROJECT_ID,
-          private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-          client_email: process.env.GOOGLE_CLIENT_EMAIL,
-        },
-        scopes: ['https://www.googleapis.com/auth/spreadsheets']
-      });
-  
-      const sheets = google.sheets({ version: 'v4', auth });
+      const sheets = await this.getSheetsClient();
       
       // Önce StudentDevices sayfasının var olup olmadığını kontrol et
-      const spreadsheet = await sheets.spreadsheets.get({
-        spreadsheetId: process.env.SPREADSHEET_ID
-      });
-      
-      let sheetExists = false;
-      const sheetsList = spreadsheet.data.sheets || [];
-      for (const sheet of sheetsList) {
-        if (sheet.properties?.title === 'StudentDevices') {
-          sheetExists = true;
-          break;
-        }
-      }
+      const sheetExists = await this.checkStudentDevicesSheetExists(sheets);
       
       if (!sheetExists) {
         console.log('StudentDevices sayfası bulunamadı, temizleme işlemi atlanıyor');
         return;
       }
       
-      // Tüm verileri getir - IP sütunu için aralık genişletildi
-      const response = await sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.SPREADSHEET_ID,
-        range: 'StudentDevices!A:E'
-      });
-      
-      const rows = response.data.values || [];
+      // Tüm verileri getir
+      const rows = await this.getStudentDevicesSheetData();
       if (rows.length <= 1) {
         console.log('StudentDevices sayfasında temizlenecek veri yok');
         return; // Sadece başlık satırı var veya hiç satır yok
@@ -637,16 +708,26 @@ export class DeviceTracker {
       
       // Başlık satırını koru, tüm cihaz bilgilerini temizle
       for (let i = 1; i < rows.length; i++) {
-        // Sadece fingerprint, hardware signature ve IP sütunlarını temizle, öğrenci ID'sini ve tarihi koru
-        await sheets.spreadsheets.values.update({
-          spreadsheetId: process.env.SPREADSHEET_ID,
-          range: `StudentDevices!B${i + 1}:D${i + 1}`, // IP sütunu da dahil edildi
-          valueInputOption: 'RAW',
-          requestBody: {
-            values: [['TEMIZLENDI', 'TEMIZLENDI', 'TEMIZLENDI']] // IP için de 'TEMIZLENDI' değeri
-          }
-        });
+        // Toplu güncellemeler yerine daha küçük batch'ler halinde yap
+        if (i % 10 === 0) {
+          // Her 10 satırda bir kısa bekleme ekle
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+        await this.retryableOperation(() => 
+          sheets.spreadsheets.values.update({
+            spreadsheetId: process.env.SPREADSHEET_ID,
+            range: `StudentDevices!B${i + 1}:D${i + 1}`,
+            valueInputOption: 'RAW',
+            requestBody: {
+              values: [['TEMIZLENDI', 'TEMIZLENDI', 'TEMIZLENDI']]
+            }
+          })
+        );
       }
+      
+      // Önbelleği temizle
+      this.sheetsCache.devicesSheet = null;
       
       console.log('Tüm öğrenci cihaz eşleştirmeleri temizlendi');
     } catch (error) {
