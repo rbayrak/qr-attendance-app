@@ -236,7 +236,7 @@ const AttendanceSystem = () => {
   const clearMemoryStore = async () => {
     try {
       setIsLoading(true);
-      setStatus('🔄 Cihaz kayıtları temizleniyor...');
+      setStatus('🔄 Cihaz kayıtları temizleniyor...');  // İşlem devam ediyor mesajı
       updateDebugLogs(`🔄 Cihaz kayıtları temizleme işlemi başlatıldı`);
       
       // Timeout kontrolü ekleyin
@@ -251,15 +251,17 @@ const AttendanceSystem = () => {
         
         clearTimeout(timeoutId);
         
-        // JSON parse hatalarını yönet
+        // Yanıtı bir kez okuyun ve saklayın
+        const responseText = await response.text();
         let data;
+        
+        // JSON olarak ayrıştırmayı deneyin
         try {
-          data = await response.json();
-        } catch (jsonError) {
-          // JSON parse hatası durumunda metin içeriğini al
-          const textContent = await response.text();
-          console.error('JSON parse hatası:', textContent);
-          throw new Error(`API yanıtı JSON değil: ${textContent.slice(0, 50)}...`);
+          data = JSON.parse(responseText);
+        } catch (parseError) {
+          // JSON ayrıştırma başarısız olursa, ham metin yanıtını kullanın
+          console.error('JSON parse hatası:', responseText);
+          throw new Error(`API yanıtı geçerli bir JSON değil: ${responseText.substring(0, 50)}...`);
         }
         
         if (response.ok) {
@@ -267,8 +269,8 @@ const AttendanceSystem = () => {
           updateDebugLogs(`✅ Memory store ve Google Sheets'teki cihaz kayıtları temizlendi`);
           setTimeout(() => setStatus(''), 3000);
         } else {
-          setStatus(`❌ ${data?.error || 'Cihaz kayıtları temizlenemedi'}`);
-          updateDebugLogs(`❌ HATA: ${data?.error || 'Bilinmeyen hata'}`);
+          setStatus(`❌ ${data.error || 'Cihaz kayıtları temizlenemedi'}`);
+          updateDebugLogs(`❌ HATA: ${data.error || 'Bilinmeyen hata'}`);
         }
       } catch (fetchError: any) {
         if (fetchError.name === 'AbortError') {
