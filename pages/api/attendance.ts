@@ -311,11 +311,12 @@ async function processPostRequest(
 }
 
 // DELETE isteklerini işleyen fonksiyon
+// DELETE isteklerini işleyen fonksiyon
 async function handleDeleteRequest(
   req: NextApiRequest,
   res: NextApiResponse<ResponseData>
 ) {
-  const { fingerprint } = req.query;
+  const { fingerprint, cleanStep } = req.query;
 
   try {
     if (fingerprint) {
@@ -399,7 +400,102 @@ async function handleDeleteRequest(
         success: true,
         message: `${fingerprint} fingerprint'i silindi`
       });
-    } else {
+    } 
+    else if (cleanStep) {
+      // Aşamalı temizleme işlemi
+      if (cleanStep === 'memory') {
+        // Sadece memory store'u temizle
+        deviceTracker.clearMemoryStore();
+        
+        // Önbelleği temizle
+        cache.mainSheet = {
+          data: null,
+          timestamp: 0
+        };
+        cache.studentLookup.clear();
+        
+        console.log('Memory store ve önbellek temizlendi');
+        return res.status(200).json({ 
+          success: true,
+          message: 'Memory store temizlendi'
+        });
+      }
+      else if (cleanStep === 'sheets') {
+        // Sadece Google Sheets'i temizle
+        try {
+          await deviceTracker.clearStudentDevices();
+          console.log('StudentDevices sayfası temizlendi');
+          
+          // Ana sayfadaki yoklama verilerinden cihaz bilgilerini temizlemeye çalış
+          // Ancak bu işlem zaman aşımına neden olabilir, o yüzden daha küçük parçalara bölelim
+          const sheets = await getSheetsClient();
+          const rows = await getMainSheetData(true); // Önbelleği zorla güncelle
+          
+          if (rows && rows.length > 0) {
+            // Sadece ilk 100 satır ve ilk 16 hafta sütununu temizle (zaman aşımı sorunu için)
+            const maxRows = Math.min(100, rows.length);
+            const maxCols = 16; // 16 hafta
+            let updateCount = 0;
+            
+            for (let i = 1; i < maxRows; i++) {
+              if (!rows[i]) continue;
+              
+              for (let j = 0; j < maxCols; j++) {
+                const colIndex = 3 + j; // 3. sütundan başlayarak haftalar
+                if (colIndex >= rows[i].length) continue;
+                
+                const cell = rows[i][colIndex];
+                if (cell && (cell.includes('(DF:') || cell.includes('(HW:') || cell.includes('(DATE:'))) {
+                  const range = `${String.fromCharCode(65 + colIndex)}${i + 1}`;
+                  
+                  try {
+                    await retryableOperation(() => 
+                      sheets.spreadsheets.values.update({
+                        spreadsheetId: process.env.SPREADSHEET_ID,
+                        range: range,
+                        valueInputOption: 'RAW',
+                        requestBody: {
+                          values: [['VAR']]
+                        }
+                      })
+                    );
+                    updateCount++;
+                    
+                    // Her 10 güncellemede bir kısa bekleme
+                    if (updateCount % 10 === 0) {
+                      await new Promise(resolve => setTimeout(resolve, 100));
+                    }
+                  } catch (error) {
+                    console.error(`Hücre güncelleme hatası (${range}):`, error);
+                    // Hatayı yutup devam et
+                  }
+                }
+              }
+            }
+            
+            console.log(`Ana sayfada ${updateCount} hücre temizlendi`);
+          }
+          
+          return res.status(200).json({ 
+            success: true,
+            message: 'Google Sheets temizlendi'
+          });
+        } catch (error) {
+          console.error('Google Sheets temizleme hatası:', error);
+          return res.status(500).json({ 
+            success: false,
+            error: 'Google Sheets temizlenemedi'
+          });
+        }
+      }
+      else {
+        return res.status(400).json({ 
+          success: false,
+          error: 'Geçersiz cleanStep değeri'
+        });
+      }
+    }
+    else {
       // Tüm cihaz kayıtlarını temizle
       console.log('Tüm cihaz kayıtları temizleme işlemi başlatıldı');
       
@@ -407,7 +503,12 @@ async function handleDeleteRequest(
       deviceTracker.clearMemoryStore();
       
       // 2. Google Sheets'teki öğrenci-cihaz eşleştirmelerini temizle
-      await deviceTracker.clearStudentDevices();
+      try {
+        await deviceTracker.clearStudentDevices();
+      } catch (error) {
+        console.error('StudentDevices temizleme hatası:', error);
+        // Bu hatayı yutup devam edelim
+      }
       
       // 3. Önbelleği temizle
       cache.mainSheet = {

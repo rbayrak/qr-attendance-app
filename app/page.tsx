@@ -51,7 +51,7 @@ const initializeGoogleAuth = () => {
             plugin_name: 'qr-attendance'
           });
 
-          tokenClient = google.accounts.oauth2.initTokenClient({
+          tokenClient = window.google.accounts.oauth2.initTokenClient({
             client_id: clientId,
             scope: 'https://www.googleapis.com/auth/spreadsheets',
             callback: (tokenResponse: any) => {
@@ -240,47 +240,43 @@ const AttendanceSystem = () => {
       setStatus('🔄 Cihaz kayıtları temizleniyor...');
       updateDebugLogs(`🔄 Cihaz kayıtları temizleme işlemi başlatıldı`);
       
-      // /api/memory yerine /api/attendance endpointini kullan (parametresiz DELETE)
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
-      
+      // Adım 1: Sadece memory'yi temizle
       try {
-        // Değişiklik burada: /api/memory yerine /api/attendance kullanıyoruz
-        const response = await fetch('/api/attendance', {
-          method: 'DELETE',
-          signal: controller.signal
+        const response1 = await fetch('/api/attendance?cleanStep=memory', {
+          method: 'DELETE'
         });
         
-        clearTimeout(timeoutId);
-        
-        if (response.ok) {
-          setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
-          updateDebugLogs(`✅ Memory store ve Google Sheets'teki cihaz kayıtları temizlendi`);
-          setTimeout(() => setStatus(''), 3000);
-        } else {
-          // Hata durumunda yanıtı güvenli bir şekilde okuyalım
+        if (response1.ok) {
+          setStatus('✅ Memory store temizlendi, Google Sheets temizleniyor...');
+          updateDebugLogs(`✅ Memory store temizlendi, Google Sheets işlemi başlatılıyor...`);
+          
+          // Adım 2: Google Sheets'i temizle
           try {
-            const data = await response.json();
-            setStatus(`❌ ${data.error || 'Cihaz kayıtları temizlenemedi'}`);
-            updateDebugLogs(`❌ HATA: ${data.error}`);
-          } catch (jsonError) {
-            // JSON parse hatası olursa, durum kodunu gösterelim
-            setStatus(`❌ API hatası (${response.status}): Cihaz kayıtları temizlenemedi`);
-            updateDebugLogs(`❌ API Hatası: HTTP ${response.status}`);
+            const response2 = await fetch('/api/attendance?cleanStep=sheets', {
+              method: 'DELETE'
+            });
+            
+            if (response2.ok) {
+              setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
+              updateDebugLogs(`✅ Memory store ve Google Sheets kayıtları temizlendi`);
+              setTimeout(() => setStatus(''), 3000);
+            } else {
+              setStatus('⚠️ Memory store temizlendi ancak Google Sheets işlemi tamamlanamadı');
+              updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası`);
+            }
+          } catch (sheetsError: any) { // 'any' tipini ekledik
+            setStatus('⚠️ Memory store temizlendi ancak Google Sheets işlemi başarısız oldu');
+            updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası: ${sheetsError.message || 'Bilinmeyen hata'}`);
           }
-        }
-      } catch (fetchError: any) {
-        if (fetchError.name === 'AbortError') {
-          setStatus('⚠️ İşlem zaman aşımına uğradı, daha sonra tekrar deneyin');
-          updateDebugLogs(`⚠️ TIMEOUT: Cihaz kayıtlarını temizleme işlemi zaman aşımına uğradı`);
         } else {
-          throw fetchError;
+          setStatus('❌ Memory store temizlenemedi');
+          updateDebugLogs(`❌ HATA: Memory store temizleme hatası`);
         }
+      } catch (error: any) { // 'any' tipini ekledik
+        const errorMessage = error.message || 'Bilinmeyen hata';
+        setStatus(`❌ Hata: ${errorMessage}`);
+        updateDebugLogs(`❌ HATA: ${errorMessage}`);
       }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-      setStatus(`❌ Hata: ${errorMessage}`);
-      updateDebugLogs(`❌ HATA: ${errorMessage}`);
     } finally {
       setIsLoading(false);
     }
@@ -291,32 +287,51 @@ const AttendanceSystem = () => {
       setIsLoading(true);
       updateDebugLogs(`🔄 Fingerprint silme işlemi başlatıldı: ${fingerprintToDelete}`);
       
-      const response = await fetch(`/api/attendance?fingerprint=${fingerprintToDelete}`, {
-        method: 'DELETE'
-      });
-  
-      const data = await response.json();
+      // Timeout kontrolü ekleyin
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
       
-      if (response.ok) {
-        setStatus('✅ Fingerprint başarıyla silindi');
-        updateDebugLogs(`✅ Fingerprint memory ve sheets'ten silindi: ${fingerprintToDelete}`);
-        // 3 saniye sonra status'ü temizle
-        setTimeout(() => setStatus(''), 3000);
-      } else {
-        setStatus(`❌ ${data.error || 'Fingerprint silinemedi'}`);
-        updateDebugLogs(`❌ HATA: ${data.error}`);
+      try {
+        const response = await fetch(`/api/attendance?fingerprint=${fingerprintToDelete}`, {
+          method: 'DELETE',
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        // JSON parse hatalarını yönet
+        let data;
+        try {
+          data = await response.json();
+        } catch (parseError) {
+          throw new Error('API yanıtı JSON değil');
+        }
+        
+        if (response.ok) {
+          setStatus('✅ Fingerprint başarıyla silindi');
+          updateDebugLogs(`✅ Fingerprint memory ve sheets'ten silindi: ${fingerprintToDelete}`);
+          // 3 saniye sonra status'ü temizle
+          setTimeout(() => setStatus(''), 3000);
+        } else {
+          setStatus(`❌ ${data.error || 'Fingerprint silinemedi'}`);
+          updateDebugLogs(`❌ HATA: ${data.error}`);
+        }
+      } catch (fetchError: any) {
+        if (fetchError.name === 'AbortError') {
+          setStatus('⚠️ İşlem zaman aşımına uğradı');
+          updateDebugLogs(`⚠️ TIMEOUT: Fingerprint silme işlemi zaman aşımına uğradı`);
+        } else {
+          const errorMessage = fetchError.message || 'Bilinmeyen hata';
+          setStatus(`❌ Hata: ${errorMessage}`);
+          updateDebugLogs(`❌ HATA: ${errorMessage}`);
+        }
       }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-      setStatus(`❌ Hata: ${errorMessage}`);
-      updateDebugLogs(`❌ HATA: ${errorMessage}`);
     } finally {
       setIsLoading(false);
       setShowFingerprintModal(false);
       setFingerprintToDelete('');
     }
   };
-
   
 
   // Debug loglarını güncelleyen yardımcı fonksiyon
