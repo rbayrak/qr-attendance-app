@@ -250,17 +250,27 @@ const AttendanceSystem = () => {
         });
         
         clearTimeout(timeoutId);
-        const data = await response.json();
+        
+        // JSON parse hatalarını yönet
+        let data;
+        try {
+          data = await response.json();
+        } catch (jsonError) {
+          // JSON parse hatası durumunda metin içeriğini al
+          const textContent = await response.text();
+          console.error('JSON parse hatası:', textContent);
+          throw new Error(`API yanıtı JSON değil: ${textContent.slice(0, 50)}...`);
+        }
         
         if (response.ok) {
           setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
           updateDebugLogs(`✅ Memory store ve Google Sheets'teki cihaz kayıtları temizlendi`);
           setTimeout(() => setStatus(''), 3000);
         } else {
-          setStatus(`❌ ${data.error || 'Cihaz kayıtları temizlenemedi'}`);
-          updateDebugLogs(`❌ HATA: ${data.error}`);
+          setStatus(`❌ ${data?.error || 'Cihaz kayıtları temizlenemedi'}`);
+          updateDebugLogs(`❌ HATA: ${data?.error || 'Bilinmeyen hata'}`);
         }
-      } catch (fetchError: any) {  // any tipini ekledik
+      } catch (fetchError: any) {
         if (fetchError.name === 'AbortError') {
           setStatus('⚠️ İşlem zaman aşımına uğradı, daha sonra tekrar deneyin');
           updateDebugLogs(`⚠️ TIMEOUT: Cihaz kayıtlarını temizleme işlemi zaman aşımına uğradı`);
