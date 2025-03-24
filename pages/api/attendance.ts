@@ -425,64 +425,73 @@ async function handleDeleteRequest(
           await deviceTracker.clearStudentDevices();
           console.log('StudentDevices sayfası temizlendi');
           
-          // Ana sayfadaki tüm hücreleri değil, sadece bir kısmını temizle
-          const sheets = await getSheetsClient();
-          const rows = await getMainSheetData(true); // Önbelleği zorla güncelle
+          // Seçili haftayı al (eğer belirtilmişse)
+          const selectedWeek = req.query.week ? parseInt(req.query.week as string) : null;
           
-          let updateCount = 0; // Değişkeni try bloğunun başına taşıdım
+          let updateCount = 0;
           
-          if (rows && rows.length > 0) {
-            // Daha az satır ve sütun güncelle
-            const maxRows = Math.min(50, rows.length); // 100 yerine 50 satır
-            const maxCols = 16; // Aynı kalabilir
+          if (selectedWeek) {
+            // Eğer hafta seçilmişse, sadece o haftanın sütununu temizle
+            const sheets = await getSheetsClient();
+            const rows = await getMainSheetData(true); // Önbelleği zorla güncelle
             
-            for (let i = 1; i < maxRows; i++) {
-              if (!rows[i]) continue;
+            if (rows && rows.length > 0) {
+              // Hafta sütununu hesapla (3 + hafta - 1)
+              const weekColumnIndex = 3 + (selectedWeek - 1);
+              const columnLetter = String.fromCharCode(65 + weekColumnIndex);
               
-              for (let j = 0; j < maxCols; j++) {
-                const colIndex = 3 + j;
-                if (colIndex >= rows[i].length) continue;
+              console.log(`${selectedWeek}. hafta temizleniyor (${columnLetter} sütunu)...`);
+              
+              // Tüm satırları dolaş
+              for (let i = 1; i < rows.length; i++) {
+                if (!rows[i]) continue;
                 
-                const cell = rows[i][colIndex];
-                if (cell && (cell.includes('(DF:') || cell.includes('(HW:') || cell.includes('(DATE:'))) {
-                  const range = `${String.fromCharCode(65 + colIndex)}${i + 1}`;
+                // Sadece seçili haftanın sütununu kontrol et
+                if (weekColumnIndex < rows[i].length) {
+                  const cell = rows[i][weekColumnIndex];
                   
-                  try {
-                    // Daha uzun bekleme süreleri ekleyin
-                    if (updateCount > 0) {
-                      await new Promise(resolve => setTimeout(resolve, 300)); // 100ms yerine 300ms
-                    }
+                  if (cell && (cell.includes('(DF:') || cell.includes('(HW:') || cell.includes('(DATE:'))) {
+                    const range = `${columnLetter}${i + 1}`;
                     
-                    await retryableOperation(() => 
-                      sheets.spreadsheets.values.update({
-                        spreadsheetId: process.env.SPREADSHEET_ID,
-                        range: range,
-                        valueInputOption: 'RAW',
-                        requestBody: {
-                          values: [['VAR']]
-                        }
-                      })
-                    );
-                    updateCount++;
-                    
-                    // Daha sık beklemeler ekleyin
-                    if (updateCount % 5 === 0) { // 10 yerine 5
-                      await new Promise(resolve => setTimeout(resolve, 500)); // 500ms
+                    try {
+                      // İstekler arası bekleme
+                      if (updateCount > 0) {
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                      }
+                      
+                      await retryableOperation(() => 
+                        sheets.spreadsheets.values.update({
+                          spreadsheetId: process.env.SPREADSHEET_ID,
+                          range: range,
+                          valueInputOption: 'RAW',
+                          requestBody: {
+                            values: [['VAR']]
+                          }
+                        })
+                      );
+                      updateCount++;
+                      
+                      // Her 10 güncellemede bir kısa bekleme
+                      if (updateCount % 10 === 0) {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                      }
+                    } catch (error) {
+                      console.error(`Hücre güncelleme hatası (${range}):`, error);
+                      // Hatayı yutup devam et
                     }
-                  } catch (error) {
-                    console.error(`Hücre güncelleme hatası (${range}):`, error);
-                    // Hatayı yutup devam et
                   }
                 }
               }
+              
+              console.log(`${selectedWeek}. haftada ${updateCount} hücre temizlendi`);
             }
-            
-            console.log(`Ana sayfada ${updateCount} hücre temizlendi`);
           }
           
           return res.status(200).json({ 
             success: true,
-            message: `Google Sheets temizlendi (${updateCount} hücre güncellendi)`
+            message: selectedWeek 
+              ? `${selectedWeek}. hafta temizlendi (${updateCount} hücre güncellendi)`
+              : 'StudentDevices sayfası temizlendi'
           });
         } catch (error) {
           console.error('Google Sheets temizleme hatası:', error);

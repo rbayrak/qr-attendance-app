@@ -250,36 +250,29 @@ const AttendanceSystem = () => {
           setStatus('✅ Memory store temizlendi, Google Sheets temizleniyor...');
           updateDebugLogs(`✅ Memory store temizlendi, Google Sheets işlemi başlatılıyor...`);
           
-          // Adım 2: Google Sheets'i temizle
+          // Adım 2: Google Sheets'i temizle - seçili haftayı gönder
           try {
-            console.log('Google Sheets temizleme isteği gönderiliyor...');
-            const response2 = await fetch('/api/attendance?cleanStep=sheets', {
+            const response2 = await fetch(`/api/attendance?cleanStep=sheets&week=${selectedWeek}`, {
               method: 'DELETE'
             });
             
-            // Response'u text olarak al, parsing hatalarını önlemek için
-            const responseText = await response2.text();
-            console.log(`Sheets response: ${response2.status}, Body:`, responseText);
-            
-            // Başarılı mı değil mi analiz et
             if (response2.ok) {
               setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
               updateDebugLogs(`✅ Memory store ve Google Sheets kayıtları temizlendi`);
               setTimeout(() => setStatus(''), 3000);
             } else {
-              setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi tamamlanamadı: ${responseText}`);
+              setStatus('⚠️ Memory store temizlendi ancak Google Sheets işlemi tamamlanamadı');
               updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası`);
             }
           } catch (sheetsError: any) {
-            console.error('Sheets error details:', sheetsError);
-            setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi başarısız oldu`);
+            setStatus('⚠️ Memory store temizlendi ancak Google Sheets işlemi başarısız oldu');
             updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası: ${sheetsError.message || 'Bilinmeyen hata'}`);
           }
         } else {
           setStatus('❌ Memory store temizlenemedi');
           updateDebugLogs(`❌ HATA: Memory store temizleme hatası`);
         }
-      } catch (error: any) { // 'any' tipini ekledik
+      } catch (error: any) {
         const errorMessage = error.message || 'Bilinmeyen hata';
         setStatus(`❌ Hata: ${errorMessage}`);
         updateDebugLogs(`❌ HATA: ${errorMessage}`);
