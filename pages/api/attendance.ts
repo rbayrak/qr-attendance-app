@@ -172,6 +172,7 @@ async function processQueue() {
 }
 
 // POST isteklerini işleyen asıl fonksiyon
+// POST isteklerini işleyen asıl fonksiyon
 async function processPostRequest(
   req: NextApiRequest,
   res: NextApiResponse<ResponseData>
@@ -198,22 +199,17 @@ async function processPostRequest(
       });
     }
 
-    // 2. Öğrenci kendi cihazını mı kullanıyor kontrolü
-    const studentDeviceCheck = await deviceTracker.validateStudentDevice(
+    // 2. Öğrenci cihaz kaydı (önceki kontrol kaldırıldı)
+    // Artık bu fonksiyon her zaman { isValid: true } dönecek
+    await deviceTracker.validateStudentDevice(
       studentId, 
       deviceFingerprint,
       hardwareSignature,
       clientIP
     );
-    
-    if (!studentDeviceCheck.isValid) {
-      return res.status(403).json({
-        error: studentDeviceCheck.error || 'Bu cihaz bu öğrenciye ait değil',
-        unauthorizedDevice: true
-      });
-    }
 
-    // 3. Device Tracker kontrolü
+    // 3. Device Tracker kontrolü - asıl önemli olan kontrol
+    // "Bugün başka öğrenci tarafından kullanılmış mı?" kontrolü
     const validationResult = await deviceTracker.validateDeviceAccess(
       deviceFingerprint,
       studentId,
@@ -275,17 +271,17 @@ async function processPostRequest(
       range: range,
       valueInputOption: 'RAW',
       requestBody: {
-        values: [[`VAR (DF:${deviceFingerprint.slice(0, 8)}) (HW:${hardwareSignature.slice(0, 8)}) (IP:${clientIP.split('.').slice(0, 2).join('.')}) (DATE:${Date.now()})`]]
+        values: [[`VAR (DF:${deviceFingerprint.slice(0, 8)}) (HW:${hardwareSignature.slice(0, 8)}) (IP:${clientIP}) (DATE:${Date.now()})`]]
       }
     });
 
 
     // 11. Önbelleği güncelle (yoklama bilgileri değişti)
     if (rows[studentRowIndex]) {
-      rows[studentRowIndex][weekColumnIndex] = `VAR (DF:${deviceFingerprint.slice(0, 8)}) (HW:${hardwareSignature.slice(0, 8)}) (IP:${clientIP.split('.').slice(0, 2).join('.')}) (DATE:${Date.now()})`;
+      rows[studentRowIndex][weekColumnIndex] = `VAR (DF:${deviceFingerprint.slice(0, 8)}) (HW:${hardwareSignature.slice(0, 8)}) (IP:${clientIP}) (DATE:${Date.now()})`;
     }
 
-    // 11. Başarılı yanıt
+    // 12. Başarılı yanıt
     res.status(200).json({ 
       success: true,
       isAlreadyAttended: isAlreadyAttended, // Burada öğrencinin önceden yoklama alıp almadığı bilgisini gönderiyoruz

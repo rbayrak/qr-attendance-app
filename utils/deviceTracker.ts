@@ -90,6 +90,37 @@ export class DeviceTracker {
     return google.sheets({ version: 'v4', auth });
   }
 
+
+  // DeviceTracker sınıfına eklenecek yeni fonksiyon
+  private calculateDeviceSimilarity(
+    fingerprint1: string,
+    fingerprint2: string,
+    hardware1: string,
+    hardware2: string
+  ): number {
+    let score = 0;
+    
+    // Fingerprint benzerlik hesabı (40 puan)
+    if (fingerprint1 === fingerprint2) {
+      score += 40; // Tam eşleşme
+    } else if (fingerprint1.startsWith(fingerprint2.slice(0, 8)) || 
+              fingerprint2.startsWith(fingerprint1.slice(0, 8))) {
+      // Kısmi eşleşmede 20 puan
+      score += 20;
+    }
+    
+    // Hardware signature benzerlik hesabı (60 puan - daha güvenilir)
+    if (hardware1 === hardware2) {
+      score += 60; // Tam eşleşme
+    } else if (hardware1.startsWith(hardware2.slice(0, 8)) || 
+              hardware2.startsWith(hardware1.slice(0, 8))) {
+      // Kısmi eşleşmede 30 puan
+      score += 30;
+    }
+    
+    return score;
+  }
+
   async trackDevice(
     deviceFingerprint: string,
     studentId: string,
@@ -106,26 +137,30 @@ export class DeviceTracker {
       // 2. Aynı gün içinde kullanılmış cihaz kontrolü
       let potentialBlockingRecord = null;
       
-      // Önce IP kontrolü yap
+      // Tüm kayıtları kontrol et
       for (const [_, record] of this.memoryStore) {
         const recordDate = new Date(record.lastUsedDate);
         
-        // Gün bazında karşılaştırma yap
+        // Sadece bugünün kayıtlarını kontrol et
         if (recordDate >= today && recordDate < tomorrow) {
           // Eğer IP farklıysa, farklı cihaz olarak kabul et ve devam et
           if (record.lastKnownIP !== ip) {
-            continue; // IP farklı, bu farklı bir cihaz kabul ediliyor
+            continue; // Kesinlikle farklı cihaz
           }
           
-          // IP'ler aynı ise artık fingerprint VE hardware'in BERABER eşleşmesini kontrol et
-          const hardwareMatches = record.hardwareSignature === hardwareSignature;
-          const fingerprintMatches = record.fingerprints.includes(deviceFingerprint);
-          
-          // Hem hardware hem de fingerprint eşleşiyorsa bu kesinlikle aynı cihazdır
-          const isMatchedDevice = hardwareMatches && fingerprintMatches;
+          // IP'ler aynı ise fingerprint ve hardware benzerliğini kontrol et
+          const similarityScore = this.calculateDeviceSimilarity(
+            record.fingerprints[0], // İlk kaydedilen fingerprint
+            deviceFingerprint,
+            record.hardwareSignature,
+            hardwareSignature
+          );
+  
+          // Benzerlik skoru 50'den büyükse, aynı cihaz olarak kabul et
+          const isSameDevice = similarityScore >= 50;
           
           // Eğer aynı cihaz ve farklı öğrenciyse engelle
-          if (isMatchedDevice && record.studentId !== studentId) {
+          if (isSameDevice && record.studentId !== studentId) {
             potentialBlockingRecord = record;
             break;
           }
@@ -323,7 +358,7 @@ export class DeviceTracker {
     ip: string
   ): Promise<ValidationResult> {
     try {
-      // Ana sayfayı önbellekten al (veya API'den çekilir)
+      // Ana sayfayı önbellekten al
       const rows = await this.getMainSheetData();
       if (!rows) return { isValid: true };
   
@@ -334,14 +369,14 @@ export class DeviceTracker {
       // Eşleşen öğrenciyi takip etmek için değişken
       let matchedStudent = null;
       
-      // Tüm hücreleri kontrol et (önbellekten alındığı için daha hızlı)
+      // Tüm hücreleri kontrol et
       for (let i = 1; i < rows.length; i++) {
-        // Farklı öğrenci ID'si
+        // Sadece farklı öğrenci ID'leri için kontrol et
         if (rows[i][1] !== studentId) {
           for (let j = 3; j < rows[i].length; j++) {
             const cell = rows[i][j] || '';
             if (typeof cell === 'string') {
-              // Tarih kontrolü - güncel mi?
+              // Tarih kontrolü - bugünün kaydı mı?
               try {
                 const dateMatch = cell.match(/\(DATE:(\d+)\)/);
                 if (dateMatch) {
@@ -349,15 +384,14 @@ export class DeviceTracker {
                   
                   // Sadece bugünün kayıtları için kontrol et
                   if (recordDate >= today) {
-                    // Önce IP Adresi kontrolü
+                    // IP kontrolü
                     const ipMatch = cell.match(/\(IP:([^)]+)\)/);
                     if (ipMatch && ip) {
-                      // IP aynı mı kontrol et (ilk iki okteti karşılaştırıyoruz)
-                      const cellIpPrefix = ipMatch[1];
-                      const currentIpPrefix = ip.split('.').slice(0, 2).join('.');
+                      // IP aynı mı kontrol et (artık tam IP karşılaştırması)
+                      const cellIp = ipMatch[1];
                       
-                      // IP farklıysa, bu farklı bir cihaz demektir, kontrole devam et
-                      if (cellIpPrefix !== currentIpPrefix) {
+                      // IP farklıysa, bu farklı bir cihaz demektir
+                      if (cellIp !== ip) {
                         continue;
                       }
                       
@@ -365,9 +399,14 @@ export class DeviceTracker {
                       const hasFingerprint = cell.includes(`(DF:${fingerprint.slice(0, 8)})`);
                       const hasHardware = cell.includes(`(HW:${hardwareSignature.slice(0, 8)})`);
                       
-                      // Fingerprint veya hardware eşleşiyorsa bu aynı cihazdır
-                      if (hasFingerprint && hasHardware) {
-                        matchedStudent = rows[i][1]; // Öğrenci ID'sini tut
+                      // Benzerlik skoru hesapla (basitleştirilmiş)
+                      let similarityScore = 0;
+                      if (hasFingerprint) similarityScore += 40;
+                      if (hasHardware) similarityScore += 30;
+                      
+                      // Benzerlik skoru 40 veya üzerindeyse, bu aynı cihazdır
+                      if (similarityScore >= 40) {
+                        matchedStudent = rows[i][1];
                         break;
                       }
                     }
@@ -396,8 +435,7 @@ export class DeviceTracker {
       return { isValid: true };
     } catch (error) {
       console.error('Sheets check error:', error);
-      // Hata durumunda geçişi engelleme, devam et
-      return { isValid: true };
+      return { isValid: true }; // Hata durumunda geçişe izin ver
     }
   }
 
@@ -565,124 +603,33 @@ export class DeviceTracker {
     clientIP?: string
   ): Promise<{isValid: boolean; error?: string}> {
     try {
-      const sheets = await this.getSheetsClient();
+      // Artık öğrencinin kendi cihazını kullanıp kullanmadığını kontrol etmiyoruz
+      // Sadece cihazın ilk kez kullanılması durumunda kaydedelim
       
-      // Önce StudentDevices sayfasının var olup olmadığını kontrol et
+      const sheets = await this.getSheetsClient();
       const sheetExists = await this.checkStudentDevicesSheetExists(sheets);
       
       if (!sheetExists) {
-        // Sayfa yoksa ilk kez yoklama alıyormuş gibi işlem yap
-        console.log('StudentDevices sayfası bulunamadı, yeni sayfa oluşturulacak');
+        // Sayfa yoksa oluştur ve ilk kaydı ekle
         await this.registerStudentDevice(studentId, fingerprint, hardwareSignature, clientIP);
-        return { isValid: true };
-      }
-      
-      // Öğrenci-cihaz bilgilerini getir (önbellekten)
-      const rows = await this.getStudentDevicesSheetData();
-      
-      if (rows.length > 1) {
-        // Bu hardware signature veya fingerprint ile kayıtlı başka bir öğrenci var mı kontrol et
-        for (let i = 1; i < rows.length; i++) {
-          // Bu öğrencinin kendisi değilse ve temizlenmemiş bir kayıt ise kontrol et
-          if (rows[i][0] !== studentId && 
-              rows[i][1] !== 'TEMIZLENDI' && 
-              rows[i][2] !== 'TEMIZLENDI') {
-            
-            // Hardware signature tam eşleşme kontrolü
-            if (rows[i][2] === hardwareSignature) {
-              console.log(`Cihaz başka öğrenciye ait: ${rows[i][0]}`);
-              return { 
-                isValid: false, 
-                error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
-              };
-            }
-            
-            // Kısaltılmış hardware signature kontrolü (Sheets'te kısaltılmış değer saklanıyor olabilir)
-            if (rows[i][2] && (
-                hardwareSignature.startsWith(rows[i][2]) || 
-                rows[i][2].startsWith(hardwareSignature.slice(0, 8))
-              )) {
-              console.log(`Cihaz başka öğrenciye ait (kısmi eşleşme): ${rows[i][0]}`);
-              return { 
-                isValid: false, 
-                error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
-              };
-            }
-            
-            // Fingerprint tam eşleşme kontrolü
-            if (rows[i][1] === fingerprint) {
-              console.log(`Cihaz fingerprinti başka öğrenciye ait: ${rows[i][0]}`);
-              return { 
-                isValid: false, 
-                error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
-              };
-            }
-            
-            // Kısaltılmış fingerprint kontrolü
-            if (rows[i][1] && (
-                fingerprint.startsWith(rows[i][1]) || 
-                rows[i][1].startsWith(fingerprint.slice(0, 8))
-              )) {
-              console.log(`Cihaz fingerprinti başka öğrenciye ait (kısmi eşleşme): ${rows[i][0]}`);
-              return { 
-                isValid: false, 
-                error: `Bu cihaz ${rows[i][0]} numaralı öğrenciye ait` 
-              };
-            }
-          }
-        }
-      }
-      
-      // Başlık satırını atla (ilk satır)
-      const studentRow = rows.slice(1).find(row => row[0] === studentId);
-      
-      if (!studentRow) {
-        // Öğrenci daha önce cihaz kaydetmemiş, ilk kez yoklama alıyor
-        console.log(`Öğrenci ${studentId} için ilk cihaz kaydı yapılacak`);
-        await this.registerStudentDevice(studentId, fingerprint, hardwareSignature, clientIP);
-        return { isValid: true };
-      }
-      
-      // Kayıtlı fingerprint ve hardware signature ile karşılaştır
-      const storedFingerprint = studentRow[1];
-      const storedHardwareSignature = studentRow[2];
-      
-      console.log(`Cihaz kontrolü: Öğrenci=${studentId}, Kayıtlı FP=${storedFingerprint}, Kayıtlı HW=${storedHardwareSignature}`);
-      
-      // TEMIZLENDI değeri varsa, yeni cihaz bilgisini kaydet
-      if (storedFingerprint === 'TEMIZLENDI' || storedHardwareSignature === 'TEMIZLENDI') {
-        console.log(`Öğrenci ${studentId} için temizlenmiş cihaz kaydı bulundu, yenisi kaydediliyor`);
-        await this.registerStudentDevice(studentId, fingerprint, hardwareSignature, clientIP);
-        return { isValid: true };
-      }
-      
-      // Tam eşleşme kontrolü
-      const fingerprintMatches = fingerprint === storedFingerprint;
-      const hardwareMatches = hardwareSignature === storedHardwareSignature;
-      
-      // Kısmi eşleşme kontrolü (sheets'te kısaltılmış olabilir)
-      const partialFingerprintMatches = 
-        fingerprint.startsWith(storedFingerprint) || 
-        storedFingerprint.startsWith(fingerprint.slice(0, 8));
+      } else {
+        // Sayfa varsa, bu öğrenci için kayıt var mı kontrol et
+        const rows = await this.getStudentDevicesSheetData();
+        const studentRow = rows.slice(1).find(row => row[0] === studentId);
         
-      const partialHardwareMatches = 
-        hardwareSignature.startsWith(storedHardwareSignature) || 
-        storedHardwareSignature.startsWith(hardwareSignature.slice(0, 8));
-      
-      // Hardware signature veya fingerprint eşleşiyorsa onay ver
-      if (hardwareMatches || fingerprintMatches || partialHardwareMatches || partialFingerprintMatches) {
-        console.log(`Öğrenci ${studentId} için cihaz doğrulandı`);
-        return { isValid: true };
+        // Öğrenci kaydı yoksa veya "TEMIZLENDI" ise yeni kayıt ekle
+        if (!studentRow || 
+            studentRow[1] === 'TEMIZLENDI' || 
+            studentRow[2] === 'TEMIZLENDI') {
+          await this.registerStudentDevice(studentId, fingerprint, hardwareSignature, clientIP);
+        }
+        // Öğrencinin kayıtlı cihazı olsa bile kontrol etmiyoruz artık
       }
       
-      console.log(`Öğrenci ${studentId} için cihaz doğrulanamadı!`);
-      return { 
-        isValid: false, 
-        error: `Bu cihaz ${studentId} numaralı öğrenciye ait değil` 
-      };
+      // Her durumda izin ver - öğrencinin aynı/farklı cihaz kullanması önemli değil
+      return { isValid: true };
     } catch (error) {
       console.error('Cihaz doğrulama hatası:', error);
-      // Genel hata durumunda yoklamaya izin ver, kullanılabilirliği tercih edelim
       return { isValid: true, error: 'Cihaz doğrulama sırasında hata oluştu, ancak yoklama alınmasına izin verildi' };
     }
   }
