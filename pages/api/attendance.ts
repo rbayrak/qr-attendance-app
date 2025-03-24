@@ -421,48 +421,39 @@ async function handleDeleteRequest(
       }
       else if (cleanStep === 'sheets') {
         try {
+          // StudentDevices sayfasını temizle - bu işlem genellikle hızlıdır
           await deviceTracker.clearStudentDevices();
           console.log('StudentDevices sayfası temizlendi');
           
-          // Seçili haftayı al (eğer belirtilmişse)
+          // Seçili haftayı al
           const selectedWeek = req.query.week ? parseInt(req.query.week as string) : null;
-          
-          // Değişkeni bloğun dışında tanımla
-          let updateCount = 0;
           
           if (selectedWeek) {
             console.log(`${selectedWeek}. hafta için temizleme işlemi başlıyor...`);
-            // Timeout risk - daha uzun bir süre için
-            const timeoutPromise = new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('İşlem zaman aşımına uğradı')), 25000)
-            );
             
-            try {
-              // Promise.race ile hem işlemi hem de timeout'u izle
-              updateCount = await Promise.race([
-                deviceTracker.clearSheetWeek(selectedWeek),
-                timeoutPromise
-              ]) as number;
-              
-              console.log(`${selectedWeek}. haftada ${updateCount} hücre temizlendi`);
-            } catch (weekError: any) {
-              console.error('Hafta temizleme hatası:', weekError);
-              if (weekError.message === 'İşlem zaman aşımına uğradı') {
-                return res.status(200).json({ 
-                  success: true,
-                  message: `İşlem başlatıldı fakat tamamlanması uzun sürebilir. Lütfen birkaç dakika sonra kontrol edin.`,
-                  timeout: true
-                });
+            // Hemen yanıt döndür, işlem arka planda devam edecek
+            res.status(200).json({ 
+              success: true,
+              message: `İşlem başlatıldı. Tamamlanması birkaç dakika sürebilir.`,
+              timeout: true
+            });
+            
+            // İşlemi arka planda başlat (yanıtı beklemeden)
+            setTimeout(async () => {
+              try {
+                const updateCount = await deviceTracker.clearSheetWeek(selectedWeek);
+                console.log(`Arka planda ${selectedWeek}. haftada ${updateCount} hücre temizlendi`);
+              } catch (bgError) {
+                console.error('Arka plan temizleme hatası:', bgError);
               }
-              throw weekError; // Diğer hataları dışa fırlat
-            }
+            }, 0);
+            
+            return; // Erken dön - arka plan işlemi devam edecek
           }
           
           return res.status(200).json({ 
             success: true,
-            message: selectedWeek 
-              ? `${selectedWeek}. hafta temizlendi (${updateCount} hücre güncellendi)`
-              : 'StudentDevices sayfası temizlendi'
+            message: 'StudentDevices sayfası temizlendi'
           });
         } catch (error: any) {
           console.error('Google Sheets temizleme hatası:', error);

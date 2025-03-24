@@ -251,9 +251,9 @@ const AttendanceSystem = () => {
           setStatus('✅ Memory store temizlendi, Google Sheets temizleniyor...');
           updateDebugLogs(`✅ Memory store temizlendi, Google Sheets işlemi başlatılıyor...`);
           
-          // Adım 2: Google Sheets'i temizleme - bir timeout ile
+          // Adım 2: Google Sheets'i temizle - bir timeout ile
           try {
-            // Timeout kontrolü ekleyelim - 30 saniye
+            // Timeout kontrolü ekleyelim
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 30000);
             
@@ -277,52 +277,47 @@ const AttendanceSystem = () => {
               }
               
               if (response2.ok) {
-                // Timeout bilgisi geldi mi kontrol et
+                // API'den timeout bilgisi geldi mi kontrol edelim
                 if (responseData && responseData.timeout) {
-                  setStatus('⚠️ İşlem başlatıldı, arka planda devam ediyor. Google Sheets temizleme işlemi birkaç dakika sürebilir.');
-                  updateDebugLogs(`⚠️ UYARI: İşlem zaman aşımına uğradı, arka planda devam ediyor`);
+                  setStatus('⚠️ İşlem başlatıldı, ancak tamamlanması birkaç dakika sürebilir. Sayfayı kapatabilirsiniz.');
+                  updateDebugLogs(`⚠️ UYARI: İşlem arka planda devam ediyor`);
                 } else {
                   setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
-                  updateDebugLogs(`✅ Memory store ve Google Sheets kayıtları temizlendi (${responseData.message || ''})`);
+                  updateDebugLogs(`✅ Memory store ve Google Sheets kayıtları temizlendi`);
                 }
+                // 5 saniye sonra status'ü temizle
+                setTimeout(() => setStatus(''), 5000);
               } else {
                 const errorMsg = responseData.error || textResponse || 'Bilinmeyen hata';
                 setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi tamamlanamadı: ${errorMsg}`);
                 updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası: ${errorMsg}`);
               }
-            } catch (fetchError: any) { // Tip ekledim: any
-              // Timeout durumunu kontrol et
+            } catch (fetchError: any) {
               if (fetchError.name === 'AbortError') {
-                setStatus('⚠️ İşlem başlatıldı, fakat tamamlanması uzun sürecek. Sheets temizleme arka planda devam ediyor.');
+                setStatus('⚠️ İşlem başlatıldı, ancak tamamlanması uzun sürecek. Google Sheets temizleme arka planda devam ediyor.');
                 updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme işlemi zaman aşımına uğradı, arka planda devam ediyor`);
               } else {
-                throw fetchError; // Diğer hataları dışa fırlat
+                const errorMessage = fetchError.message || 'Bilinmeyen hata';
+                setStatus(`❌ Bağlantı hatası: ${errorMessage}`);
+                updateDebugLogs(`❌ HATA: ${errorMessage}`);
               }
             }
-            
-          } catch (sheetsError: any) { // Tip ekledim: any
+          } catch (sheetsError: any) {
             console.error("Sheets error details:", sheetsError);
-            setStatus(`⚠️ Memory store temizlendi, Google Sheets işlemi başarısız oldu fakat arka planda devam ediyor`);
+            setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi başarısız oldu: ${sheetsError.message || 'Bilinmeyen hata'}`);
             updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası: ${sheetsError.message || 'Bilinmeyen hata'}`);
           }
         } else {
           setStatus('❌ Memory store temizlenemedi');
           updateDebugLogs(`❌ HATA: Memory store temizleme hatası`);
         }
-      } catch (error: any) { // Tip ekledim: any
+      } catch (error: any) {
         const errorMessage = error.message || 'Bilinmeyen hata';
         setStatus(`❌ Hata: ${errorMessage}`);
         updateDebugLogs(`❌ HATA: ${errorMessage}`);
       }
     } finally {
       setIsLoading(false);
-      
-      // Status mesajını 10 saniye sonra temizle
-      setTimeout(() => {
-        if (status.includes('arka planda devam ediyor')) {
-          setStatus('');
-        }
-      }, 10000);
     }
   };
 
