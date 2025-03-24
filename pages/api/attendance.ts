@@ -420,7 +420,6 @@ async function handleDeleteRequest(
         });
       }
       else if (cleanStep === 'sheets') {
-        // Sadece Google Sheets'i temizle
         try {
           await deviceTracker.clearStudentDevices();
           console.log('StudentDevices sayfası temizlendi');
@@ -428,63 +427,13 @@ async function handleDeleteRequest(
           // Seçili haftayı al (eğer belirtilmişse)
           const selectedWeek = req.query.week ? parseInt(req.query.week as string) : null;
           
+          // Değişkeni bloğun dışında tanımla
           let updateCount = 0;
           
           if (selectedWeek) {
-            // Eğer hafta seçilmişse, sadece o haftanın sütununu temizle
-            const sheets = await getSheetsClient();
-            const rows = await getMainSheetData(true); // Önbelleği zorla güncelle
-            
-            if (rows && rows.length > 0) {
-              // Hafta sütununu hesapla (3 + hafta - 1)
-              const weekColumnIndex = 3 + (selectedWeek - 1);
-              const columnLetter = String.fromCharCode(65 + weekColumnIndex);
-              
-              console.log(`${selectedWeek}. hafta temizleniyor (${columnLetter} sütunu)...`);
-              
-              // Tüm satırları dolaş
-              for (let i = 1; i < rows.length; i++) {
-                if (!rows[i]) continue;
-                
-                // Sadece seçili haftanın sütununu kontrol et
-                if (weekColumnIndex < rows[i].length) {
-                  const cell = rows[i][weekColumnIndex];
-                  
-                  if (cell && (cell.includes('(DF:') || cell.includes('(HW:') || cell.includes('(DATE:'))) {
-                    const range = `${columnLetter}${i + 1}`;
-                    
-                    try {
-                      // İstekler arası bekleme
-                      if (updateCount > 0) {
-                        await new Promise(resolve => setTimeout(resolve, 200));
-                      }
-                      
-                      await retryableOperation(() => 
-                        sheets.spreadsheets.values.update({
-                          spreadsheetId: process.env.SPREADSHEET_ID,
-                          range: range,
-                          valueInputOption: 'RAW',
-                          requestBody: {
-                            values: [['VAR']]
-                          }
-                        })
-                      );
-                      updateCount++;
-                      
-                      // Her 10 güncellemede bir kısa bekleme
-                      if (updateCount % 10 === 0) {
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                      }
-                    } catch (error) {
-                      console.error(`Hücre güncelleme hatası (${range}):`, error);
-                      // Hatayı yutup devam et
-                    }
-                  }
-                }
-              }
-              
-              console.log(`${selectedWeek}. haftada ${updateCount} hücre temizlendi`);
-            }
+            // DeviceTracker'ın yeni metodunu kullan
+            updateCount = await deviceTracker.clearSheetWeek(selectedWeek);
+            console.log(`${selectedWeek}. haftada ${updateCount} hücre temizlendi`);
           }
           
           return res.status(200).json({ 

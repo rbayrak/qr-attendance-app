@@ -71,6 +71,65 @@ export class DeviceTracker {
     throw lastError;
   }
 
+  // paste-3.txt dosyasına yeni metod ekleyin (DeviceTracker sınıfına)
+async clearSheetWeek(weekNumber: number): Promise<number> {
+  try {
+    const sheets = await this.getSheetsClient();
+    const rows = await this.getMainSheetData(true);
+    let updateCount = 0;
+    
+    if (rows && rows.length > 0) {
+      const weekColumnIndex = 3 + (weekNumber - 1);
+      const columnLetter = String.fromCharCode(65 + weekColumnIndex);
+      
+      // Tüm satırları dolaş
+      for (let i = 1; i < rows.length; i++) {
+        if (!rows[i]) continue;
+        
+        if (weekColumnIndex < rows[i].length) {
+          const cell = rows[i][weekColumnIndex];
+          
+          if (cell && (cell.includes('(DF:') || cell.includes('(HW:') || cell.includes('(DATE:'))) {
+            const range = `${columnLetter}${i + 1}`;
+            
+            try {
+              // İstekler arası bekleme
+              if (updateCount > 0) {
+                await new Promise(resolve => setTimeout(resolve, 200));
+              }
+              
+              await this.retryableOperation(() => 
+                sheets.spreadsheets.values.update({
+                  spreadsheetId: process.env.SPREADSHEET_ID,
+                  range: range,
+                  valueInputOption: 'RAW',
+                  requestBody: {
+                    values: [['VAR']]
+                  }
+                })
+              );
+              updateCount++;
+              
+              if (updateCount % 10 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+              }
+            } catch (error) {
+              console.error(`Hücre güncelleme hatası (${range}):`, error);
+            }
+          }
+        }
+      }
+    }
+    
+    return updateCount;
+  } catch (error) {
+    console.error('Hafta temizleme hatası:', error);
+    throw error;
+  }
+}
+
+// getMainSheetData metodunu public yapın (private -> public)
+
   // Google Auth yardımcı fonksiyonu
   private async getGoogleAuth() {
     return new google.auth.GoogleAuth({
@@ -280,38 +339,41 @@ export class DeviceTracker {
   }
 
   // Google Sheets ana sayfasını önbellekten veya API'den alır
-  private async getMainSheetData(): Promise<any[] | null> {
+  private async getMainSheetData(forceRefresh?: boolean): Promise<any[] | null> {
     const CACHE_DURATION = 60000; // 1 dakika önbellek süresi
     const now = Date.now();
     
-    // Önbellekte geçerli veri var mı kontrol et
-    if (this.sheetsCache.mainSheet && 
-        (now - this.sheetsCache.mainSheet.timestamp) < CACHE_DURATION) {
-      return this.sheetsCache.mainSheet.data;
+    // Eğer forceRefresh true ise veya önbellek süresi dolmuşsa, yeniden veri al
+    if (forceRefresh || 
+        !this.sheetsCache.mainSheet || 
+        (now - this.sheetsCache.mainSheet.timestamp) >= CACHE_DURATION) {
+        
+        // Yoksa API'den al
+        try {
+            const sheets = await this.getSheetsClient();
+            
+            const response = await this.retryableOperation(() => 
+                sheets.spreadsheets.values.get({
+                    spreadsheetId: process.env.SPREADSHEET_ID,
+                    range: 'A:Z',
+                })
+            );
+            
+            // Önbelleğe al
+            this.sheetsCache.mainSheet = {
+                data: response.data.values || [],
+                timestamp: now
+            };
+            
+            return response.data.values || [];
+        } catch (error) {
+            console.error('Sheets veri alma hatası:', error);
+            throw error;
+        }
     }
     
-    // Yoksa API'den al
-    try {
-      const sheets = await this.getSheetsClient();
-      
-      const response = await this.retryableOperation(() => 
-        sheets.spreadsheets.values.get({
-          spreadsheetId: process.env.SPREADSHEET_ID,
-          range: 'A:Z',
-        })
-      );
-      
-      // Önbelleğe al
-      this.sheetsCache.mainSheet = {
-        data: response.data.values || [],
-        timestamp: now
-      };
-      
-      return response.data.values || [];
-    } catch (error) {
-      console.error('Sheets veri alma hatası:', error);
-      throw error;
-    }
+    // Önbellekte geçerli veri var
+    return this.sheetsCache.mainSheet.data;
   }
 
   // Google Sheets StudentDevices sayfasını önbellekten veya API'den alır
