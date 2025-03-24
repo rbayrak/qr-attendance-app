@@ -339,7 +339,7 @@ async clearSheetWeek(weekNumber: number): Promise<number> {
   }
 
   // Google Sheets ana sayfasını önbellekten veya API'den alır
-  private async getMainSheetData(forceRefresh?: boolean): Promise<any[] | null> {
+  public async getMainSheetData(forceRefresh?: boolean): Promise<any[] | null> {
     const CACHE_DURATION = 60000; // 1 dakika önbellek süresi
     const now = Date.now();
     
