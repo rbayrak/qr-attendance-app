@@ -251,56 +251,78 @@ const AttendanceSystem = () => {
           setStatus('✅ Memory store temizlendi, Google Sheets temizleniyor...');
           updateDebugLogs(`✅ Memory store temizlendi, Google Sheets işlemi başlatılıyor...`);
           
-          // Adım 2: Google Sheets'i temizle - seçili haftayı gönder
+          // Adım 2: Google Sheets'i temizleme - bir timeout ile
           try {
-            const response2 = await fetch(`/api/attendance?cleanStep=sheets&week=${selectedWeek}`, {
-              method: 'DELETE'
-            });
-            
-            // Önce yanıtı metin olarak alıp sonra JSON'a dönüştürmeyi deneyelim
-            const textResponse = await response2.text();
-            let responseData;
+            // Timeout kontrolü ekleyelim - 30 saniye
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000);
             
             try {
-              // Metni JSON olarak ayrıştırmayı dene
-              responseData = JSON.parse(textResponse);
-            } catch (parseError) {
-              // JSON ayrıştırma başarısız olursa, metni olduğu gibi kullan
-              responseData = { error: textResponse };
-              updateDebugLogs(`⚠️ API yanıtı JSON değil: ${textResponse}`);
+              const response2 = await fetch(`/api/attendance?cleanStep=sheets&week=${selectedWeek}`, {
+                method: 'DELETE',
+                signal: controller.signal
+              });
+              
+              // Timeout'u temizle
+              clearTimeout(timeoutId);
+              
+              const textResponse = await response2.text();
+              let responseData;
+              
+              try {
+                responseData = JSON.parse(textResponse);
+              } catch (parseError) {
+                responseData = { error: textResponse };
+                updateDebugLogs(`⚠️ API yanıtı JSON değil: ${textResponse}`);
+              }
+              
+              if (response2.ok) {
+                // Timeout bilgisi geldi mi kontrol et
+                if (responseData && responseData.timeout) {
+                  setStatus('⚠️ İşlem başlatıldı, arka planda devam ediyor. Google Sheets temizleme işlemi birkaç dakika sürebilir.');
+                  updateDebugLogs(`⚠️ UYARI: İşlem zaman aşımına uğradı, arka planda devam ediyor`);
+                } else {
+                  setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
+                  updateDebugLogs(`✅ Memory store ve Google Sheets kayıtları temizlendi (${responseData.message || ''})`);
+                }
+              } else {
+                const errorMsg = responseData.error || textResponse || 'Bilinmeyen hata';
+                setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi tamamlanamadı: ${errorMsg}`);
+                updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası: ${errorMsg}`);
+              }
+            } catch (fetchError: any) { // Tip ekledim: any
+              // Timeout durumunu kontrol et
+              if (fetchError.name === 'AbortError') {
+                setStatus('⚠️ İşlem başlatıldı, fakat tamamlanması uzun sürecek. Sheets temizleme arka planda devam ediyor.');
+                updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme işlemi zaman aşımına uğradı, arka planda devam ediyor`);
+              } else {
+                throw fetchError; // Diğer hataları dışa fırlat
+              }
             }
             
-            if (response2.ok) {
-              // API'den timeout bilgisi geldi mi kontrol edelim
-              if (responseData && responseData.timeout) {
-                setStatus('⚠️ İşlem başlatıldı, ancak tamamlanması birkaç dakika sürebilir');
-                updateDebugLogs(`⚠️ UYARI: İşlem zaman aşımına uğradı, arka planda devam ediyor`);
-              } else {
-                setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
-                updateDebugLogs(`✅ Memory store ve Google Sheets kayıtları temizlendi`);
-              }
-              setTimeout(() => setStatus(''), 5000);
-            } else {
-              const errorMsg = responseData.error || textResponse || 'Bilinmeyen hata';
-              setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi tamamlanamadı: ${errorMsg}`);
-              updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası: ${errorMsg}`);
-            }
-          } catch (sheetsError: any) {
+          } catch (sheetsError: any) { // Tip ekledim: any
             console.error("Sheets error details:", sheetsError);
-            setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi başarısız oldu: ${sheetsError.message || 'Bilinmeyen hata'}`);
+            setStatus(`⚠️ Memory store temizlendi, Google Sheets işlemi başarısız oldu fakat arka planda devam ediyor`);
             updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası: ${sheetsError.message || 'Bilinmeyen hata'}`);
           }
         } else {
           setStatus('❌ Memory store temizlenemedi');
           updateDebugLogs(`❌ HATA: Memory store temizleme hatası`);
         }
-      } catch (error: any) {
+      } catch (error: any) { // Tip ekledim: any
         const errorMessage = error.message || 'Bilinmeyen hata';
         setStatus(`❌ Hata: ${errorMessage}`);
         updateDebugLogs(`❌ HATA: ${errorMessage}`);
       }
     } finally {
       setIsLoading(false);
+      
+      // Status mesajını 10 saniye sonra temizle
+      setTimeout(() => {
+        if (status.includes('arka planda devam ediyor')) {
+          setStatus('');
+        }
+      }, 10000);
     }
   };
 

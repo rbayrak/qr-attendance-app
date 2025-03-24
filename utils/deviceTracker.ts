@@ -105,8 +105,8 @@ export class DeviceTracker {
         
         // Eğer güncelleme yapılacak hücre varsa, toplu güncelleme yap
         if (batchUpdates.length > 0) {
-          // Gruplar halinde güncelleme yap (her seferde maksimum 20 hücre)
-          const BATCH_SIZE = 20;
+          // BATCH_SIZE'ı artıralım (20 -> 100)
+          const BATCH_SIZE = 100;
           for (let i = 0; i < batchUpdates.length; i += BATCH_SIZE) {
             const currentBatch = batchUpdates.slice(i, i + BATCH_SIZE);
             
@@ -120,9 +120,9 @@ export class DeviceTracker {
               })
             );
             
-            // Her grup sonrası kısa bekleme
+            // Her grup sonrası bekleyiş süresini de azaltalım
             if (i + BATCH_SIZE < batchUpdates.length) {
-              await new Promise(resolve => setTimeout(resolve, 100));
+              await new Promise(resolve => setTimeout(resolve, 50)); // 100ms -> 50ms
             }
           }
         }
