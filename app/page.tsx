@@ -257,17 +257,27 @@ const AttendanceSystem = () => {
               method: 'DELETE'
             });
             
-            // Hata detaylarını görmek için JSON yanıtını inceleyin
-            const responseData = await response2.json();
-            updateDebugLogs(`📋 API yanıtı: ${JSON.stringify(responseData)}`);
+            // Önce yanıtı metin olarak alıp sonra JSON'a dönüştürmeyi deneyelim
+            const textResponse = await response2.text();
+            let responseData;
+            
+            try {
+              // Metni JSON olarak ayrıştırmayı dene
+              responseData = JSON.parse(textResponse);
+            } catch (parseError) {
+              // JSON ayrıştırma başarısız olursa, metni olduğu gibi kullan
+              responseData = { error: textResponse };
+              updateDebugLogs(`⚠️ API yanıtı JSON değil: ${textResponse}`);
+            }
             
             if (response2.ok) {
               setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
               updateDebugLogs(`✅ Memory store ve Google Sheets kayıtları temizlendi`);
               setTimeout(() => setStatus(''), 3000);
             } else {
-              setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi tamamlanamadı: ${responseData.error || 'Bilinmeyen hata'}`);
-              updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası: ${responseData.error || 'Bilinmeyen hata'}`);
+              const errorMsg = responseData.error || textResponse || 'Bilinmeyen hata';
+              setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi tamamlanamadı: ${errorMsg}`);
+              updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası: ${errorMsg}`);
             }
           } catch (sheetsError: any) {
             console.error("Sheets error details:", sheetsError);
