@@ -234,6 +234,7 @@ const AttendanceSystem = () => {
   // page.tsx içindeki clearMemoryStore fonksiyonu
 
   // page.tsx içindeki clearMemoryStore fonksiyonu
+  // AttendanceSystem.tsx dosyasında clearMemoryStore fonksiyonunu güncelleyin
   const clearMemoryStore = async () => {
     try {
       setIsLoading(true);
@@ -256,16 +257,21 @@ const AttendanceSystem = () => {
               method: 'DELETE'
             });
             
+            // Hata detaylarını görmek için JSON yanıtını inceleyin
+            const responseData = await response2.json();
+            updateDebugLogs(`📋 API yanıtı: ${JSON.stringify(responseData)}`);
+            
             if (response2.ok) {
               setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
               updateDebugLogs(`✅ Memory store ve Google Sheets kayıtları temizlendi`);
               setTimeout(() => setStatus(''), 3000);
             } else {
-              setStatus('⚠️ Memory store temizlendi ancak Google Sheets işlemi tamamlanamadı');
-              updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası`);
+              setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi tamamlanamadı: ${responseData.error || 'Bilinmeyen hata'}`);
+              updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası: ${responseData.error || 'Bilinmeyen hata'}`);
             }
           } catch (sheetsError: any) {
-            setStatus('⚠️ Memory store temizlendi ancak Google Sheets işlemi başarısız oldu');
+            console.error("Sheets error details:", sheetsError);
+            setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi başarısız oldu: ${sheetsError.message || 'Bilinmeyen hata'}`);
             updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası: ${sheetsError.message || 'Bilinmeyen hata'}`);
           }
         } else {

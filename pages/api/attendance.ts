@@ -421,19 +421,32 @@ async function handleDeleteRequest(
       }
       else if (cleanStep === 'sheets') {
         try {
+          console.log("Starting sheets cleanup with params:", { 
+            week: req.query.week, 
+            SPREADSHEET_ID: process.env.SPREADSHEET_ID 
+          });
+          
           await deviceTracker.clearStudentDevices();
           console.log('StudentDevices sayfası temizlendi');
           
-          // Seçili haftayı al (eğer belirtilmişse)
           const selectedWeek = req.query.week ? parseInt(req.query.week as string) : null;
+          console.log("Selected week for cleanup:", selectedWeek);
           
-          // Değişkeni bloğun dışında tanımla
           let updateCount = 0;
           
           if (selectedWeek) {
-            // DeviceTracker'ın yeni metodunu kullan
-            updateCount = await deviceTracker.clearSheetWeek(selectedWeek);
-            console.log(`${selectedWeek}. haftada ${updateCount} hücre temizlendi`);
+            try {
+              console.log("Calling deviceTracker.clearSheetWeek with week:", selectedWeek);
+              updateCount = await deviceTracker.clearSheetWeek(selectedWeek);
+              console.log(`Success! ${selectedWeek}. haftada ${updateCount} hücre temizlendi`);
+            } catch (weekError: any) { // 'any' olarak belirtin
+              console.error("Week cleanup detailed error:", weekError);
+              return res.status(500).json({ 
+                success: false,
+                error: `Hafta temizleme hatası: ${weekError instanceof Error ? weekError.message : 'Bilinmeyen hata'}`
+                // stack özelliğini kaldıralım
+              });
+            }
           }
           
           return res.status(200).json({ 
@@ -442,11 +455,12 @@ async function handleDeleteRequest(
               ? `${selectedWeek}. hafta temizlendi (${updateCount} hücre güncellendi)`
               : 'StudentDevices sayfası temizlendi'
           });
-        } catch (error) {
-          console.error('Google Sheets temizleme hatası:', error);
+        } catch (error: any) { // 'any' olarak belirtin
+          console.error('Google Sheets temizleme hatası (details):', error);
           return res.status(500).json({ 
             success: false,
             error: 'Google Sheets temizlenemedi: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata')
+            // stack özelliğini kaldıralım
           });
         }
       }
