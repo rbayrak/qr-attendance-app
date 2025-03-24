@@ -72,61 +72,68 @@ export class DeviceTracker {
   }
 
   // paste-3.txt dosyasına yeni metod ekleyin (DeviceTracker sınıfına)
-async clearSheetWeek(weekNumber: number): Promise<number> {
-  try {
-    const sheets = await this.getSheetsClient();
-    const rows = await this.getMainSheetData(true);
-    let updateCount = 0;
-    
-    if (rows && rows.length > 0) {
-      const weekColumnIndex = 3 + (weekNumber - 1);
-      const columnLetter = String.fromCharCode(65 + weekColumnIndex);
+  async clearSheetWeek(weekNumber: number): Promise<number> {
+    try {
+      const sheets = await this.getSheetsClient();
+      const rows = await this.getMainSheetData(true);
+      let updateCount = 0;
       
-      // Tüm satırları dolaş
-      for (let i = 1; i < rows.length; i++) {
-        if (!rows[i]) continue;
+      if (rows && rows.length > 0) {
+        const weekColumnIndex = 3 + (weekNumber - 1);
+        const columnLetter = String.fromCharCode(65 + weekColumnIndex);
         
-        if (weekColumnIndex < rows[i].length) {
-          const cell = rows[i][weekColumnIndex];
+        // Toplu güncelleme için hücreleri toplayalım
+        const batchUpdates = [];
+        
+        // Tüm satırları dolaş ve güncelleme ihtiyacı olanları belirle
+        for (let i = 1; i < rows.length; i++) {
+          if (!rows[i]) continue;
           
-          if (cell && (cell.includes('(DF:') || cell.includes('(HW:') || cell.includes('(DATE:'))) {
-            const range = `${columnLetter}${i + 1}`;
+          if (weekColumnIndex < rows[i].length) {
+            const cell = rows[i][weekColumnIndex];
             
-            try {
-              // İstekler arası bekleme
-              if (updateCount > 0) {
-                await new Promise(resolve => setTimeout(resolve, 200));
-              }
-              
-              await this.retryableOperation(() => 
-                sheets.spreadsheets.values.update({
-                  spreadsheetId: process.env.SPREADSHEET_ID,
-                  range: range,
-                  valueInputOption: 'RAW',
-                  requestBody: {
-                    values: [['VAR']]
-                  }
-                })
-              );
+            if (cell && (cell.includes('(DF:') || cell.includes('(HW:') || cell.includes('(DATE:'))) {
+              const range = `${columnLetter}${i + 1}`;
+              batchUpdates.push({
+                range: `${process.env.SPREADSHEET_ID}!${range}`,
+                values: [['VAR']]
+              });
               updateCount++;
-              
-              if (updateCount % 10 === 0) {
-                await new Promise(resolve => setTimeout(resolve, 500));
-              }
-            } catch (error) {
-              console.error(`Hücre güncelleme hatası (${range}):`, error);
+            }
+          }
+        }
+        
+        // Eğer güncelleme yapılacak hücre varsa, toplu güncelleme yap
+        if (batchUpdates.length > 0) {
+          // Gruplar halinde güncelleme yap (her seferde maksimum 20 hücre)
+          const BATCH_SIZE = 20;
+          for (let i = 0; i < batchUpdates.length; i += BATCH_SIZE) {
+            const currentBatch = batchUpdates.slice(i, i + BATCH_SIZE);
+            
+            await this.retryableOperation(() => 
+              sheets.spreadsheets.values.batchUpdate({
+                spreadsheetId: process.env.SPREADSHEET_ID,
+                requestBody: {
+                  valueInputOption: 'RAW',
+                  data: currentBatch
+                }
+              })
+            );
+            
+            // Her grup sonrası kısa bekleme
+            if (i + BATCH_SIZE < batchUpdates.length) {
+              await new Promise(resolve => setTimeout(resolve, 100));
             }
           }
         }
       }
+      
+      return updateCount;
+    } catch (error) {
+      console.error('Hafta temizleme hatası:', error);
+      throw error;
     }
-    
-    return updateCount;
-  } catch (error) {
-    console.error('Hafta temizleme hatası:', error);
-    throw error;
   }
-}
 
 // getMainSheetData metodunu public yapın (private -> public)
 

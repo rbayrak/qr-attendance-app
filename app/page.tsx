@@ -271,9 +271,15 @@ const AttendanceSystem = () => {
             }
             
             if (response2.ok) {
-              setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
-              updateDebugLogs(`✅ Memory store ve Google Sheets kayıtları temizlendi`);
-              setTimeout(() => setStatus(''), 3000);
+              // API'den timeout bilgisi geldi mi kontrol edelim
+              if (responseData && responseData.timeout) {
+                setStatus('⚠️ İşlem başlatıldı, ancak tamamlanması birkaç dakika sürebilir');
+                updateDebugLogs(`⚠️ UYARI: İşlem zaman aşımına uğradı, arka planda devam ediyor`);
+              } else {
+                setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
+                updateDebugLogs(`✅ Memory store ve Google Sheets kayıtları temizlendi`);
+              }
+              setTimeout(() => setStatus(''), 5000);
             } else {
               const errorMsg = responseData.error || textResponse || 'Bilinmeyen hata';
               setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi tamamlanamadı: ${errorMsg}`);

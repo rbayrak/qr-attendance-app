@@ -34,6 +34,7 @@ export interface ResponseData {
   blockedStudentId?: string;
   isAlreadyAttended?: boolean;
   unauthorizedDevice?: boolean; // YENİ: Cihaz yetkilendirme hatası flag'i
+  timeout?: boolean;
 }
 
 // Konum bilgisi için interface

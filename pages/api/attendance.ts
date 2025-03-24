@@ -421,31 +421,40 @@ async function handleDeleteRequest(
       }
       else if (cleanStep === 'sheets') {
         try {
-          console.log("Starting sheets cleanup with params:", { 
-            week: req.query.week, 
-            SPREADSHEET_ID: process.env.SPREADSHEET_ID 
-          });
-          
           await deviceTracker.clearStudentDevices();
           console.log('StudentDevices sayfası temizlendi');
           
+          // Seçili haftayı al (eğer belirtilmişse)
           const selectedWeek = req.query.week ? parseInt(req.query.week as string) : null;
-          console.log("Selected week for cleanup:", selectedWeek);
           
+          // Değişkeni bloğun dışında tanımla
           let updateCount = 0;
           
           if (selectedWeek) {
+            console.log(`${selectedWeek}. hafta için temizleme işlemi başlıyor...`);
+            // Timeout risk - daha uzun bir süre için
+            const timeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('İşlem zaman aşımına uğradı')), 25000)
+            );
+            
             try {
-              console.log("Calling deviceTracker.clearSheetWeek with week:", selectedWeek);
-              updateCount = await deviceTracker.clearSheetWeek(selectedWeek);
-              console.log(`Success! ${selectedWeek}. haftada ${updateCount} hücre temizlendi`);
-            } catch (weekError: any) { // 'any' olarak belirtin
-              console.error("Week cleanup detailed error:", weekError);
-              return res.status(500).json({ 
-                success: false,
-                error: `Hafta temizleme hatası: ${weekError instanceof Error ? weekError.message : 'Bilinmeyen hata'}`
-                // stack özelliğini kaldıralım
-              });
+              // Promise.race ile hem işlemi hem de timeout'u izle
+              updateCount = await Promise.race([
+                deviceTracker.clearSheetWeek(selectedWeek),
+                timeoutPromise
+              ]) as number;
+              
+              console.log(`${selectedWeek}. haftada ${updateCount} hücre temizlendi`);
+            } catch (weekError: any) {
+              console.error('Hafta temizleme hatası:', weekError);
+              if (weekError.message === 'İşlem zaman aşımına uğradı') {
+                return res.status(200).json({ 
+                  success: true,
+                  message: `İşlem başlatıldı fakat tamamlanması uzun sürebilir. Lütfen birkaç dakika sonra kontrol edin.`,
+                  timeout: true
+                });
+              }
+              throw weekError; // Diğer hataları dışa fırlat
             }
           }
           
@@ -455,12 +464,11 @@ async function handleDeleteRequest(
               ? `${selectedWeek}. hafta temizlendi (${updateCount} hücre güncellendi)`
               : 'StudentDevices sayfası temizlendi'
           });
-        } catch (error: any) { // 'any' olarak belirtin
-          console.error('Google Sheets temizleme hatası (details):', error);
+        } catch (error: any) {
+          console.error('Google Sheets temizleme hatası:', error);
           return res.status(500).json({ 
             success: false,
             error: 'Google Sheets temizlenemedi: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata')
-            // stack özelliğini kaldıralım
           });
         }
       }
