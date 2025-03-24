@@ -82,8 +82,8 @@ export class DeviceTracker {
         const weekColumnIndex = 3 + (weekNumber - 1);
         const columnLetter = String.fromCharCode(65 + weekColumnIndex);
         
-        // Toplu güncelleme için hücreleri toplayalım
-        const batchUpdates = [];
+        // Sadece temizlenecek hücrelerin listesini oluştur
+        const cellsToClean = [];
         
         // Tüm satırları dolaş ve güncelleme ihtiyacı olanları belirle
         for (let i = 1; i < rows.length; i++) {
@@ -93,37 +93,48 @@ export class DeviceTracker {
             const cell = rows[i][weekColumnIndex];
             
             if (cell && (cell.includes('(DF:') || cell.includes('(HW:') || cell.includes('(DATE:'))) {
-              const range = `${columnLetter}${i + 1}`;
-              batchUpdates.push({
-                range: `${process.env.SPREADSHEET_ID}!${range}`,
-                values: [['VAR']]
+              cellsToClean.push({
+                rowIndex: i,
+                range: `${columnLetter}${i + 1}`
               });
               updateCount++;
             }
           }
         }
         
-        // Eğer güncelleme yapılacak hücre varsa, toplu güncelleme yap
-        if (batchUpdates.length > 0) {
-          // BATCH_SIZE'ı artıralım (20 -> 100)
-          const BATCH_SIZE = 100;
-          for (let i = 0; i < batchUpdates.length; i += BATCH_SIZE) {
-            const currentBatch = batchUpdates.slice(i, i + BATCH_SIZE);
+        console.log(`Temizlenecek toplam hücre sayısı: ${cellsToClean.length}`);
+        
+        // Eğer temizlenecek hücre varsa
+        if (cellsToClean.length > 0) {
+          // Önemli optimizasyon: Tüm hücreleri tek bir API çağrısıyla güncelle
+          // Google Sheets API'sinin batchUpdate özelliğini kullanarak tüm hücreleri tek seferde temizle
+          const BATCH_SIZE = 1000; // Büyük batch size kullan
+          
+          // Tek bir güncelleme yapmak için tüm batch'leri topla
+          for (let i = 0; i < cellsToClean.length; i += BATCH_SIZE) {
+            const currentBatch = cellsToClean.slice(i, i + BATCH_SIZE);
+            const ranges = currentBatch.map(cell => `${process.env.SPREADSHEET_ID}!${cell.range}`);
+            const values = Array(currentBatch.length).fill(['VAR']); // Tüm hücreleri 'VAR' ile doldur
             
+            // ValueRange nesnelerini oluştur
+            const data = ranges.map((range, index) => ({
+              range: range,
+              values: [values[index]]
+            }));
+            
+            // Tek bir API çağrısında tüm hücreleri güncelle
             await this.retryableOperation(() => 
               sheets.spreadsheets.values.batchUpdate({
                 spreadsheetId: process.env.SPREADSHEET_ID,
                 requestBody: {
                   valueInputOption: 'RAW',
-                  data: currentBatch
+                  data: data
                 }
               })
             );
             
-            // Her grup sonrası bekleyiş süresini de azaltalım
-            if (i + BATCH_SIZE < batchUpdates.length) {
-              await new Promise(resolve => setTimeout(resolve, 50)); // 100ms -> 50ms
-            }
+            // Tek bir batch işlemi için bir kez log
+            console.log(`${i+1}-${Math.min(i+BATCH_SIZE, cellsToClean.length)} arası hücreler temizlendi`);
           }
         }
       }
