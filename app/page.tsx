@@ -252,20 +252,27 @@ const AttendanceSystem = () => {
           
           // Adım 2: Google Sheets'i temizle
           try {
+            console.log('Google Sheets temizleme isteği gönderiliyor...');
             const response2 = await fetch('/api/attendance?cleanStep=sheets', {
               method: 'DELETE'
             });
             
+            // Response'u text olarak al, parsing hatalarını önlemek için
+            const responseText = await response2.text();
+            console.log(`Sheets response: ${response2.status}, Body:`, responseText);
+            
+            // Başarılı mı değil mi analiz et
             if (response2.ok) {
               setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
               updateDebugLogs(`✅ Memory store ve Google Sheets kayıtları temizlendi`);
               setTimeout(() => setStatus(''), 3000);
             } else {
-              setStatus('⚠️ Memory store temizlendi ancak Google Sheets işlemi tamamlanamadı');
+              setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi tamamlanamadı: ${responseText}`);
               updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası`);
             }
-          } catch (sheetsError: any) { // 'any' tipini ekledik
-            setStatus('⚠️ Memory store temizlendi ancak Google Sheets işlemi başarısız oldu');
+          } catch (sheetsError: any) {
+            console.error('Sheets error details:', sheetsError);
+            setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi başarısız oldu`);
             updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası: ${sheetsError.message || 'Bilinmeyen hata'}`);
           }
         } else {

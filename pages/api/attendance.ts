@@ -309,6 +309,8 @@ async function processPostRequest(
 // DELETE isteklerini işleyen fonksiyon
 // DELETE isteklerini işleyen fonksiyon
 // DELETE isteklerini işleyen fonksiyon
+// DELETE isteklerini işleyen fonksiyon
+// DELETE isteklerini işleyen fonksiyon
 async function handleDeleteRequest(
   req: NextApiRequest,
   res: NextApiResponse<ResponseData>
@@ -418,20 +420,75 @@ async function handleDeleteRequest(
         });
       }
       else if (cleanStep === 'sheets') {
-        // Sadece StudentDevices sayfasını temizle, ana sayfayı temizleme
+        // Sadece Google Sheets'i temizle
         try {
           await deviceTracker.clearStudentDevices();
           console.log('StudentDevices sayfası temizlendi');
           
+          // Ana sayfadaki tüm hücreleri değil, sadece bir kısmını temizle
+          const sheets = await getSheetsClient();
+          const rows = await getMainSheetData(true); // Önbelleği zorla güncelle
+          
+          let updateCount = 0; // Değişkeni try bloğunun başına taşıdım
+          
+          if (rows && rows.length > 0) {
+            // Daha az satır ve sütun güncelle
+            const maxRows = Math.min(50, rows.length); // 100 yerine 50 satır
+            const maxCols = 16; // Aynı kalabilir
+            
+            for (let i = 1; i < maxRows; i++) {
+              if (!rows[i]) continue;
+              
+              for (let j = 0; j < maxCols; j++) {
+                const colIndex = 3 + j;
+                if (colIndex >= rows[i].length) continue;
+                
+                const cell = rows[i][colIndex];
+                if (cell && (cell.includes('(DF:') || cell.includes('(HW:') || cell.includes('(DATE:'))) {
+                  const range = `${String.fromCharCode(65 + colIndex)}${i + 1}`;
+                  
+                  try {
+                    // Daha uzun bekleme süreleri ekleyin
+                    if (updateCount > 0) {
+                      await new Promise(resolve => setTimeout(resolve, 300)); // 100ms yerine 300ms
+                    }
+                    
+                    await retryableOperation(() => 
+                      sheets.spreadsheets.values.update({
+                        spreadsheetId: process.env.SPREADSHEET_ID,
+                        range: range,
+                        valueInputOption: 'RAW',
+                        requestBody: {
+                          values: [['VAR']]
+                        }
+                      })
+                    );
+                    updateCount++;
+                    
+                    // Daha sık beklemeler ekleyin
+                    if (updateCount % 5 === 0) { // 10 yerine 5
+                      await new Promise(resolve => setTimeout(resolve, 500)); // 500ms
+                    }
+                  } catch (error) {
+                    console.error(`Hücre güncelleme hatası (${range}):`, error);
+                    // Hatayı yutup devam et
+                  }
+                }
+              }
+            }
+            
+            console.log(`Ana sayfada ${updateCount} hücre temizlendi`);
+          }
+          
           return res.status(200).json({ 
             success: true,
-            message: 'Google Sheets StudentDevices sayfası temizlendi'
+            message: `Google Sheets temizlendi (${updateCount} hücre güncellendi)`
           });
         } catch (error) {
           console.error('Google Sheets temizleme hatası:', error);
           return res.status(500).json({ 
             success: false,
-            error: 'Google Sheets temizlenemedi'
+            error: 'Google Sheets temizlenemedi: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata')
           });
         }
       }
