@@ -733,24 +733,47 @@ export class DeviceTracker {
         return; // Sadece başlık satırı var veya hiç satır yok
       }
       
-      // Başlık satırını koru, tüm cihaz bilgilerini temizle
-      for (let i = 1; i < rows.length; i++) {
-        // Toplu güncellemeler yerine daha küçük batch'ler halinde yap
-        if (i % 10 === 0) {
-          // Her 10 satırda bir kısa bekleme ekle
-          await new Promise(resolve => setTimeout(resolve, 500));
+      // TOPLU GÜNCELLEME: Tek seferde maksimum 50 satır güncelle
+      const BATCH_SIZE = 50;
+      const totalRows = rows.length - 1; // Başlık satırını çıkar
+      
+      console.log(`StudentDevices: Toplam ${totalRows} satır temizlenecek`);
+      
+      // Satırları gruplar halinde işle
+      for (let startIdx = 1; startIdx < rows.length; startIdx += BATCH_SIZE) {
+        const endIdx = Math.min(startIdx + BATCH_SIZE, rows.length);
+        
+        // ValueRange[] tipinde bir dizi oluştur (Google Sheets API için doğru format)
+        const batchData: {
+          range: string;
+          values: string[][];
+        }[] = [];
+        
+        // Bu batch'teki satırları hazırla
+        for (let i = startIdx; i < endIdx; i++) {
+          batchData.push({
+            range: `StudentDevices!B${i + 1}:D${i + 1}`,
+            values: [['TEMIZLENDI', 'TEMIZLENDI', 'TEMIZLENDI']]
+          });
         }
         
-        await this.retryableOperation(() => 
-          sheets.spreadsheets.values.update({
-            spreadsheetId: process.env.SPREADSHEET_ID,
-            range: `StudentDevices!B${i + 1}:D${i + 1}`,
-            valueInputOption: 'RAW',
-            requestBody: {
-              values: [['TEMIZLENDI', 'TEMIZLENDI', 'TEMIZLENDI']]
-            }
-          })
-        );
+        if (batchData.length > 0) {
+          // Tüm satırları tek bir API çağrısında güncelle
+          await this.retryableOperation(() => 
+            sheets.spreadsheets.values.batchUpdate({
+              spreadsheetId: process.env.SPREADSHEET_ID,
+              requestBody: {
+                valueInputOption: 'RAW',
+                data: batchData
+              }
+            })
+          );
+          
+          console.log(`StudentDevices: ${startIdx}-${endIdx-1} arası satırlar temizlendi`);
+          
+          // Rate limiting'i önlemek için kısa bir bekleme
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
       }
       
       // Önbelleği temizle
