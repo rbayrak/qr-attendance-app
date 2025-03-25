@@ -108,7 +108,7 @@ export class DeviceTracker {
         if (cellsToClean.length > 0) {
           // Önemli optimizasyon: Tüm hücreleri tek bir API çağrısıyla güncelle
           // Google Sheets API'sinin batchUpdate özelliğini kullanarak tüm hücreleri tek seferde temizle
-          const BATCH_SIZE = 1000; // Büyük batch size kullan
+          const BATCH_SIZE = 50; // Büyük batch size kullan
           
           // Tek bir güncelleme yapmak için tüm batch'leri topla
           for (let i = 0; i < cellsToClean.length; i += BATCH_SIZE) {
