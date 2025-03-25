@@ -3,7 +3,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { deviceTracker } from '@/utils/deviceTracker';
 import { google } from 'googleapis';
 
-// İşlem durumlarını takip etmek için basit bir state deposu
+// İş durumlarını takip etmek için basit bir state deposu
 // Not: Bu depo sunucu yeniden başlatıldığında sıfırlanır
 const progressStore: Record<string, {
   week: number;
@@ -26,6 +26,35 @@ export default async function handler(
     return res.status(400).json({ error: 'Geçerli bir jobId gerekli' });
   }
   
+  // Eğer job kaydı yoksa otomatik olarak oluştur
+  if (!progressStore[jobId] && action !== 'start') {
+    // Hafta numarası kontrolü
+    const weekNum = week ? parseInt(week as string) : null;
+    if (!weekNum || isNaN(weekNum) || weekNum < 1 || weekNum > 16) {
+      return res.status(400).json({ error: 'Geçerli bir hafta numarası (1-16) gerekli' });
+    }
+    
+    // Yeni iş kaydı otomatik oluştur
+    console.log(`Eksik iş kaydı otomatik oluşturuluyor: ${jobId}, Hafta: ${weekNum}`);
+    progressStore[jobId] = {
+      week: weekNum,
+      totalCells: 0, // Hücre sayısı ilk işlemde hesaplanacak
+      processedCells: 0,
+      startTime: Date.now(),
+      lastUpdate: Date.now(),
+      isCompleted: false
+    };
+    
+    // Hücre sayısını arka planda hesapla
+    countCellsToClean(weekNum).then(cellCount => {
+      if (progressStore[jobId]) {
+        progressStore[jobId].totalCells = cellCount;
+      }
+    }).catch(error => {
+      console.error('Hücre sayma hatası:', error);
+    });
+  }
+  
   // Yeni iş başlatma
   if (action === 'start') {
     const weekNum = week ? parseInt(week as string) : null;
@@ -38,7 +67,7 @@ export default async function handler(
       // Temizlenecek hücre sayısını hesapla
       const cellCount = await countCellsToClean(weekNum);
       
-      // İş kaydını oluştur
+      // İş kaydını oluştur veya güncelle
       progressStore[jobId] = {
         week: weekNum,
         totalCells: cellCount,
@@ -82,8 +111,19 @@ export default async function handler(
     }
     
     try {
-      // Bir batch işle (her seferinde maksimum 50 hücre)
-      const BATCH_SIZE = 50;
+      // Hücre sayısı hesaplanmadıysa hesapla
+      if (job.totalCells <= 0) {
+        try {
+          job.totalCells = await countCellsToClean(job.week);
+        } catch (error) {
+          console.error('Hücre sayma hatası:', error);
+          // Hücre sayısı hesaplanamasa da devam et, varsayılan değer kullan
+          job.totalCells = 100; // Varsayılan değer
+        }
+      }
+      
+      // Bir batch işle (her seferinde maksimum 25 hücre)
+      const BATCH_SIZE = 25; // Daha küçük batch boyutu
       const result = await processBatch(job.week, job.processedCells, BATCH_SIZE);
       
       // İşlem kaydını güncelle
@@ -112,9 +152,13 @@ export default async function handler(
       // Hata durumunda iş bilgilerini güncelle
       job.error = error instanceof Error ? error.message : 'Bilinmeyen hata';
       
+      // Ama işlemi devam ettir, tamamen durdurma
       return res.status(500).json({
         error: job.error,
-        jobId
+        jobId,
+        totalCells: job.totalCells,
+        processedCells: job.processedCells,
+        progress: job.totalCells > 0 ? Math.round((job.processedCells / job.totalCells) * 100) : 0
       });
     }
   }
@@ -185,86 +229,86 @@ async function countCellsToClean(weekNumber: number): Promise<number> {
 
 // Bir batch hücreyi temizleme
 async function processBatch(
-    weekNumber: number,
-    offset: number,
-    limit: number
-  ): Promise<{ processedCount: number; isCompleted: boolean }> {
-    try {
-      // Google Sheets'ten veri çekme
-      const rows = await deviceTracker.getMainSheetData();
-      if (!rows || rows.length === 0) {
-        return { processedCount: 0, isCompleted: true };
-      }
-      
-      const weekColumnIndex = 3 + (weekNumber - 1);
-      const columnLetter = String.fromCharCode(65 + weekColumnIndex);
-      
-      // Temizlenecek hücreleri bul
-      const cellsToClean = [];
-      let processedCount = 0;
-      let foundCells = 0;
-      
-      // Veri setinden temizlenecek hücreleri seç
-      for (let i = 1; i < rows.length; i++) {
-        if (!rows[i]) continue;
-        
-        if (weekColumnIndex < rows[i].length) {
-          const cell = rows[i][weekColumnIndex];
-          
-          if (cell && (cell.includes('(DF:') || cell.includes('(HW:') || cell.includes('(DATE:'))) {
-            // Offset'ten sonraki hücreleri işle
-            if (foundCells >= offset) {
-              cellsToClean.push({
-                rowIndex: i,
-                range: `${columnLetter}${i + 1}`
-              });
-              
-              processedCount++;
-              
-              // Limit dolduğunda işlemi durdur
-              if (processedCount >= limit) break;
-            }
-            
-            foundCells++;
-          }
-        }
-      }
-      
-      // İşlenecek hücre yoksa tamamlandı olarak işaretle
-      if (cellsToClean.length === 0) {
-        return { processedCount: 0, isCompleted: true };
-      }
-      
-      // Google Sheets API ile hücreleri temizle
-      const auth = await getGoogleAuth();
-      const sheets = google.sheets({ version: 'v4', auth });
-      
-      // DÜZELTME: Range formatını doğru şekilde oluştur
-      const data = cellsToClean.map(cell => ({
-        range: cell.range,  // Sadece hücre aralığı (örn: "I2")
-        values: [['VAR']]
-      }));
-      
-      // Tek bir API çağrısında tüm hücreleri güncelle
-      await sheets.spreadsheets.values.batchUpdate({
-        spreadsheetId: process.env.SPREADSHEET_ID,
-        requestBody: {
-          valueInputOption: 'RAW',
-          data
-        }
-      });
-      
-      // İşlem tamamlandı mı?
-      const isCompleted = foundCells <= offset + processedCount;
-      
-      return {
-        processedCount,
-        isCompleted
-      };
-    } catch (error) {
-      console.error('Batch işleme hatası:', error);
-      throw error;
+  weekNumber: number,
+  offset: number,
+  limit: number
+): Promise<{ processedCount: number; isCompleted: boolean }> {
+  try {
+    // Google Sheets'ten veri çekme
+    const rows = await deviceTracker.getMainSheetData();
+    if (!rows || rows.length === 0) {
+      return { processedCount: 0, isCompleted: true };
     }
+    
+    const weekColumnIndex = 3 + (weekNumber - 1);
+    const columnLetter = String.fromCharCode(65 + weekColumnIndex);
+    
+    // Temizlenecek hücreleri bul
+    const cellsToClean = [];
+    let processedCount = 0;
+    let foundCells = 0;
+    
+    // Veri setinden temizlenecek hücreleri seç
+    for (let i = 1; i < rows.length; i++) {
+      if (!rows[i]) continue;
+      
+      if (weekColumnIndex < rows[i].length) {
+        const cell = rows[i][weekColumnIndex];
+        
+        if (cell && (cell.includes('(DF:') || cell.includes('(HW:') || cell.includes('(DATE:'))) {
+          // Offset'ten sonraki hücreleri işle
+          if (foundCells >= offset) {
+            cellsToClean.push({
+              rowIndex: i,
+              range: `${columnLetter}${i + 1}`
+            });
+            
+            processedCount++;
+            
+            // Limit dolduğunda işlemi durdur
+            if (processedCount >= limit) break;
+          }
+          
+          foundCells++;
+        }
+      }
+    }
+    
+    // İşlenecek hücre yoksa tamamlandı olarak işaretle
+    if (cellsToClean.length === 0) {
+      return { processedCount: 0, isCompleted: true };
+    }
+    
+    // Google Sheets API ile hücreleri temizle
+    const auth = await getGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth });
+    
+    // ValueRange nesnelerini oluştur (DÜZELTME: range formatını doğru şekilde kullan)
+    const data = cellsToClean.map(cell => ({
+      range: cell.range,  // Sadece hücre aralığı (örn: "I2")
+      values: [['VAR']]
+    }));
+    
+    // Tek bir API çağrısında tüm hücreleri güncelle
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      requestBody: {
+        valueInputOption: 'RAW',
+        data
+      }
+    });
+    
+    // İşlem tamamlandı mı?
+    const isCompleted = foundCells <= offset + processedCount;
+    
+    return {
+      processedCount,
+      isCompleted
+    };
+  } catch (error) {
+    console.error('Batch işleme hatası:', error);
+    throw error;
+  }
 }
 
 // Google Auth yardımcı fonksiyonu

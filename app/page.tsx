@@ -251,91 +251,67 @@ const AttendanceSystem = () => {
           setStatus('✅ Memory store temizlendi, Google Sheets temizleniyor...');
           updateDebugLogs(`✅ Memory store temizlendi, Google Sheets işlemi başlatılıyor...`);
           
-          // Adım 2: Google Sheets'i temizle - kademeli yaklaşımla
+          // Adım 2: Kademeli temizleme için jobId oluştur
+          const jobId = `sheets-cleanup-${Date.now()}`;
+          
+          // Önce start isteği göndermeden doğrudan process isteği gönder
+          // Bu sayede job kaydı otomatik oluşturulacak
+          let isCompleted = false;
+          let attempts = 0;
+          const MAX_ATTEMPTS = 30;
+          
           try {
-            // Kademeli temizleme için jobId oluştur
-            const jobId = `sheets-cleanup-${Date.now()}`;
-            
-            // 1. İşi başlat
-            try {
-              const startResponse = await fetch(`/api/job-status?action=start&jobId=${jobId}&week=${selectedWeek}`);
+            while (!isCompleted && attempts < MAX_ATTEMPTS) {
+              attempts++;
               
-              if (!startResponse.ok) {
-                const errorText = await startResponse.text();
-                throw new Error(`İş başlatılamadı: ${errorText}`);
-              }
-              
-              const startData = await startResponse.json();
-              setStatus(`⏳ Temizleme başlatıldı... (${startData.totalCells || 0} hücre)`);
-              updateDebugLogs(`🔄 ${selectedWeek}. hafta için temizleme başlatıldı. ${startData.totalCells || 0} hücre temizlenecek.`);
-              
-              // 2. Kademeli temizleme döngüsü
-              let isCompleted = false;
-              let attempts = 0;
-              const MAX_ATTEMPTS = 30; // Maksimum deneme sayısı
-              
-              while (!isCompleted && attempts < MAX_ATTEMPTS) {
-                try {
-                  attempts++;
-                  
-                  // 3. Bir batch işle
-                  const processResponse = await fetch(`/api/job-status?action=process&jobId=${jobId}`);
-                  
-                  if (!processResponse.ok) {
-                    const errorText = await processResponse.text();
-                    throw new Error(`İşlem hatası: ${errorText}`);
-                  }
-                  
-                  const processData = await processResponse.json();
-                  isCompleted = processData.completed;
-                  
-                  // 4. UI güncelle
-                  const progress = processData.progress || 0;
-                  const processedCells = processData.processedCells || 0;
-                  const totalCells = processData.totalCells || 0;
-                  
-                  setStatus(`⏳ Temizleme sürüyor... (${progress}% - ${processedCells}/${totalCells})`);
-                  
-                  if (attempts % 5 === 0) { // Her 5 işlemde bir log kaydı
-                    updateDebugLogs(`🔄 Temizleme devam ediyor: ${progress}% tamamlandı (${processedCells}/${totalCells})`);
-                  }
-                  
-                  // 5. Vercel rate-limiting için kısa bir bekleme
-                  await new Promise(resolve => setTimeout(resolve, 1000));
-                } catch (error) {
-                  const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-                  updateDebugLogs(`⚠️ UYARI: Batch işleme hatası (${attempts}. deneme): ${errorMessage}`);
-                  
-                  // Hata durumunda kısa bir bekleme ve devam et
-                  await new Promise(resolve => setTimeout(resolve, 2000));
-                  
-                  // Kritik olmayan hatalarda döngüye devam et
-                  if (attempts >= MAX_ATTEMPTS) {
-                    throw new Error(`Maksimum deneme sayısına ulaşıldı (${MAX_ATTEMPTS}): ${errorMessage}`);
-                  }
+              try {
+                // Her bir işlemde güncel week parametresini gönder
+                const processResponse = await fetch(`/api/job-status?action=process&jobId=${jobId}&week=${selectedWeek}`);
+                
+                if (!processResponse.ok) {
+                  const errorText = await processResponse.text();
+                  throw new Error(`İşlem hatası: ${errorText}`);
+                }
+                
+                const processData = await processResponse.json();
+                isCompleted = processData.completed;
+                
+                // UI güncelleme
+                const progress = processData.progress || 0;
+                const processedCells = processData.processedCells || 0;
+                const totalCells = processData.totalCells || 0;
+                
+                setStatus(`⏳ Temizleme sürüyor... (${progress}% - ${processedCells}/${totalCells})`);
+                
+                // Vercel rate-limiting için kısa bekleme
+                await new Promise(resolve => setTimeout(resolve, 1500)); // Daha uzun bekleme
+              } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+                updateDebugLogs(`⚠️ UYARI: Batch işleme hatası (${attempts}. deneme): ${errorMessage}`);
+                
+                // Hata durumunda daha uzun bekle
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                
+                if (attempts >= MAX_ATTEMPTS) {
+                  throw new Error(`Maksimum deneme sayısına ulaşıldı (${MAX_ATTEMPTS}): ${errorMessage}`);
                 }
               }
-              
-              if (isCompleted) {
-                setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
-                updateDebugLogs(`✅ Google Sheets kayıtları tamamen temizlendi`);
-                // 5 saniye sonra status'ü temizle
-                setTimeout(() => setStatus(''), 5000);
-              } else {
-                // Tamamlanmadı ama maksimum denemeye ulaşıldı
-                setStatus('⚠️ Temizleme işlemi yarım kaldı, daha sonra tekrar deneyiniz');
-                updateDebugLogs(`⚠️ UYARI: Maksimum deneme sayısına ulaşıldı, işlem yarım kaldı`);
-              }
-            } catch (processingError) {
-              const errorMessage = processingError instanceof Error ? processingError.message : 'Bilinmeyen hata';
-              setStatus(`❌ Temizleme işlemi başarısız oldu: ${errorMessage}`);
-              updateDebugLogs(`❌ HATA: ${errorMessage}`);
             }
-          } catch (sheetsError: any) {
-            console.error("Sheets error details:", sheetsError);
-            const errorMessage = sheetsError.message || 'Bilinmeyen hata';
-            setStatus(`⚠️ Memory store temizlendi ancak Google Sheets işlemi başarısız oldu: ${errorMessage}`);
-            updateDebugLogs(`⚠️ UYARI: Google Sheets temizleme hatası: ${errorMessage}`);
+            
+            // Başarılı tamamlama
+            if (isCompleted) {
+              setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
+              updateDebugLogs(`✅ Google Sheets kayıtları tamamen temizlendi`);
+              // 5 saniye sonra status'ü temizle
+              setTimeout(() => setStatus(''), 5000);
+            } else {
+              setStatus('⚠️ Temizleme işlemi yarım kaldı, daha sonra tekrar deneyiniz');
+              updateDebugLogs(`⚠️ UYARI: Maksimum deneme sayısına ulaşıldı, işlem yarım kaldı`);
+            }
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+            setStatus(`❌ Temizleme işlemi başarısız oldu: ${errorMessage}`);
+            updateDebugLogs(`❌ HATA: ${errorMessage}`);
           }
         } else {
           const errorText = await response1.text();
