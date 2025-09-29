@@ -10,7 +10,6 @@ import { generateEnhancedFingerprint, isValidFingerprint } from '@/utils/clientF
 // TypeScript için window tanımlamaları
 declare global {
   interface Window {
-    gapi: any;
     google: any;
   }
 }
@@ -42,44 +41,49 @@ const initializeGoogleAuth = () => {
       return;
     }
 
-    try {
-      window.gapi.load('client:auth2', async () => {
+    // Google Identity Services'in yüklenmesini bekle
+    const checkGoogleLoaded = setInterval(() => {
+      if (window.google?.accounts?.oauth2) {
+        clearInterval(checkGoogleLoaded);
+        
         try {
-          await window.gapi.client.init({
-            apiKey: process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
-            clientId: clientId,
-            scope: 'https://www.googleapis.com/auth/spreadsheets',
-            plugin_name: 'qr-attendance'
-          });
-
           tokenClient = window.google.accounts.oauth2.initTokenClient({
             client_id: clientId,
             scope: 'https://www.googleapis.com/auth/spreadsheets',
             callback: (tokenResponse: any) => {
               if (tokenResponse.error) {
+                console.error('Token hatası:', tokenResponse);
                 reject(new Error(`Token hatası: ${tokenResponse.error}`));
                 return;
               }
               accessToken = tokenResponse.access_token;
+              console.log('✅ Google yetkilendirme başarılı');
               resolve(accessToken);
             },
           });
 
+          // Token'ı hemen talep et
           setTimeout(() => {
             tokenClient.requestAccessToken({ prompt: 'consent' });
-          }, 1000);
+          }, 500);
 
         } catch (error) {
-          console.error('GAPI init hatası:', error);
+          console.error('Google Identity Services init hatası:', error);
           reject(error);
         }
-      });
-    } catch (error) {
-      console.error('GAPI load hatası:', error);
-      reject(error);
-    }
+      }
+    }, 100);
+
+    // 10 saniye sonra timeout
+    setTimeout(() => {
+      clearInterval(checkGoogleLoaded);
+      if (!accessToken) {
+        reject(new Error('Google Identity Services yüklenemedi (timeout)'));
+      }
+    }, 10000);
   });
 };
+
 
 const getAccessToken = async () => {
   if (!accessToken) {
