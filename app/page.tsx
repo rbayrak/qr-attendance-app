@@ -11,6 +11,7 @@ import { generateEnhancedFingerprint, isValidFingerprint } from '@/utils/clientF
 declare global {
   interface Window {
     google: any;
+    gapi: any;
   }
 }
 
@@ -33,7 +34,10 @@ let accessToken: string | null = null;
 
 const initializeGoogleAuth = () => {
   return new Promise((resolve, reject) => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined') {
+      reject(new Error('Window objesi bulunamadı'));
+      return;
+    }
     
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
     if (!clientId) {
@@ -41,46 +45,65 @@ const initializeGoogleAuth = () => {
       return;
     }
 
+    console.log('🔐 Google Auth başlatılıyor...');
+    console.log('📋 Client ID:', clientId.substring(0, 20) + '...');
+
     // Google Identity Services'in yüklenmesini bekle
     const checkGoogleLoaded = setInterval(() => {
       if (window.google?.accounts?.oauth2) {
         clearInterval(checkGoogleLoaded);
         
         try {
+          console.log('✅ Google Identity Services yüklendi');
+          
           tokenClient = window.google.accounts.oauth2.initTokenClient({
             client_id: clientId,
             scope: 'https://www.googleapis.com/auth/spreadsheets',
             callback: (tokenResponse: any) => {
               if (tokenResponse.error) {
-                console.error('Token hatası:', tokenResponse);
+                console.error('❌ Token hatası:', tokenResponse);
                 reject(new Error(`Token hatası: ${tokenResponse.error}`));
                 return;
               }
               accessToken = tokenResponse.access_token;
-              console.log('✅ Google yetkilendirme başarılı');
+              console.log('✅ Access token alındı');
               resolve(accessToken);
             },
+            error_callback: (error: any) => {
+              console.error('❌ OAuth hatası:', error);
+              reject(new Error(`OAuth hatası: ${JSON.stringify(error)}`));
+            }
           });
 
-          // Token'ı hemen talep et
+          console.log('🔄 Token isteniyor...');
+          // Token'ı talep et
           setTimeout(() => {
-            tokenClient.requestAccessToken({ prompt: 'consent' });
+            try {
+              tokenClient.requestAccessToken({ 
+                prompt: 'consent',
+                // Hint ekleyelim
+                hint: 'teacher'
+              });
+            } catch (error) {
+              console.error('❌ Token talep hatası:', error);
+              reject(error);
+            }
           }, 500);
 
         } catch (error) {
-          console.error('Google Identity Services init hatası:', error);
+          console.error('❌ Google Identity Services init hatası:', error);
           reject(error);
         }
       }
     }, 100);
 
-    // 10 saniye sonra timeout
+    // 15 saniye sonra timeout
     setTimeout(() => {
       clearInterval(checkGoogleLoaded);
       if (!accessToken) {
-        reject(new Error('Google Identity Services yüklenemedi (timeout)'));
+        reject(new Error('Google Identity Services yüklenemedi (timeout). Lütfen sayfayı yenileyin.'));
       }
-    }, 10000);
+    }, 15000);
   });
 };
 
@@ -464,13 +487,17 @@ const AttendanceSystem = () => {
         setClassLocation(JSON.parse(savedClassLocation));
       }
       
+      // Google Auth'u başlat
+      console.log('🔄 Google yetkilendirme başlatılıyor...');
       initializeGoogleAuth().then(() => {
+        console.log('✅ Google yetkilendirme tamamlandı');
         setIsAuthenticated(true);
         fetchStudentList();
       }).catch(error => {
         const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
+        console.error('❌ Google yetkilendirme hatası:', errorMessage);
         updateDebugLogs(`❌ HATA: Google yetkilendirme hatası - ${errorMessage}`);
-        setStatus('❌ Google yetkilendirme hatası');
+        setStatus(`❌ Google yetkilendirme hatası: ${errorMessage}`);
       });
     } else {
       setStatus('❌ Yanlış şifre');
@@ -840,12 +867,22 @@ const AttendanceSystem = () => {
         <div className="max-w-md mx-auto p-4 bg-white rounded-xl shadow-md space-y-4">
           <p className="text-center text-lg font-semibold">Google hesabı yetkilendiriliyor...</p>
           {status && (
-            <div className="p-4 rounded-lg bg-red-100 text-red-800">
-              <p className="font-medium">Hata Detayı:</p>
-              <p className="mt-1">{status}</p>
-              <p className="mt-2 text-sm">
-                Eğer bu hata devam ederse, tarayıcı önbelleğini temizleyip sayfayı yeniden yüklemeyi deneyin.
-              </p>
+            <div className={`p-4 rounded-lg ${
+              status.startsWith('❌') ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'
+            }`}>
+              <p className="font-medium">Durum:</p>
+              <p className="mt-1 text-sm">{status}</p>
+              {status.startsWith('❌') && (
+                <div className="mt-3 text-sm space-y-2">
+                  <p className="font-semibold">Çözüm Adımları:</p>
+                  <ol className="list-decimal list-inside space-y-1">
+                    <li>Tarayıcı önbelleğini temizleyin</li>
+                    <li>Sayfayı yenileyin (F5 veya Ctrl+R)</li>
+                    <li>Google Cloud Console&apos;da OAuth ayarlarını kontrol edin</li>
+                    <li>Sorun devam ederse geliştirici desteği alın</li>
+                  </ol>
+                </div>
+              )}
             </div>
           )}
           <div className="flex gap-2">
@@ -854,6 +891,15 @@ const AttendanceSystem = () => {
               className="flex-1 p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
             >
               Yeniden Dene
+            </button>
+            <button
+              onClick={() => {
+                setMode('student');
+                setIsTeacherAuthenticated(false);
+              }}
+              className="flex-1 p-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+            >
+              İptal
             </button>
           </div>
         </div>
