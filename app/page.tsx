@@ -1,5 +1,12 @@
 'use client';
 
+import React, { useState, useEffect } from 'react';
+import { Html5Qrcode } from 'html5-qrcode';
+import { MapPin, Calendar } from 'lucide-react';
+
+import { STATIC_CLASS_LOCATION } from '../config/constants';
+import { generateEnhancedFingerprint, isValidFingerprint } from '@/utils/clientFingerprint';
+
 // TypeScript için window tanımlamaları
 declare global {
   interface Window {
@@ -7,19 +14,19 @@ declare global {
     google: any;
   }
 }
-import ytuLogo from '/ytu-logo.png';
-import React, { useState, useEffect } from 'react';
-//import { Camera, Calendar } from 'lucide-react';
-import { Html5Qrcode } from 'html5-qrcode';
-import { MapPin, Calendar } from 'lucide-react';
-
-import { STATIC_CLASS_LOCATION } from '../config/constants';
-import { generateEnhancedFingerprint, isValidFingerprint } from '@/utils/clientFingerprint';
 
 // ✅ GÜVENLİK: Client-side'da artık env variables kullanmıyoruz
 const MAX_DISTANCE = 0.8;
 
+interface Student {
+  studentId: string;
+  studentName: string;
+}
 
+interface Location {
+  lat: number;
+  lng: number;
+}
 
 // Google Auth yardımcı fonksiyonları
 let tokenClient: any;
@@ -58,7 +65,6 @@ const initializeGoogleAuth = () => {
             },
           });
 
-          // Token isteğini başlat
           setTimeout(() => {
             tokenClient.requestAccessToken({ prompt: 'consent' });
           }, 1000);
@@ -90,18 +96,6 @@ const getAccessToken = async () => {
   return accessToken;
 };
 
-interface Student {
-  studentId: string;
-  studentName: string;
-}
-
-interface Location {
-  lat: number;
-  lng: number;
-}
-
-
-
 const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
   const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -113,22 +107,14 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 };
 
-const test1 = calculateDistance(41.015137, 28.979530, 41.015137, 28.979531); // Çok yakın iki nokta
-const test2 = calculateDistance(41.015137, 28.979530, 41.015150, 28.979550); // Biraz uzak iki nokta
-console.log('Mesafe test sonuçları:', {test1, test2});
-
-const PasswordModal = ({ 
-  password, 
-  setPassword, 
-  onSubmit, 
-  onClose 
-}: {
+// Modal Component'leri - Component dışında tanımlandı
+const PasswordModal: React.FC<{
   password: string;
   setPassword: (value: string) => void;
   onSubmit: () => void;
   onClose: () => void;
-}) => (
-  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+}> = ({ password, setPassword, onSubmit, onClose }) => (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[100]">
     <div className="bg-white rounded-xl p-6 w-full max-w-md space-y-4">
       <h3 className="text-xl font-bold">Öğretmen Girişi</h3>
       <input
@@ -157,24 +143,19 @@ const PasswordModal = ({
   </div>
 );
 
-const FingerprintModal = ({ 
-  fingerprint, 
-  setFingerprint, 
-  onSubmit, 
-  onClose 
-}: {
+const FingerprintModal: React.FC<{
   fingerprint: string;
   setFingerprint: (value: string) => void;
   onSubmit: () => void;
   onClose: () => void;
-}) => (
+}> = ({ fingerprint, setFingerprint, onSubmit, onClose }) => (
   <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[200]">
     <div className="bg-white rounded-xl p-6 w-full max-w-md space-y-4">
       <h3 className="text-xl font-bold">Fingerprint Silme</h3>
       <p className="text-sm text-gray-600 mb-2">
-        Google Sheets'te görünen DF:xxxx formatındaki fingerprint'i girin.
+        Google Sheets&apos;te görünen DF:xxxx formatındaki fingerprint&apos;i girin.
         <br />
-        Örnek: Eğer sheets'te "VAR (DF:123456)" yazıyorsa, "123456" girin.
+        Örnek: Eğer sheets&apos;te &quot;VAR (DF:123456)&quot; yazıyorsa, &quot;123456&quot; girin.
       </p>
       <input
         type="text"
@@ -223,6 +204,20 @@ const AttendanceSystem = () => {
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const [showFingerprintModal, setShowFingerprintModal] = useState<boolean>(false);
   const [fingerprintToDelete, setFingerprintToDelete] = useState<string>('');
+  const [qrSubmitCount, setQrSubmitCount] = useState<number>(0);
+  const [connectionError, setConnectionError] = useState<boolean>(false);
+
+  const updateDebugLogs = async (newLog: string) => {
+    try {
+      await fetch('/api/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ log: newLog })
+      });
+    } catch (error) {
+      console.error('Log gönderme hatası:', error);
+    }
+  };
 
   const clearMemoryStore = async () => {
     try {
@@ -352,19 +347,6 @@ const AttendanceSystem = () => {
       setIsLoading(false);
       setShowFingerprintModal(false);
       setFingerprintToDelete('');
-    }
-  };
-  
-
-  const updateDebugLogs = async (newLog: string) => {
-    try {
-      await fetch('/api/logs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ log: newLog })
-      });
-    } catch (error) {
-      console.error('Log gönderme hatası:', error);
     }
   };
 
@@ -497,7 +479,6 @@ const AttendanceSystem = () => {
     const loadStudentList = async () => {
       try {
         if (mode === 'student') {
-          // ✅ GÜVENLİK: Artık kendi güvenli API endpoint'imizi kullanıyoruz
           const response = await fetch('/api/students');
           
           if (!response.ok) {
@@ -516,13 +497,8 @@ const AttendanceSystem = () => {
     loadStudentList();
   }, [mode]);
 
-  
-
-
-  // Öğrenci listesini güvenli API endpoint'inden çekme
   const fetchStudentList = async () => {
     try {
-      // ✅ GÜVENLİK: OAuth token'ı artık gereksiz, backend'den alıyoruz
       const response = await fetch('/api/students');
       
       if (!response.ok) {
@@ -537,10 +513,7 @@ const AttendanceSystem = () => {
     }
   };
 
-  // ✅ GÜVENLİK: Bu fonksiyon artık kullanılmıyor - yoklama backend'de kaydediliyor
-  // QR kod tarama sırasında /api/attendance endpoint'i kullanılıyor
   const updateAttendance = async (studentId: string) => {
-    // Bu fonksiyon artık kullanılmıyor, sadece geriye dönük uyumluluk için bırakıldı
     console.warn('updateAttendance deprecated - backend kullanılıyor');
     return false;
   };
@@ -585,8 +558,6 @@ const AttendanceSystem = () => {
       }
     );
   };
-
-  
 
   const generateQR = async () => {
     try {
@@ -635,11 +606,6 @@ const AttendanceSystem = () => {
     
     setStatus('✅ Öğrenci numarası doğrulandı');
   };
-
-  
-
-  const [qrSubmitCount, setQrSubmitCount] = useState<number>(0);
-  const [connectionError, setConnectionError] = useState<boolean>(false);
 
   const handleQrScan = async (decodedText: string) => {
     const lastScanTime = localStorage.getItem('lastQrScanTime');
