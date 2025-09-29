@@ -203,7 +203,7 @@ const FingerprintModal = ({
 );
 
 const AttendanceSystem = () => {
-  const [mode, setMode] = useState<'teacher' | 'student'>('student'); // Varsayılan olarak öğrenci modu
+  const [mode, setMode] = useState<'teacher' | 'student'>('student');
   const [showPasswordModal, setShowPasswordModal] = useState<boolean>(false);
   const [password, setPassword] = useState<string>('');
   const [isTeacherAuthenticated, setIsTeacherAuthenticated] = useState<boolean>(false);
@@ -218,24 +218,18 @@ const AttendanceSystem = () => {
   const [validStudents, setValidStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  //const [deviceBlocked, setDeviceBlocked] = useState<boolean>(false);
   const [isValidLocation, setIsValidLocation] = useState<boolean>(false);
   const [classLocation, setClassLocation] = useState<Location | null>(null);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const [showFingerprintModal, setShowFingerprintModal] = useState<boolean>(false);
   const [fingerprintToDelete, setFingerprintToDelete] = useState<string>('');
 
-  // page.tsx içindeki clearMemoryStore fonksiyonu
-
-  // page.tsx içindeki clearMemoryStore fonksiyonu
-  // AttendanceSystem.tsx dosyasında clearMemoryStore fonksiyonunu güncelleyin
   const clearMemoryStore = async () => {
     try {
       setIsLoading(true);
       setStatus('🔄 Cihaz kayıtları temizleniyor...');
       updateDebugLogs(`🔄 Cihaz kayıtları temizleme işlemi başlatıldı`);
       
-      // Adım 1: Sadece memory'yi temizle
       try {
         const response1 = await fetch('/api/attendance?cleanStep=memory', {
           method: 'DELETE'
@@ -245,11 +239,8 @@ const AttendanceSystem = () => {
           setStatus('✅ Memory store temizlendi, Google Sheets temizleniyor...');
           updateDebugLogs(`✅ Memory store temizlendi, Google Sheets işlemi başlatılıyor...`);
           
-          // Adım 2: Kademeli temizleme için jobId oluştur
           const jobId = `sheets-cleanup-${Date.now()}`;
           
-          // Önce start isteği göndermeden doğrudan process isteği gönder
-          // Bu sayede job kaydı otomatik oluşturulacak
           let isCompleted = false;
           let attempts = 0;
           const MAX_ATTEMPTS = 30;
@@ -259,7 +250,6 @@ const AttendanceSystem = () => {
               attempts++;
               
               try {
-                // Her bir işlemde güncel week parametresini gönder
                 const processResponse = await fetch(`/api/job-status?action=process&jobId=${jobId}&week=${selectedWeek}`);
                 
                 if (!processResponse.ok) {
@@ -270,20 +260,17 @@ const AttendanceSystem = () => {
                 const processData = await processResponse.json();
                 isCompleted = processData.completed;
                 
-                // UI güncelleme
                 const progress = processData.progress || 0;
                 const processedCells = processData.processedCells || 0;
                 const totalCells = processData.totalCells || 0;
                 
                 setStatus(`⏳ Temizleme sürüyor... (${progress}% - ${processedCells}/${totalCells})`);
                 
-                // Vercel rate-limiting için kısa bekleme
-                await new Promise(resolve => setTimeout(resolve, 1500)); // Daha uzun bekleme
+                await new Promise(resolve => setTimeout(resolve, 1500));
               } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
                 updateDebugLogs(`⚠️ UYARI: Batch işleme hatası (${attempts}. deneme): ${errorMessage}`);
                 
-                // Hata durumunda daha uzun bekle
                 await new Promise(resolve => setTimeout(resolve, 3000));
                 
                 if (attempts >= MAX_ATTEMPTS) {
@@ -292,11 +279,9 @@ const AttendanceSystem = () => {
               }
             }
             
-            // Başarılı tamamlama
             if (isCompleted) {
               setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
               updateDebugLogs(`✅ Google Sheets kayıtları tamamen temizlendi`);
-              // 5 saniye sonra status'ü temizle
               setTimeout(() => setStatus(''), 5000);
             } else {
               setStatus('⚠️ Temizleme işlemi yarım kaldı, daha sonra tekrar deneyiniz');
@@ -327,7 +312,6 @@ const AttendanceSystem = () => {
       setIsLoading(true);
       updateDebugLogs(`🔄 Fingerprint silme işlemi başlatıldı: ${fingerprintToDelete}`);
       
-      // Timeout kontrolü ekleyin
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000);
       
@@ -339,7 +323,6 @@ const AttendanceSystem = () => {
         
         clearTimeout(timeoutId);
         
-        // JSON parse hatalarını yönet
         let data;
         try {
           data = await response.json();
@@ -350,7 +333,6 @@ const AttendanceSystem = () => {
         if (response.ok) {
           setStatus('✅ Fingerprint başarıyla silindi');
           updateDebugLogs(`✅ Fingerprint memory ve sheets'ten silindi: ${fingerprintToDelete}`);
-          // 3 saniye sonra status'ü temizle
           setTimeout(() => setStatus(''), 3000);
         } else {
           setStatus(`❌ ${data.error || 'Fingerprint silinemedi'}`);
@@ -374,10 +356,8 @@ const AttendanceSystem = () => {
   };
   
 
-  // Debug loglarını güncelleyen yardımcı fonksiyon
   const updateDebugLogs = async (newLog: string) => {
     try {
-      // API'ye log gönder
       await fetch('/api/logs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -406,10 +386,7 @@ const AttendanceSystem = () => {
     };
   
     if (mode === 'teacher') {
-      // İlk yükleme
       fetchLogs();
-      
-      // Periyodik kontrol
       interval = setInterval(fetchLogs, 1000);
     }
   
@@ -426,12 +403,9 @@ const AttendanceSystem = () => {
       if (lastAttendanceCheck) {
         const checkData = JSON.parse(lastAttendanceCheck);
         
-        // Öğrenci numarasını set et
         setStudentId(checkData.studentId);
         
-        // validStudents'ın yüklenmesini bekle
         if (validStudents.length > 0) {
-          // Öğrenci kontrollerini yap
           const isValid = validStudents.some(s => s.studentId === checkData.studentId);
           if (isValid) {
             const now = new Date();
@@ -445,19 +419,16 @@ const AttendanceSystem = () => {
         }
       }
     }
-  }, [mode, validStudents]); // validStudents'ı dependency olarak ekledik
+  }, [mode, validStudents]);
 
   
-  // getClientIP fonksiyonunu bu şekilde güncelleyin
   const getClientIP = async () => {
     try {
       const response = await fetch('https://api.ipify.org?format=json');
       const data = await response.json();
       
-      // Yeni fingerprint sistemini kullan
       const { fingerprint, hardwareSignature } = await generateEnhancedFingerprint();
       
-      // Geçerlilik kontrolü
       if (!isValidFingerprint(fingerprint, hardwareSignature)) {
         throw new Error('Geçersiz cihaz tanımlama');
       }
@@ -489,14 +460,12 @@ const AttendanceSystem = () => {
 
   
   
-  // handlePasswordSubmit fonksiyonunu da güncelleyelim
   const handlePasswordSubmit = () => {
     if (password === 'teacher123') {
       setIsTeacherAuthenticated(true);
       setMode('teacher');
       setShowPasswordModal(false);
       
-      // Debug loglarını localStorage'dan yükle
       const savedLogs = localStorage.getItem('debugLogs');
       if (savedLogs) {
         setDebugLogs(JSON.parse(savedLogs));
@@ -576,7 +545,6 @@ const AttendanceSystem = () => {
     return false;
   };
   
-  // getLocation fonksiyonunu güncelle (diğer fonksiyonların yanına):
   const getLocation = async () => {
     if (!navigator.geolocation) {
       setStatus('❌ Konum desteği yok');
@@ -618,14 +586,10 @@ const AttendanceSystem = () => {
     );
   };
 
-  // Diğer useEffect'lerin yanına ekleyin
-  
-
   
 
   const generateQR = async () => {
     try {
-      // Statik konumu API'ye kaydet
       await fetch('/api/location', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -650,7 +614,6 @@ const AttendanceSystem = () => {
     const newId = e.target.value;
     setStudentId(newId);
     
-    // Buton durumlarını resetle
     setIsValidLocation(false);
     
     if (!newId) {
@@ -663,7 +626,6 @@ const AttendanceSystem = () => {
       return;
     }
     
-    // Öğrenciyi listede kontrol et
     const validStudent = validStudents.find(s => s.studentId === newId);
     
     if (!validStudent) {
@@ -671,22 +633,15 @@ const AttendanceSystem = () => {
       return;
     }
     
-    // Tüm kontrolleri geçtiyse
     setStatus('✅ Öğrenci numarası doğrulandı');
   };
 
   
 
-  // handleQrScan fonksiyonu (page.tsx içinde):
-  // page.tsx dosyasındaki handleQrScan fonksiyonunda yapılacak değişiklikler
-
-  // Component içinde useState ile ekle
   const [qrSubmitCount, setQrSubmitCount] = useState<number>(0);
   const [connectionError, setConnectionError] = useState<boolean>(false);
 
-  // Güncellenmiş handleQrScan fonksiyonu
   const handleQrScan = async (decodedText: string) => {
-    // Öncelikle son tarama zamanını kontrol et
     const lastScanTime = localStorage.getItem('lastQrScanTime');
     const currentTime = Date.now();
     
@@ -696,10 +651,9 @@ const AttendanceSystem = () => {
     
     localStorage.setItem('lastQrScanTime', currentTime.toString());
 
-    // İşlem sayacını artır ve durumu güncelle
     const newCount = qrSubmitCount + 1;
     setQrSubmitCount(newCount);
-    if (newCount > 0) { // Doğrudan yeni değeri kontrol et
+    if (newCount > 0) {
       setStatus('🔄 İşlem sürüyor, lütfen bekleyin...');
     }
 
@@ -708,7 +662,6 @@ const AttendanceSystem = () => {
       const currentTimeString = new Date().toLocaleTimeString();
       const studentInfo = validStudents.find(s => s.studentId === studentId);
 
-      // İlk log
       const scanLog = `
       ===== YENİ YOKLAMA KAYDI =====
       Zaman: ${currentTimeString}
@@ -717,7 +670,6 @@ const AttendanceSystem = () => {
       `;
       updateDebugLogs(scanLog);
 
-      // Öğrenci kontrolü
       const validStudent = validStudents.find(s => s.studentId === studentId);
       if (!validStudent) {
         const errorLog = `❌ HATA: Öğrenci numarası (${studentId}) listede bulunamadı`;
@@ -738,7 +690,6 @@ const AttendanceSystem = () => {
         return;
       }
 
-      // IP ve fingerprint kontrolü
       const clientIPData = await getClientIP();
       if (!clientIPData || !clientIPData.deviceFingerprint || !clientIPData.hardwareSignature) {
         updateDebugLogs(`❌ HATA: Cihaz tanımlama başarısız`);
@@ -748,7 +699,6 @@ const AttendanceSystem = () => {
 
       const { ip, deviceFingerprint, hardwareSignature } = clientIPData;
 
-      // Konum logları
       const locationLog = `
       📍 KONUM BİLGİLERİ:
       Öğrenci Konumu: ${location.lat}, ${location.lng}
@@ -762,12 +712,10 @@ const AttendanceSystem = () => {
       `;
       updateDebugLogs(locationLog);
 
-      // *** YENİ: API isteği için timeout kontrolü ***
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 saniye timeout
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
       
       try {
-        // API isteği
         const attendanceResponse = await fetch('/api/attendance', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -778,17 +726,15 @@ const AttendanceSystem = () => {
             deviceFingerprint,
             hardwareSignature
           }),
-          signal: controller.signal // AbortController sinyali
+          signal: controller.signal
         });
         
-        // Timeout'u temizle
         clearTimeout(timeoutId);
         setConnectionError(false);
 
         const responseData = await attendanceResponse.json();
 
         if (!attendanceResponse.ok) {
-          // Cihaz yetkilendirme hatası kontrolü
           if (responseData.unauthorizedDevice) {
             updateDebugLogs(`❌ HATA: Bu cihaz bu öğrenciye ait değil`);
             setStatus(`❌ Bu cihaz ${studentId} numaralı öğrenciye ait değil. Kendi cihazınızı kullanmalısınız!`);
@@ -799,7 +745,6 @@ const AttendanceSystem = () => {
             return;
           }
           
-          // Mevcut cihaz engelleme kontrolü
           if (responseData.blockedStudentId) {
             updateDebugLogs(`❌ HATA: Cihaz ${responseData.blockedStudentId} no'lu öğrenci tarafından kullanılmış`);
             setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
@@ -827,7 +772,6 @@ const AttendanceSystem = () => {
         }
 
       } catch (fetchError: any) {
-        // Timeout hatası kontrolü
         if (fetchError.name === 'AbortError') {
           updateDebugLogs(`⚠️ API TIMEOUT: İstek zaman aşımına uğradı (30 saniye)`);
           setStatus('⚠️ Sunucu yoğun, lütfen biraz sonra tekrar deneyin');
@@ -835,7 +779,6 @@ const AttendanceSystem = () => {
           return;
         }
         
-        // Network bağlantı hatası kontrolü
         if (fetchError instanceof TypeError && fetchError.message.includes('fetch')) {
           updateDebugLogs(`❌ NETWORK HATASI: Sunucuya bağlanılamadı`);
           setStatus('❌ Bağlantı hatası, internet bağlantınızı kontrol edin');
@@ -843,7 +786,7 @@ const AttendanceSystem = () => {
           return;
         }
         
-        throw fetchError; // Diğer hataları dışarıdaki catch bloğuna yönlendir
+        throw fetchError;
       }
 
     } catch (error: any) {
@@ -859,10 +802,8 @@ const AttendanceSystem = () => {
         setStatus(`❌ ${errorMessage}`);
       }
     } finally {
-      // İşlem sayacını sıfırla
       setQrSubmitCount(0);
       
-      // Eğer bağlantı hatası yoksa taramayı durdur
       if (!connectionError) {
         setIsScanning(false);
         if (html5QrCode) {
@@ -901,18 +842,16 @@ const AttendanceSystem = () => {
 
   const clearAllRecords = async () => {
     try {
-      // Cihaz kayıtlarını temizle
       const deviceResponse = await fetch('/api/attendance', {
         method: 'DELETE'
       });
   
-      // Debug loglarını temizle
       const logsResponse = await fetch('/api/logs', {
         method: 'DELETE'
       });
   
       if (deviceResponse.ok && logsResponse.ok) {
-        setDebugLogs([]); // Yerel state'i temizle
+        setDebugLogs([]);
         setStatus('✅ Tüm kayıtlar temizlendi');
       } else {
         throw new Error('Kayıtlar temizlenemedi');
@@ -946,22 +885,8 @@ const AttendanceSystem = () => {
             >
               Yeniden Dene
             </button>
-            <button
-              onClick={() => {
-                console.log('Current ENV:', {
-                  SHEET_ID: process.env.NEXT_PUBLIC_SHEET_ID,
-                  API_KEY: process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
-                  CLIENT_ID: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
-                });
-              }}
-              className="p-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-            >
-              Debug
-            </button>
           </div>
         </div>
-
-        
       </div>
     );
   }
@@ -1169,12 +1094,10 @@ const AttendanceSystem = () => {
                     </div>
                   </div>
                 )}
-                {/* Bağlantı hatası yeniden deneme butonu */}
                 {connectionError && (
                   <button
                     onClick={() => {
                       setConnectionError(false);
-                      // QR taramayı yeniden başlat (isteğe bağlı)
                       setIsScanning(true);
                     }}
                     className="w-full p-3 mt-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600"
@@ -1186,7 +1109,6 @@ const AttendanceSystem = () => {
               </div>
             </div>
   
-            {/* Öğretmen modu butonu en alta taşındı ve stili değiştirildi */}
             <button
               onClick={handleModeChange}
               className="w-full p-3 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300 transition-colors mt-4"
