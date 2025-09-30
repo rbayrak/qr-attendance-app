@@ -253,7 +253,7 @@ const AttendanceSystem = () => {
       updateDebugLogs(`🔄 Cihaz kayıtları temizleme işlemi başlatıldı`);
       
       try {
-        // 1. Adım: Memory store'u temizle
+        // 1. Adım: Memory store ve StudentDevices sayfasını temizle
         const response1 = await fetch('/api/attendance?cleanStep=memory', {
           method: 'DELETE'
         });
@@ -265,8 +265,8 @@ const AttendanceSystem = () => {
           return;
         }
 
-        setStatus('✅ Memory store temizlendi, Google Sheets temizleniyor...');
-        updateDebugLogs(`✅ Memory store temizlendi, Google Sheets işlemi başlatılıyor...`);
+        setStatus('✅ Memory store ve cihaz eşleştirmeleri temizlendi, Google Sheets temizleniyor...');
+        updateDebugLogs(`✅ Memory store ve StudentDevices temizlendi, Google Sheets işlemi başlatılıyor...`);
         
         const jobId = `sheets-cleanup-${Date.now()}`;
         

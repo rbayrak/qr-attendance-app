@@ -403,8 +403,17 @@ async function handleDeleteRequest(
     else if (cleanStep) {
       // Aşamalı temizleme işlemi
       if (cleanStep === 'memory') {
-        // Sadece memory store'u temizle
+        // Memory store ve StudentDevices sayfasını temizle
         deviceTracker.clearMemoryStore();
+        
+        // StudentDevices sayfasını da temizle
+        try {
+          await deviceTracker.clearStudentDevices();
+          console.log('StudentDevices sayfası temizlendi');
+        } catch (error) {
+          console.error('StudentDevices temizleme hatası:', error);
+          // Kritik olmayan hata, devam et
+        }
         
         // Önbelleği temizle
         cache.mainSheet = {
@@ -413,10 +422,10 @@ async function handleDeleteRequest(
         };
         cache.studentLookup.clear();
         
-        console.log('Memory store ve önbellek temizlendi');
+        console.log('Memory store, StudentDevices ve önbellek temizlendi');
         return res.status(200).json({ 
           success: true,
-          message: 'Memory store temizlendi'
+          message: 'Memory store ve cihaz eşleştirmeleri temizlendi'
         });
       }
       else if (cleanStep === 'sheets') {
