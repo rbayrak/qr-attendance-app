@@ -358,7 +358,7 @@ export class DeviceTracker {
 
   // Google Sheets ana sayfasını önbellekten veya API'den alır
   public async getMainSheetData(forceRefresh?: boolean): Promise<any[] | null> {
-    const CACHE_DURATION = 60000; // 1 dakika önbellek süresi
+    const CACHE_DURATION = 2000; // 2 saniye önbellek süresi (fingerprint çakışması için)
     const now = Date.now();
     
     // Eğer forceRefresh true ise veya önbellek süresi dolmuşsa, yeniden veri al
@@ -396,7 +396,7 @@ export class DeviceTracker {
 
   // Google Sheets StudentDevices sayfasını önbellekten veya API'den alır
   private async getStudentDevicesSheetData(): Promise<any[]> {
-    const CACHE_DURATION = 60000; // 1 dakika önbellek süresi
+    const CACHE_DURATION = 2000; // 2 saniye önbellek süresi (fingerprint çakışması için)
     const now = Date.now();
     
     // Önbellekte geçerli veri var mı kontrol et

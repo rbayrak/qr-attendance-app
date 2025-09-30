@@ -76,7 +76,7 @@ async function retryableOperation<T>(operation: () => Promise<T>, maxRetries = 5
 
 // Ana sayfayı önbellekten veya API'den al
 async function getMainSheetData(forceRefresh = false): Promise<any[] | null> {
-  const CACHE_DURATION = 60000; // 1 dakika önbellek süresi
+  const CACHE_DURATION = 2000; // 2 saniye önbellek süresi (fingerprint çakışması için)
   const now = Date.now();
   
   // Önbellekte geçerli veri var mı kontrol et
@@ -165,7 +165,8 @@ async function processQueue() {
     }
     
     // API rate limit aşımını önlemek için küçük bir bekleme
-    await new Promise(resolve => setTimeout(resolve, 200));
+    // 60 kişilik sınıflar için optimize edildi: 50ms
+    await new Promise(resolve => setTimeout(resolve, 50));
   }
   
   processingQueue = false;

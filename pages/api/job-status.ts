@@ -298,6 +298,11 @@ async function processBatch(
       }
     });
     
+    // ÖNEMLİ: Google Sheets güncellendiği için önbelleği temizle
+    // Böylece bir sonraki okumada yeni veriler çekilecek
+    await deviceTracker.getMainSheetData(true); // forceRefresh ile önbelleği yenile
+    console.log(`processBatch: Önbellek yenilendi (${processedCount} hücre temizlendi)`);
+    
     // İşlem tamamlandı mı?
     const isCompleted = foundCells <= offset + processedCount;
     

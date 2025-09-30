@@ -233,6 +233,7 @@ const AttendanceSystem = () => {
   const [fingerprintToDelete, setFingerprintToDelete] = useState<string>('');
   const [qrSubmitCount, setQrSubmitCount] = useState<number>(0);
   const [connectionError, setConnectionError] = useState<boolean>(false);
+  const [queuePosition, setQueuePosition] = useState<number>(0); // Kuyruk pozisyonu
 
   const updateDebugLogs = async (newLog: string) => {
     try {
@@ -350,7 +351,7 @@ const AttendanceSystem = () => {
       updateDebugLogs(`🔄 Fingerprint silme işlemi başlatıldı: ${fingerprintToDelete}`);
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 saniye (60 kişilik sınıf için)
       
       try {
         const response = await fetch(`/api/attendance?fingerprint=${fingerprintToDelete}`, {
@@ -666,7 +667,7 @@ const AttendanceSystem = () => {
     const newCount = qrSubmitCount + 1;
     setQrSubmitCount(newCount);
     if (newCount > 0) {
-      setStatus('🔄 İşlem sürüyor, lütfen bekleyin...');
+      setStatus('🔄 İşlem sürüyor... Yoğun saatlerde bekleme süresi uzayabilir.');
     }
 
     try {
@@ -725,7 +726,7 @@ const AttendanceSystem = () => {
       updateDebugLogs(locationLog);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 saniye (60 kişilik sınıf için)
       
       try {
         const attendanceResponse = await fetch('/api/attendance', {
@@ -785,8 +786,8 @@ const AttendanceSystem = () => {
 
       } catch (fetchError: any) {
         if (fetchError.name === 'AbortError') {
-          updateDebugLogs(`⚠️ API TIMEOUT: İstek zaman aşımına uğradı (30 saniye)`);
-          setStatus('⚠️ Sunucu yoğun, lütfen biraz sonra tekrar deneyin');
+          updateDebugLogs(`⚠️ API TIMEOUT: İstek zaman aşımına uğradı (60 saniye)`);
+          setStatus('⚠️ Sunucu yoğun, lütfen biraz sonra tekrar deneyin (60sn timeout)');
           setConnectionError(true);
           return;
         }
