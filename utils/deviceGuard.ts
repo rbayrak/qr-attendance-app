@@ -357,7 +357,7 @@ function isSameBrowserBlock(entry: LogEntry): boolean {
 }
 
 export function sameBrowserNote(otherStudentId: string): string {
-  return `${SAME_BROWSER_TAG} ${otherStudentId}] Bu tarayıcı başka bir öğrenciye kayıtlı; yoklama reddedildi`;
+  return `${SAME_BROWSER_TAG} ${otherStudentId}] Bu tarayıcı başka bir öğrenci tarafından kullanılıyor; yoklama reddedildi`;
 }
 
 function sameBrowserOther(entry: LogEntry): string {
@@ -378,19 +378,34 @@ function isSuspiciousRegistration(analysis: DeviceAnalysis, request: DeviceReque
       if (isSameBrowserBlock(entry) && istanbulDayKey(entry.timestamp) === today) return true;
       continue;
     }
-    if (entry.result !== RESULT.recorded && entry.result !== RESULT.pending) continue;
+    if (entry.result !== RESULT.recorded && entry.result !== RESULT.pending && entry.result !== RESULT.rejected) continue;
+    // Bu tarayıcı daha önce başka bir öğrenci için kullanılmış (ör. o istek reddedilmiş): süre sınırı yok
+    if (entry.deviceId && entry.deviceId === request.deviceId) return true;
+    if (entry.result === RESULT.rejected) continue;
     if (request.now - entry.timestamp > SUSPICION_WINDOW_MS) continue;
-    if (entry.deviceId === request.deviceId) continue;
     if (sameFullModel(entry.model, request.model) && entry.ip && entry.ip === request.ip) return true;
   }
   return false;
 }
 
+/**
+ * Bu tarayıcıyı şu an kim kullanıyor? Kayıtlı sahibi ya da bu tarayıcıdan
+ * gönderilmiş, henüz sonuçlanmamış bir onay isteğinin sahibi.
+ */
+export function browserClaimant(analysis: DeviceAnalysis, deviceId: string, studentId: string): string | null {
+  const owner = analysis.deviceOwner.get(deviceId);
+  if (owner && owner.id !== studentId) return owner.id;
+  const claim = openPendingEntries(analysis)
+    .find(entry => entry.deviceId === deviceId && entry.studentId !== studentId);
+  return claim ? claim.studentId : null;
+}
+
 export function decideDevice(analysis: DeviceAnalysis, request: DeviceRequest): DeviceDecision {
   const { deviceId, studentId, now } = request;
-  const owner = analysis.deviceOwner.get(deviceId);
-  if (owner && owner.id !== studentId) {
-    return { kind: 'reject', otherStudentId: owner.id };
+  // Aynı tarayıcı (çerez) başka bir öğrenci tarafından kullanılıyor: kesin kanıt
+  const claimant = browserClaimant(analysis, deviceId, studentId);
+  if (claimant) {
+    return { kind: 'reject', otherStudentId: claimant };
   }
   const registered = analysis.studentDevice.get(studentId);
   if (registered) {
@@ -494,9 +509,6 @@ export function warningsFor(
     if (Math.abs(delta) > SIMILARITY_WINDOW_MS) continue;
     const closer = (current: LogEntry | null) =>
       !current || Math.abs(subject.timestamp - entry.timestamp) < Math.abs(subject.timestamp - current.timestamp);
-    if (entry.deviceId && entry.deviceId === subject.deviceId && reason.code !== 'deviceOwnedByOther') {
-      if (closer(sameBrowser)) sameBrowser = entry;
-    }
     if (!modelKnown || !sameHardware(entry.model, subject.model)) continue;
     sameModelCount++;
     if (sameFullModel(entry.model, subject.model) && entry.ip && entry.ip === subject.ip) {
@@ -506,11 +518,31 @@ export function warningsFor(
     }
   }
 
+  // Aynı tarayıcı (çerez) başka öğrenci için kullanılmış mı? (süre sınırı yok)
+  if (reason.code !== 'deviceOwnedByOther' && subject.deviceId) {
+    for (const entry of analysis.entries) {
+      if (until !== undefined && entry.timestamp >= until) break;
+      if (entry.timestamp <= analysis.lastResetAt || entry.studentId === subject.studentId) continue;
+      if (entry.deviceId !== subject.deviceId) continue;
+      if (entry.result !== RESULT.recorded && (options.recordedOnly || entry.result !== RESULT.pending)) continue;
+      if (!sameBrowser || Math.abs(subject.timestamp - entry.timestamp) < Math.abs(subject.timestamp - sameBrowser.timestamp)) {
+        sameBrowser = entry;
+      }
+    }
+  }
+
   const describe = (entry: LogEntry) =>
     `${timeDistance(subject.timestamp - entry.timestamp)} ${entry.studentId} ${nameOf(entry.studentId)} ` +
     (entry.result === RESULT.pending ? 'için onay istendi' : 'yoklama verdi');
   if (sameBrowser) {
     warnings.push({ level: 'strong', text: `Aynı tarayıcıdan ${describe(sameBrowser)}` });
+  }
+  // Panelde (güncel durum): bu tarayıcı şu an başka öğrenciye kayıtlı mı?
+  if (until === undefined && subject.deviceId) {
+    const owner = analysis.deviceOwner.get(subject.deviceId);
+    if (owner && owner.id !== subject.studentId && (!sameBrowser || sameBrowser.studentId !== owner.id)) {
+      warnings.push({ level: 'strong', text: `Bu tarayıcı şu an ${owner.id} ${nameOf(owner.id)} adına kayıtlı` });
+    }
   }
   if (sameNetwork) {
     warnings.push({ level: 'strong', text: `Aynı ağdan ve aynı cihaz imzasıyla ${describe(sameNetwork)}` });
@@ -532,7 +564,7 @@ export function warningsFor(
     warnings.push({
       level: 'strong',
       text: `Bu öğrenci için ${timeDistance(subject.timestamp - entry.timestamp)} ${other} ${nameOf(other)} ` +
-        'adına kayıtlı tarayıcıdan denendi (reddedildi)'
+        'tarafından kullanılan tarayıcıdan denendi (reddedildi)'
     });
     break;
   }

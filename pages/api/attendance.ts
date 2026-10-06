@@ -188,7 +188,7 @@ async function handlePostRequest(
         note: sameBrowserNote(decision.otherStudentId)
       }));
       return res.status(403).json({
-        error: `Yoklamanız alınmadı. Bu telefon (tarayıcı) ${decision.otherStudentId} numaralı öğrenciye kayıtlı; ` +
+        error: `Yoklamanız alınmadı. Bu telefon (tarayıcı) ${decision.otherStudentId} numaralı öğrenci tarafından kullanılıyor; ` +
           'aynı telefondan ikinci bir öğrenci yoklama veremez. Kendi telefonunuzla tekrar deneyin. ' +
           'Telefonunuz yanınızda değilse öğretmeninize başvurun.',
         blockedStudentId: decision.otherStudentId

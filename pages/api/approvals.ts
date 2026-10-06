@@ -107,7 +107,7 @@ function blockedItems(data: SheetData, analysis: DeviceAnalysis, now: number) {
       name: entry.name || nameOf(entry.studentId),
       week: entry.week,
       at: formatIstanbul(entry.timestamp),
-      reason: `${owner} ${nameOf(owner)} adına kayıtlı telefondan denedi; yoklama reddedildi`,
+      reason: `${owner} ${nameOf(owner)} tarafından kullanılan telefondan (tarayıcıdan) denedi; yoklama reddedildi`,
       level: 'strong',
       warnings: []
     };
@@ -131,22 +131,32 @@ function buildState(data: SheetData) {
   };
 }
 
-async function approve(data: SheetData, entry: LogEntry, now: number) {
+async function approve(data: SheetData, analysis: DeviceAnalysis, entry: LogEntry, now: number) {
   const row = findStudentRow(data.main, entry.studentId);
   if (row === -1) throw new Error(`${entry.studentId} listede yok`);
   const base = { week: entry.week, studentId: entry.studentId, name: entry.name };
-  const writes: Promise<void>[] = [
-    // Önce eski eşleşme kaldırılır, sonra (1 ms sonra) yeni cihazla kayıt yazılır
-    appendLogRow(buildLogRow({
-      ...base, now, result: RESULT.release, deviceId: '', model: '', ip: '',
-      note: 'Öğretmen onayı: önceki cihaz eşleşmesi kaldırıldı'
-    })),
-    appendLogRow(buildLogRow({
-      ...base, now: now + 1, result: RESULT.recorded,
-      deviceId: entry.deviceId, model: entry.model, ip: entry.ip,
-      note: `${NOTE_TEACHER_APPROVED} (istek: ${formatIstanbul(entry.timestamp, true)})`
-    }))
-  ];
+  // İsteğin geldiği tarayıcı bu arada başka bir öğrenciye kaydolduysa onay yalnızca
+  // yoklamayı yazar; telefonun sahibi değiştirilmez
+  const owner = analysis.deviceOwner.get(entry.deviceId);
+  const takenByOther = !!owner && owner.id !== entry.studentId;
+  const writes: Promise<void>[] = takenByOther
+    ? [appendLogRow(buildLogRow({
+        ...base, now, result: RESULT.recorded, deviceId: '', model: entry.model, ip: entry.ip,
+        note: `${NOTE_TEACHER_APPROVED} (istek: ${formatIstanbul(entry.timestamp, true)}; tarayıcı ${owner!.id} adına ` +
+          'kayıtlı olduğu için cihaz kaydı yapılmadı)'
+      }))]
+    : [
+        // Önce eski eşleşme kaldırılır, sonra (1 ms sonra) yeni cihazla kayıt yazılır
+        appendLogRow(buildLogRow({
+          ...base, now, result: RESULT.release, deviceId: '', model: '', ip: '',
+          note: 'Öğretmen onayı: önceki cihaz eşleşmesi kaldırıldı'
+        })),
+        appendLogRow(buildLogRow({
+          ...base, now: now + 1, result: RESULT.recorded,
+          deviceId: entry.deviceId, model: entry.model, ip: entry.ip,
+          note: `${NOTE_TEACHER_APPROVED} (istek: ${formatIstanbul(entry.timestamp, true)})`
+        }))
+      ];
   if (!hasAttended(data.main, row, entry.week)) {
     writes.push(writeMainCell(row, weekColumn(entry.week), 'VAR'));
   }
@@ -180,12 +190,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (action === 'approve') {
       const entry = findPending();
       if (!entry) return res.status(404).json({ error: 'Bekleyen istek bulunamadı (başka bir işlemle sonuçlanmış olabilir)' });
-      await approve(data, entry, now);
+      await approve(data, analysis, entry, now);
       message = `${entry.studentId} ${entry.name}: Hafta ${entry.week} onaylandı`;
     } else if (action === 'approveClean') {
       const clean = pending.filter(entry => describe(analysis, data, entry).level === 'clean');
       // Aynı anda gönderilir; her öğrencinin satırları kendi içinde sıralı zamanlıdır
-      await Promise.all(clean.map((entry, i) => approve(data, entry, now + i * 2)));
+      await Promise.all(clean.map((entry, i) => approve(data, analysis, entry, now + i * 2)));
       message = clean.length > 0 ? `${clean.length} istek onaylandı` : 'Uyarısız bekleyen istek yok';
     } else if (action === 'reject') {
       const entry = findPending();
@@ -208,7 +218,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         appendLogRow(buildLogRow({
           now, week: entry.week, studentId: entry.studentId, name: entry.name, result: RESULT.recorded,
           deviceId: '', model: entry.model, ip: entry.ip,
-          note: `${NOTE_TEACHER_OVERRIDE}: ${sameBrowserOwner(entry)} adına kayıtlı telefondan (cihaz kaydı değişmedi)`
+          note: `${NOTE_TEACHER_OVERRIDE}: ${sameBrowserOwner(entry)} tarafından kullanılan telefondan (cihaz kaydı değişmedi)`
         }))
       ]);
       message = `${entry.studentId} ${entry.name}: Hafta ${entry.week} yoklaması verildi`;

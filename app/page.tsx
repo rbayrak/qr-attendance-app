@@ -982,9 +982,9 @@ const AttendanceSystem = () => {
                 </button>
               </div>
               <p className="text-xs text-gray-500">
-                Telefonu ya da tarayıcısı değişen (çerez silme, gizli sekme, yeni telefon) veya başka bir
-                öğrenciye kayıtlı telefondan gelen yoklamalar burada bekler; onaylanmadan yoklama sayılmaz.
-                Onaylanan öğrenci yeni telefonuna kaydedilir.
+                Telefonu ya da tarayıcısı değişen (çerez silme, gizli sekme, yeni telefon), kayıt dönemi
+                bittikten sonra ilk kez gelen ya da şüpheli görünen yoklamalar burada bekler; onaylanmadan
+                yoklama sayılmaz. Onaylanan öğrenci yeni telefonuna kaydedilir.
               </p>
               {approvals?.registration && (
                 <p className="text-xs text-gray-600">
@@ -1054,7 +1054,7 @@ const AttendanceSystem = () => {
                 <div className="space-y-2 pt-2">
                   <h4 className="text-sm font-semibold text-gray-800">Bugün reddedilenler ({approvals.blocked.length})</h4>
                   <p className="text-xs text-gray-500">
-                    Başka bir öğrenciye kayıtlı telefondan (aynı tarayıcıdan) denendi; yoklama alınmadı.
+                    Başka bir öğrencinin kullandığı telefondan (aynı tarayıcıdan) denendi; yoklama alınmadı.
                     Telefonu bozuk olduğu için arkadaşınınkini kullanan öğrenciye yoklama verebilirsiniz
                     (telefonun kaydı değişmez).
                   </p>
