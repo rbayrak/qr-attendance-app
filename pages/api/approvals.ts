@@ -3,16 +3,22 @@
 //
 // GET  -> bekleyenler (uyarılarıyla), bugün reddedilenler, bugün kontrol
 //         edilmesi önerilen kayıtlar, ayarlar
-// POST -> { action: 'approve' | 'reject', studentId, week }   bekleyen istek
-//         { action: 'approveClean' }                          uyarısızların hepsini onayla
+// POST -> { action: 'approve' | 'reject', studentId, week }   düşük/orta riskli bekleyen istek
+//         { action: 'approveClean' }                          düşük risklilerin hepsini onayla
+//         { action: 'overridePending', studentId, week }      yüksek riskli isteğe yine de yoklama ver
 //         { action: 'override', studentId, week }             reddedilene yine de yoklama ver
 //         { action: 'cancel', studentId, week }               kontrol listesindeki kaydı iptal et
+//         { action: 'clearNotifications' }                    bildirim listelerini temizle
 //         { action: 'setAutoApprove', enabled }               otomatik onay ayarı
 //
 // Onay: yoklama yazılır, öğrencinin önceki cihaz eşleşmesi kaldırılır ve
 // isteği gönderdiği cihaz yeni kayıtlı cihazı olur. Ret: yoklama yazılmaz.
-// "Yine de yoklama ver": aynı tarayıcıdan reddedilen öğrenciye (ör. telefonu
-// bozuk, arkadaşınınkini kullandı) yoklama yazılır; cihaz kaydı DEĞİŞMEZ.
+// Yüksek riskli istek (aynı telefondan başka öğrenci olabilir) onaylanamaz ya da
+// reddedilemez; yalnızca "Yine de yoklama ver" vardır: yoklama yazılır, cihaz
+// kaydı DEĞİŞMEZ (şüpheli tarayıcı öğrenciye kaydedilmez). Aynı tarayıcıdan
+// reddedilen öğrenci (ör. telefonu bozuk, arkadaşınınkini kullandı) için de aynısı.
+// "Bildirimleri temizle": listeler boşalır; bekleyen istekler onaylanmamış sayılır.
+// ("Cihaz Kayıtlarını Temizle" yalnızca telefon kayıtlarını siler, listeleri değil.)
 // İptal (otomatik onaylanan / kayıt döneminde serbestçe kaydedilen): hücre
 // boşaltılır, öğrencinin cihaz eşleşmesi kaldırılır.
 
@@ -30,6 +36,7 @@ import {
   reasonLabel,
   isRegistrationOpen,
   settingRow,
+  clearNotificationsRow,
   buildLogRow,
   RESULT,
   NOTE_TEACHER_APPROVED,
@@ -72,9 +79,10 @@ function describe(
   };
 }
 
-// Sonuçlanmamış ve hücresi henüz "VAR" olmayan bekleyen kayıtlar
+// Sonuçlanmamış ve hücresi henüz "VAR" olmayan bekleyen kayıtlar (son
+// "Bildirimleri temizle"den sonra; "Cihaz Kayıtlarını Temizle" listeyi etkilemez)
 function currentPending(data: SheetData, analysis: DeviceAnalysis): LogEntry[] {
-  return openPendingEntries(analysis).filter(entry => {
+  return openPendingEntries(analysis, analysis.lastClearAt).filter(entry => {
     const row = findStudentRow(data.main, entry.studentId);
     return row !== -1 && !hasAttended(data.main, row, entry.week);
   });
@@ -191,10 +199,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const pending = currentPending(data, analysis);
     const findPending = () => pending.find(entry => entry.studentId === studentId && entry.week === week);
 
+    const highRiskError = 'Bu istek yüksek riskli; yalnızca "Yine de yoklama ver" kullanılabilir.';
+
     let message = '';
     if (action === 'approve') {
       const entry = findPending();
       if (!entry) return res.status(404).json({ error: 'Bekleyen istek bulunamadı (başka bir işlemle sonuçlanmış olabilir)' });
+      if (describe(analysis, data, entry).level === 'strong') return res.status(409).json({ error: highRiskError });
       await approve(data, analysis, entry, now);
       message = `${entry.studentId} ${entry.name}: Hafta ${entry.week} onaylandı`;
     } else if (action === 'approveClean') {
@@ -205,11 +216,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     } else if (action === 'reject') {
       const entry = findPending();
       if (!entry) return res.status(404).json({ error: 'Bekleyen istek bulunamadı (başka bir işlemle sonuçlanmış olabilir)' });
+      if (describe(analysis, data, entry).level === 'strong') return res.status(409).json({ error: highRiskError });
       await appendLogRow(buildLogRow({
         now, week: entry.week, studentId: entry.studentId, name: entry.name, result: RESULT.rejected,
         deviceId: entry.deviceId, model: entry.model, ip: entry.ip, note: 'Öğretmen reddetti'
       }));
       message = `${entry.studentId} ${entry.name}: Hafta ${entry.week} reddedildi`;
+    } else if (action === 'overridePending') {
+      const entry = findPending();
+      if (!entry) return res.status(404).json({ error: 'Bekleyen istek bulunamadı (başka bir işlemle sonuçlanmış olabilir)' });
+      const row = findStudentRow(data.main, entry.studentId);
+      if (row === -1) return res.status(404).json({ error: `${entry.studentId} listede yok` });
+      // Cihaz kimliği boş yazılır: şüpheli tarayıcı öğrenciye kaydedilmez
+      await Promise.all([
+        ...(!hasAttended(data.main, row, entry.week) ? [writeMainCell(row, weekColumn(entry.week), 'VAR')] : []),
+        appendLogRow(buildLogRow({
+          now, week: entry.week, studentId: entry.studentId, name: entry.name, result: RESULT.recorded,
+          deviceId: '', model: entry.model, ip: entry.ip,
+          note: `${NOTE_TEACHER_OVERRIDE}: yüksek riskli istek (istek: ${formatIstanbul(entry.timestamp, true)}; cihaz kaydı değişmedi)`
+        }))
+      ]);
+      message = `${entry.studentId} ${entry.name}: Hafta ${entry.week} yoklaması verildi`;
     } else if (action === 'override') {
       const found = blockedItems(data, analysis, now)
         .find(({ entry }) => entry.studentId === studentId && entry.week === week);
@@ -246,6 +273,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }))
       ]);
       message = `${entry.studentId} ${entry.name}: Hafta ${entry.week} yoklaması iptal edildi`;
+    } else if (action === 'clearNotifications') {
+      await appendLogRow(clearNotificationsRow(now));
+      message = 'Bildirimler temizlendi';
     } else if (action === 'setAutoApprove') {
       const enabled = body.enabled === true;
       await appendLogRow(settingRow(now, enabled));

@@ -286,8 +286,8 @@ const AttendanceSystem = () => {
       'Hangi telefonun hangi öğrenciye ait olduğu unutulur; herkes bir sonraki yoklamada kullandığı ' +
       'telefona yeniden kaydedilir. Bu sırada bir telefondan birden fazla öğrenci yoklama verebilir, ' +
       'bu yüzden yalnızca dönem başında veya test sonrasında kullanın. ' +
-      'Onay bekleyen istekler de silinir. Telefonu değişen tek bir öğrenci için bu düğmeye gerek yok: ' +
-      'onun isteği "Onay bekleyenler" listesine düşer.\n\n' +
+      'Onay bekleyenler ve reddedilenler listeleri silinmez (onlar için "Bildirimleri temizle" düğmesi var). ' +
+      'Telefonu değişen tek bir öğrenci için bu düğmeye gerek yok: onun isteği "Onay bekleyenler" listesine düşer.\n\n' +
       'Eski biçimdeki uzun hücreler de sadece "VAR" olarak sadeleştirilir (tarih/saat Yoklama Kayıtları sayfasına aktarılır).'
     );
     if (!confirmed) return;
@@ -987,13 +987,30 @@ const AttendanceSystem = () => {
                 <h3 className="text-sm font-semibold text-gray-800">
                   Onay bekleyenler{approvals ? ` (${approvals.pending.length})` : ''}
                 </h3>
-                <button
-                  type="button"
-                  onClick={() => void loadApprovals()}
-                  className="text-xs text-blue-600 hover:underline"
-                >
-                  Yenile
-                </button>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void loadApprovals()}
+                    className="text-xs text-blue-600 hover:underline"
+                  >
+                    Yenile
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm(
+                        'Onay bekleyenler, bugün reddedilenler ve kontrol edilmesi önerilenler listeleri temizlensin mi?\n\n' +
+                        'Bekleyen istekler onaylanmamış sayılır (yoklama yazılmaz). Telefon kayıtları ve yazılmış yoklamalar değişmez.'
+                      )) {
+                        void approvalAction({ action: 'clearNotifications' });
+                      }
+                    }}
+                    className="text-xs text-gray-500 hover:text-red-600 hover:underline disabled:opacity-50"
+                    disabled={approvalBusy}
+                  >
+                    Bildirimleri temizle
+                  </button>
+                </div>
               </div>
               <p className="text-xs text-gray-500">
                 Telefonu ya da tarayıcısı değişen (çerez silme, gizli sekme, yeni telefon), kayıt dönemi
@@ -1046,24 +1063,45 @@ const AttendanceSystem = () => {
                       {warning.level === 'strong' ? '⚠️' : '•'} {warning.text}
                     </div>
                   ))}
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => void approvalAction({ action: 'approve', studentId: item.studentId, week: item.week })}
-                      className="flex-1 p-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
-                      disabled={approvalBusy}
-                    >
-                      Onayla
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void approvalAction({ action: 'reject', studentId: item.studentId, week: item.week })}
-                      className="flex-1 p-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 disabled:opacity-50"
-                      disabled={approvalBusy}
-                    >
-                      Reddet
-                    </button>
-                  </div>
+                  {item.level === 'strong' ? (
+                    <div className="pt-1 space-y-1">
+                      <div className="text-xs text-gray-600">
+                        Aynı telefondan başka bir öğrenci olabilir. Öğrencinin sınıfta olduğundan eminseniz yoklama
+                        verebilirsiniz; bu tarayıcı öğrenciye kaydedilmez.
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm(`YÜKSEK RİSK: ${item.studentId} ${item.name} için Hafta ${item.week} yoklaması yine de verilsin mi?`)) {
+                            void approvalAction({ action: 'overridePending', studentId: item.studentId, week: item.week });
+                          }
+                        }}
+                        className="text-sm text-blue-700 hover:underline disabled:opacity-50"
+                        disabled={approvalBusy}
+                      >
+                        Yine de yoklama ver
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => void approvalAction({ action: 'approve', studentId: item.studentId, week: item.week })}
+                        className="flex-1 p-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+                        disabled={approvalBusy}
+                      >
+                        Onayla
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void approvalAction({ action: 'reject', studentId: item.studentId, week: item.week })}
+                        className="flex-1 p-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 disabled:opacity-50"
+                        disabled={approvalBusy}
+                      >
+                        Reddet
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
 

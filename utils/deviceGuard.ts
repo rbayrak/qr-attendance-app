@@ -67,6 +67,8 @@ export const RESULT = {
   reset: 'SIFIRLAMA',
   release: 'CİHAZ SERBEST', // öğrencinin önceki cihaz eşleşmeleri artık sayılmaz
   setting: 'AYAR',
+  // Öğretmen panelindeki bildirim listelerini temizledi (bekleyen istekler onaylanmamış sayılır)
+  clearNotifications: 'BİLDİRİMLER TEMİZLENDİ',
   legacy: 'ESKİ KAYIT' // eski biçimli hücreden aktarılan yoklama (cihaz kuralında kullanılmaz)
 } as const;
 
@@ -243,6 +245,8 @@ interface Binding {
 export interface DeviceAnalysis {
   entries: LogEntry[];
   lastResetAt: number;
+  /** Öğretmenin son "Bildirimleri temizle" zamanı (listeler bundan sonrasını gösterir) */
+  lastClearAt: number;
   /** cihaz kimliği -> o cihazın sahibi olan öğrenci */
   deviceOwner: Map<string, Binding>;
   /** öğrenci numarası -> öğrencinin kayıtlı cihazı */
@@ -265,11 +269,14 @@ export interface DeviceAnalysis {
 export function analyzeDevices(log: SheetRows): DeviceAnalysis {
   const entries = parseLog(log);
   let lastResetAt = 0;
+  let lastClearAt = 0;
   let autoApproveEnabled = false;
   const releasedAt = new Map<string, number>();
   for (const entry of entries) {
     if (entry.result === RESULT.reset) {
       lastResetAt = Math.max(lastResetAt, entry.timestamp);
+    } else if (entry.result === RESULT.clearNotifications) {
+      lastClearAt = Math.max(lastClearAt, entry.timestamp);
     } else if (entry.result === RESULT.release && entry.studentId) {
       releasedAt.set(entry.studentId, Math.max(releasedAt.get(entry.studentId) ?? 0, entry.timestamp));
     } else if (entry.result === RESULT.setting) {
@@ -309,7 +316,7 @@ export function analyzeDevices(log: SheetRows): DeviceAnalysis {
     .sort();
 
   return {
-    entries, lastResetAt, deviceOwner, studentDevice,
+    entries, lastResetAt, lastClearAt, deviceOwner, studentDevice,
     autoApprovalUsed, approvalCount, autoApproveEnabled, classDays
   };
 }
@@ -318,6 +325,13 @@ export function analyzeDevices(log: SheetRows): DeviceAnalysis {
 export function isRegistrationOpen(analysis: DeviceAnalysis, now: number): boolean {
   const today = istanbulDayKey(now);
   return analysis.classDays.filter(day => day < today).length < REGISTRATION_CLASS_DAYS;
+}
+
+export function clearNotificationsRow(now: number): string[] {
+  return buildLogRow({
+    now, week: '', studentId: '', name: '', result: RESULT.clearNotifications,
+    deviceId: '', model: '', ip: '', note: 'Öğretmen bildirim listelerini temizledi'
+  });
 }
 
 export function settingRow(now: number, autoApprove: boolean): string[] {
@@ -603,13 +617,21 @@ export function warningsFor(
 // Onay bekleyenler ve otomatik onaylananlar
 // ---------------------------------------------------------------------------
 
-/** Sonuçlanmamış (onaylanmamış/reddedilmemiş) en son bekleyen kayıtlar; öğrenci+hafta başına bir tane. */
-export function openPendingEntries(analysis: DeviceAnalysis): LogEntry[] {
+/**
+ * Sonuçlanmamış (onaylanmamış/reddedilmemiş) en son bekleyen kayıtlar; öğrenci+hafta başına bir tane.
+ * `since` öncesindeki istekler sayılmaz. Cihaz kuralı (varsayılan): son sıfırlama ya da son
+ * "Bildirimleri temizle", hangisi yeniyse (temizlenen istek reddedilmiş gibi tarayıcıyı bırakır).
+ * Öğretmen listesi: yalnızca son "Bildirimleri temizle" (sıfırlama listeyi etkilemez).
+ */
+export function openPendingEntries(
+  analysis: DeviceAnalysis,
+  since: number = Math.max(analysis.lastResetAt, analysis.lastClearAt)
+): LogEntry[] {
   const latest = new Map<string, LogEntry>();
   const resolvedAt = new Map<string, number>();
   const key = (entry: LogEntry) => `${entry.studentId}|${entry.week}`;
   for (const entry of analysis.entries) {
-    if (entry.timestamp <= analysis.lastResetAt || !entry.studentId) continue;
+    if (entry.timestamp <= since || !entry.studentId) continue;
     if (entry.result === RESULT.pending) {
       latest.set(key(entry), entry);
     } else if (entry.result === RESULT.rejected ||
@@ -630,7 +652,7 @@ export function openPendingEntries(analysis: DeviceAnalysis): LogEntry[] {
  * onaylananlar ve kayıt döneminde serbestçe yapılan ilk kayıtlar. (Hangilerinin
  * gösterileceğine uyarılara bakılarak API'de karar verilir.)
  */
-export function unattendedRecordsToday(analysis: DeviceAnalysis, now: number): LogEntry[] {
+export function unattendedRecordsToday(analysis: DeviceAnalysis, now: number, since: number = analysis.lastClearAt): LogEntry[] {
   const today = istanbulDayKey(now);
   const cancelledAt = new Map<string, number>();
   for (const entry of analysis.entries) {
@@ -642,19 +664,19 @@ export function unattendedRecordsToday(analysis: DeviceAnalysis, now: number): L
   return analysis.entries
     .filter(entry => entry.result === RESULT.recorded &&
       (entry.note.startsWith(NOTE_AUTO_APPROVED) || entry.note.startsWith(NOTE_FIRST_REGISTRATION)) &&
-      entry.timestamp > analysis.lastResetAt && istanbulDayKey(entry.timestamp) === today &&
+      entry.timestamp > since && istanbulDayKey(entry.timestamp) === today &&
       entry.timestamp > (cancelledAt.get(`${entry.studentId}|${entry.week}`) ?? 0))
     .sort((a, b) => b.timestamp - a.timestamp);
 }
 
 /** Bugün aynı tarayıcıdan reddedilen ve sonradan yoklaması yazılmamış denemeler (öğrenci+hafta başına son deneme) */
-export function sameBrowserBlocksToday(analysis: DeviceAnalysis, now: number): LogEntry[] {
+export function sameBrowserBlocksToday(analysis: DeviceAnalysis, now: number, since: number = analysis.lastClearAt): LogEntry[] {
   const today = istanbulDayKey(now);
   const latest = new Map<string, LogEntry>();
   const recordedAt = new Map<string, number>();
   const key = (entry: LogEntry) => `${entry.studentId}|${entry.week}`;
   for (const entry of analysis.entries) {
-    if (entry.timestamp <= analysis.lastResetAt || !entry.studentId) continue;
+    if (entry.timestamp <= since || !entry.studentId) continue;
     if (isSameBrowserBlock(entry) && istanbulDayKey(entry.timestamp) === today) {
       latest.set(key(entry), entry);
     } else if (entry.result === RESULT.recorded) {

@@ -317,8 +317,9 @@ async function handlePostRequest(
 
 // DELETE: "Cihaz Kayıtlarını Temizle"
 //  - Kayıt sayfasına SIFIRLAMA satırı ekler: bu andan önceki cihaz eşleşmeleri
-//    ve onay bekleyen istekler artık sayılmaz, yeni kayıt dönemi başlar
-//    (kayıtlar silinmez, geçmiş korunur)
+//    artık sayılmaz, yeni kayıt dönemi başlar (kayıtlar silinmez, geçmiş korunur).
+//    Öğretmen panelindeki bildirim listelerine dokunmaz; onlar ayrı bir düğmeyle
+//    temizlenir (bkz. pages/api/approvals.ts)
 //  - Eski sürümün yazdığı "VAR (DF:..) (HW:..) (IP:..) (DATE:..)" hücrelerini
 //    sadece "VAR" yapar; hücredeki tarih/saat kayıt sayfasına aktarılır
 async function handleResetRequest(res: NextApiResponse<ResponseData>) {

@@ -26,7 +26,8 @@ const ICONS: Record<string, string> = {
   [RESULT.cameraError]: '📷',
   [RESULT.reset]: '🔄',
   [RESULT.release]: '🔓',
-  [RESULT.setting]: '⚙️'
+  [RESULT.setting]: '⚙️',
+  [RESULT.clearNotifications]: '🧹'
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
