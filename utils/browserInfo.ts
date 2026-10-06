@@ -22,6 +22,21 @@ export function detectInAppBrowser(userAgent: string): string | null {
   return null;
 }
 
+// Kapanınca çerezleri ve site verilerini kendiliğinden silen tarayıcılar.
+// Bunlarda telefonun kaydı her seferinde kaybolur; öğrenci her hafta öğretmen
+// onayına düşmesin diye önceden uyarılır. (Gizli sekme güvenilir biçimde tespit
+// edilemiyor; tarayıcılar bunu kasten gizliyor.)
+export function detectEphemeralBrowser(userAgent: string): string | null {
+  const checks: [RegExp, string][] = [
+    [/DuckDuckGo\/|\bDdg\//i, 'DuckDuckGo'],
+    [/\bFocus\/|\bKlar\//i, 'Firefox Focus']
+  ];
+  for (const [pattern, name] of checks) {
+    if (pattern.test(userAgent)) return name;
+  }
+  return null;
+}
+
 // Kısa tarayıcı özeti: "iOS 17.5 / Safari", "Android 14 / Chrome 129"
 export function browserSummary(userAgent: string): string {
   const ios = /OS (\d+)[_.](\d+)/.exec(userAgent);

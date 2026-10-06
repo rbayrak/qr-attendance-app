@@ -37,7 +37,11 @@ export interface ResponseData {
   timeout?: boolean;
   retryable?: boolean; // Geçici hata: istemci otomatik tekrar deneyebilir
   locationError?: boolean; // Öğrenci yoklama konumunda değil
-  deviceMismatch?: boolean; // Öğrencinin kayıtlı cihazı farklı
+  pendingApproval?: boolean; // Yoklama öğretmen onayına gönderildi (henüz sayılmadı)
+  registered?: boolean; // Bu cihaz öğrenciye kaydedildi
+  studentId?: string; // Listedeki asıl öğrenci numarası
+  qrExpired?: boolean; // QR'ın süresi doldu, ekrandaki güncel QR okutulmalı
+  inAppBrowser?: boolean; // Uygulama içi tarayıcı: Safari/Chrome'da açılmalı
 }
 
 // Konum bilgisi için interface

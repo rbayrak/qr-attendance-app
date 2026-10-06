@@ -5,7 +5,8 @@ import QRCode from 'qrcode';
 import { MapPin, Calendar } from 'lucide-react';
 
 import { generateEnhancedFingerprint, isValidFingerprint } from '@/utils/clientFingerprint';
-import { detectInAppBrowser, browserSummary } from '@/utils/browserInfo';
+import { detectInAppBrowser, detectEphemeralBrowser, browserSummary } from '@/utils/browserInfo';
+import { matchStudentId } from '@/utils/studentId';
 import { scanQrFromPhoto } from '@/utils/qrPhoto';
 import {
   PlaceCode,
@@ -19,11 +20,12 @@ import {
 import FullscreenQrScanner from '@/components/FullscreenQrScanner';
 import QrProjector from '@/components/QrProjector';
 
-const QR_VALIDITY_MS = 15 * 60 * 1000; // 15 dakika
-// QR ekranı açıkken, süresinin dolmasına bu kadar kala yeni QR üretilir
-const QR_RENEW_BEFORE_MS = 60 * 1000;
-// Telefon saati ile öğretmen bilgisayarının saati arasındaki küçük farklar için tolerans
-const QR_CLOCK_TOLERANCE_MS = 2 * 60 * 1000;
+// QR ekranda bu sürede bir değişir: fotoğrafı paylaşılan bir QR kısa sürede
+// geçersizleşir. Sunucu süresi dolan QR'ı yavaş ağ / yoğunluk için 2 dk daha
+// kabul eder; geçerlilik öğretmen bilgisayarının değil sunucunun saatine göredir.
+const QR_ROTATE_MS = 60 * 1000;
+// Öğretmen panelindeki onay bekleyenler listesinin yenilenme aralığı
+const APPROVALS_REFRESH_MS = 15000;
 const MAX_SUBMIT_ATTEMPTS = 5;
 const SUBMIT_TIMEOUT_MS = 55000;
 const MAX_WEEK = 16;
@@ -40,6 +42,27 @@ interface AttendanceResponse {
   blockedStudentId?: string;
   retryable?: boolean;
   locationError?: boolean;
+  pendingApproval?: boolean;
+  registered?: boolean;
+  message?: string;
+  qrExpired?: boolean;
+}
+
+interface ApprovalItem {
+  studentId: string;
+  name: string;
+  week: number;
+  at: string;
+  reason: string;
+  level: 'clean' | 'weak' | 'strong';
+  warnings: { level: 'weak' | 'strong'; text: string }[];
+}
+
+interface ApprovalsState {
+  pending: ApprovalItem[];
+  autoApproved: ApprovalItem[];
+  autoApproveEnabled: boolean;
+  registration: { open: boolean; classDays: number; limit: number };
 }
 
 interface WeekSuggestion {
@@ -168,7 +191,11 @@ const AttendanceSystem = () => {
   // yalnızca bellekte tutulur (sayfa yenilenince yeniden giriş gerekir)
   const teacherPasswordRef = useRef<string>('');
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
-  const [releaseStudentId, setReleaseStudentId] = useState<string>('');
+  const [approvals, setApprovals] = useState<ApprovalsState | null>(null);
+  const [approvalBusy, setApprovalBusy] = useState<boolean>(false);
+  // Sunucu saati - bilgisayar saati (QR geçerlilik süresi sunucu saatine göre hesaplanır)
+  const serverOffsetRef = useRef<number>(0);
+  const qrCreatingRef = useRef<boolean>(false);
 
   const teacherHeaders = (): Record<string, string> => ({
     Authorization: `Bearer ${teacherPasswordRef.current}`
@@ -183,6 +210,7 @@ const AttendanceSystem = () => {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [pendingQr, setPendingQr] = useState<ScannedQr | null>(null);
   const [inAppBrowser, setInAppBrowser] = useState<string | null>(null);
+  const [ephemeralBrowser, setEphemeralBrowser] = useState<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const updateDebugLogs = async (newLog: string) => {
@@ -207,7 +235,8 @@ const AttendanceSystem = () => {
       'Hangi telefonun hangi öğrenciye ait olduğu unutulur; herkes bir sonraki yoklamada kullandığı ' +
       'telefona yeniden kaydedilir. Bu sırada bir telefondan birden fazla öğrenci yoklama verebilir, ' +
       'bu yüzden yalnızca dönem başında veya test sonrasında kullanın. ' +
-      'Tek bir öğrenci için aşağıdaki "Öğrencinin cihazını sıfırla" bölümünü kullanın.\n\n' +
+      'Onay bekleyen istekler de silinir. Telefonu değişen tek bir öğrenci için bu düğmeye gerek yok: ' +
+      'onun isteği "Onay bekleyenler" listesine düşer.\n\n' +
       'Eski biçimdeki uzun hücreler de sadece "VAR" olarak sadeleştirilir (tarih/saat Yoklama Kayıtları sayfasına aktarılır).'
     );
     if (!confirmed) return;
@@ -230,32 +259,59 @@ const AttendanceSystem = () => {
     }
   };
 
-  // Telefonunu değiştiren / tarayıcı verilerini silen öğrencinin cihaz kaydını sıfırlar
-  const releaseStudentDevice = async () => {
-    const id = releaseStudentId.trim();
-    if (!id) return;
-    setIsLoading(true);
-    setStatus(`⏳ ${id} numaralı öğrencinin cihaz kaydı sıfırlanıyor...`);
+  // Sunucu saati farkı: istek gidiş-dönüş süresinin ortasına göre
+  const updateServerOffset = (serverTime: unknown, sentAt: number) => {
+    if (typeof serverTime !== 'number' || !Number.isFinite(serverTime)) return;
+    serverOffsetRef.current = serverTime - (sentAt + Date.now()) / 2;
+  };
+  const serverNow = () => Date.now() + serverOffsetRef.current;
+
+  // Öğretmen onayı bekleyen yoklamalar (telefonu/tarayıcısı değişenler vb.)
+  const loadApprovals = useCallback(async () => {
     try {
-      const response = await fetch('/api/device-release', {
+      const response = await fetch('/api/approvals', { headers: teacherHeaders() });
+      if (!response.ok) return;
+      const data = parseJsonSafe<ApprovalsState>(await response.text());
+      if (data?.pending) setApprovals(data);
+    } catch {
+      // bir sonraki yenilemede tekrar denenir
+    }
+    // teacherHeaders yalnızca ref okur
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const approvalAction = async (body: Record<string, unknown>) => {
+    if (approvalBusy) return;
+    setApprovalBusy(true);
+    try {
+      const response = await fetch('/api/approvals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...teacherHeaders() },
-        body: JSON.stringify({ studentId: id })
+        body: JSON.stringify(body)
       });
-      const data = parseJsonSafe<{ message?: string; error?: string }>(await response.text());
-      if (response.ok) {
-        setStatus(`✅ ${data?.message || 'Cihaz kaydı sıfırlandı'}`);
-        setReleaseStudentId('');
-        updateDebugLogs(`🔓 ${data?.message || `${id}: cihaz kaydı sıfırlandı`}`);
+      const data = parseJsonSafe<ApprovalsState & { message?: string; error?: string }>(await response.text());
+      if (response.ok && data) {
+        if (data.pending) setApprovals(data);
+        setStatus(`✅ ${data.message || 'İşlem tamamlandı'}`);
+        if (data.message) updateDebugLogs(`🔐 ${data.message}`);
       } else {
-        setStatus(`❌ ${data?.error || 'Cihaz kaydı sıfırlanamadı'}`);
+        setStatus(`❌ ${data?.error || 'İşlem yapılamadı'}`);
+        void loadApprovals();
       }
     } catch {
-      setStatus('❌ Bağlantı hatası, cihaz kaydı sıfırlanamadı');
+      setStatus('❌ Bağlantı hatası, işlem yapılamadı');
     } finally {
-      setIsLoading(false);
+      setApprovalBusy(false);
     }
   };
+
+  // Liste öğretmen paneli açıkken (QR ekranı kapalıyken) düzenli yenilenir
+  useEffect(() => {
+    if (mode !== 'teacher' || showProjector) return;
+    void loadApprovals();
+    const interval = setInterval(() => void loadApprovals(), APPROVALS_REFRESH_MS);
+    return () => clearInterval(interval);
+  }, [mode, showProjector, loadApprovals]);
 
   // Öğretmen paneline girince önerilen haftayı ve konum seçeneklerini yükle
   useEffect(() => {
@@ -263,9 +319,11 @@ const AttendanceSystem = () => {
 
     const savedPlace = readStorage('teacherPlace');
 
+    const locationSentAt = Date.now();
     fetch('/api/location')
       .then(response => response.json())
-      .then((data: { places?: PlaceOption[] }) => {
+      .then((data: { places?: PlaceOption[]; serverTime?: number }) => {
+        updateServerOffset(data.serverTime, locationSentAt);
         if (!data.places?.length) return;
         setPlaces(data.places);
         if (savedPlace && data.places.some(place => place.code === savedPlace)) {
@@ -285,7 +343,7 @@ const AttendanceSystem = () => {
   }, [mode]);
 
   const createQr = useCallback(async (week: number, place: PlaceCode) => {
-    const validUntil = Date.now() + QR_VALIDITY_MS;
+    const validUntil = Date.now() + serverOffsetRef.current + QR_ROTATE_MS;
     const expiresAtSec = Math.floor(validUntil / 1000);
     const signature = await signQr(teacherPasswordRef.current, week, expiresAtSec, place);
     const svg = await QRCode.toString(buildQrPayload({ week, expiresAtSec, place, signature }), {
@@ -320,17 +378,34 @@ const AttendanceSystem = () => {
     setShowProjector(false);
   }, []);
 
-  // QR ekranı açık kaldığı sürece QR'ın süresi dolmasın: bitmesine az kala yenile
+  // QR ekranı açıkken QR her 60 sn'de bir yenisiyle değişir
   useEffect(() => {
     if (!showProjector) return;
     const interval = setInterval(() => {
-      if (qrValidUntil - Date.now() < QR_RENEW_BEFORE_MS) {
-        const { week, place } = qrSettingsRef.current;
-        createQr(week, place).catch(error => console.error('QR yenileme hatası:', error));
-      }
-    }, 5000);
+      if (qrCreatingRef.current || serverNow() < qrValidUntil) return;
+      qrCreatingRef.current = true;
+      const { week, place } = qrSettingsRef.current;
+      createQr(week, place)
+        .catch(error => console.error('QR yenileme hatası:', error))
+        .finally(() => { qrCreatingRef.current = false; });
+    }, 1000);
     return () => clearInterval(interval);
+    // serverNow yalnızca ref okur
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showProjector, qrValidUntil, createQr]);
+
+  // Kapatılan QR ekranını yeniden açarken her zaman yeni QR üretilir
+  const reopenProjector = async () => {
+    document.documentElement.requestFullscreen?.().catch(() => undefined);
+    try {
+      const { week, place } = qrSettingsRef.current;
+      await createQr(week, place);
+      setShowProjector(true);
+    } catch (error) {
+      console.error('QR oluşturma hatası:', error);
+      setStatus('❌ QR kod oluşturulamadı');
+    }
+  };
 
   // Loglar yalnızca debug konsolu açıkken çekilir
   useEffect(() => {
@@ -385,14 +460,16 @@ const AttendanceSystem = () => {
     const enteredPassword = password;
     setPassword('');
     setIsLoggingIn(true);
+    const sentAt = Date.now();
     try {
       const response = await fetch('/api/teacher-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: enteredPassword })
       });
-      const data = parseJsonSafe<{ error?: string }>(await response.text());
+      const data = parseJsonSafe<{ error?: string; serverTime?: number }>(await response.text());
       if (response.ok) {
+        updateServerOffset(data?.serverTime, sentAt);
         teacherPasswordRef.current = enteredPassword;
         setMode('teacher');
         setShowPasswordModal(false);
@@ -416,6 +493,7 @@ const AttendanceSystem = () => {
     if (mode !== 'student') return;
 
     setInAppBrowser(detectInAppBrowser(navigator.userAgent));
+    setEphemeralBrowser(detectEphemeralBrowser(navigator.userAgent));
 
     // Öğrenci numarasını bir önceki yoklamadan hatırla
     const lastAttendanceCheck = readStorage('lastAttendanceCheck');
@@ -493,6 +571,12 @@ const AttendanceSystem = () => {
     );
   };
 
+  // "ç23051608" ya da "C23051608" yazan öğrenci listedeki "Ç23051608" ile eşleşir
+  const findStudent = (input: string): Student | undefined => {
+    const id = matchStudentId(input, validStudents.map(s => s.studentId));
+    return id === null ? undefined : validStudents.find(s => s.studentId === id);
+  };
+
   const handleStudentIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newId = e.target.value;
     setStudentId(newId);
@@ -508,14 +592,16 @@ const AttendanceSystem = () => {
       return;
     }
 
-    const validStudent = validStudents.find(s => s.studentId === newId.trim());
+    const validStudent = findStudent(newId);
 
     if (!validStudent) {
       setStatus('⚠️ Bu öğrenci numarası listede yok');
       return;
     }
 
-    setStatus('✅ Öğrenci numarası doğrulandı');
+    setStatus(validStudent.studentId === newId.trim()
+      ? '✅ Öğrenci numarası doğrulandı'
+      : `✅ Öğrenci numarası doğrulandı (${validStudent.studentId})`);
   };
 
   // Yoklamayı sunucuya gönderir. Sunucu yoğunsa (zaman aşımı, 5xx, JSON
@@ -523,20 +609,16 @@ const AttendanceSystem = () => {
   // tekrar dener. Aynı öğrenci için tekrar gönderim güvenlidir: sunucu
   // "zaten alınmış" yanıtı döner.
   const submitAttendance = async (qr: ScannedQr) => {
-    const trimmedId = studentId.trim();
-    const validStudent = validStudents.find(s => s.studentId === trimmedId);
+    const validStudent = findStudent(studentId);
 
     if (!validStudent) {
       setStatus('❌ Öğrenci numarası listede bulunamadı');
       return;
     }
-
-    if (qr.payload.expiresAtSec * 1000 + QR_CLOCK_TOLERANCE_MS < Date.now()) {
-      setPendingQr(null);
-      setStatus('❌ QR kodun süresi dolmuş. Öğretmeninizden yeni QR isteyin.');
-      updateDebugLogs(`❌ ${trimmedId}: QR süresi dolmuş`);
-      return;
-    }
+    // Sunucuya listedeki asıl numara gönderilir
+    const trimmedId = validStudent.studentId;
+    // QR'ın süresi telefon saatiyle kontrol edilmez (telefon saati yanlış olabilir);
+    // karar sunucuda verilir
 
     if (!location) {
       setStatus('❌ Önce konumunuzu doğrulayın');
@@ -583,6 +665,16 @@ const AttendanceSystem = () => {
           // (Safari'deki "The string did not match the expected pattern" hatası)
           const data = parseJsonSafe<AttendanceResponse>(await response.text());
 
+          if (response.ok && data?.pendingApproval) {
+            writeStorage('lastAttendanceCheck', JSON.stringify({
+              studentId: trimmedId,
+              timestamp: new Date().toISOString()
+            }));
+            setStatus(`⏳ Sn. ${validStudent.studentName}, ${data.message || 'yoklamanız öğretmen onayına gönderildi.'}`);
+            updateDebugLogs(`🕓 ${trimmedId} ${validStudent.studentName}: Hafta ${qr.payload.week} öğretmen onayı bekliyor`);
+            return;
+          }
+
           if (response.ok && data?.success) {
             writeStorage('lastAttendanceCheck', JSON.stringify({
               studentId: trimmedId,
@@ -593,7 +685,8 @@ const AttendanceSystem = () => {
               setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
               updateDebugLogs(`ℹ️ ${trimmedId} ${validStudent.studentName}: Hafta ${qr.payload.week} zaten alınmış`);
             } else {
-              setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
+              setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi.` +
+                (data.registered && data.message ? ` ${data.message}` : ''));
               updateDebugLogs(`✅ ${trimmedId} ${validStudent.studentName}: Hafta ${qr.payload.week} kaydedildi` +
                 (attempt > 1 ? ` (${attempt}. denemede)` : ''));
             }
@@ -693,8 +786,7 @@ const AttendanceSystem = () => {
     }
   };
 
-  const isKnownStudent = !!studentId.trim() &&
-    validStudents.some(s => s.studentId === studentId.trim());
+  const isKnownStudent = !!studentId.trim() && !!findStudent(studentId);
   const canScan = !!location && isKnownStudent && !isLoading && !isSubmitting;
 
   return (
@@ -821,15 +913,12 @@ const AttendanceSystem = () => {
               QR Oluştur
             </button>
 
-            {qrImageSrc && !showProjector && qrValidUntil > Date.now() && (
+            {qrImageSrc && !showProjector && (
               <button
-                onClick={() => {
-                  document.documentElement.requestFullscreen?.().catch(() => undefined);
-                  setShowProjector(true);
-                }}
+                onClick={() => void reopenProjector()}
                 className="w-full p-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm"
               >
-                Son QR&apos;ı tekrar göster (Hafta {qrSettingsRef.current.week})
+                QR&apos;ı tekrar göster (Hafta {qrSettingsRef.current.week})
               </button>
             )}
 
@@ -843,41 +932,140 @@ const AttendanceSystem = () => {
               </button>
             </div>
 
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void releaseStudentDevice();
-              }}
-              className="border-t pt-4 space-y-2"
-            >
-              <label htmlFor="release-student" className="block text-sm font-medium text-gray-700">
-                Öğrencinin cihazını sıfırla
-              </label>
-              <p className="text-xs text-gray-500">
-                Her öğrenci yalnızca kayıtlı telefonundan yoklama verebilir. Telefonunu değiştiren veya
-                tarayıcı verilerini silen öğrencinin numarasını yazın; bir sonraki yoklamada kullandığı telefon kaydedilir.
-                &quot;Bu telefon X numaralı öğrenciye kayıtlı&quot; uyarısında ise X numarasını sıfırlayın.
-              </p>
-              <div className="flex gap-2">
-                <input
-                  id="release-student"
-                  value={releaseStudentId}
-                  onChange={(e) => setReleaseStudentId(e.target.value)}
-                  placeholder="Öğrenci no"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  className="flex-1 min-w-0 p-2 border rounded-md text-sm"
-                  disabled={isLoading}
-                />
+            <div className="border-t pt-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-800">
+                  Onay bekleyenler{approvals ? ` (${approvals.pending.length})` : ''}
+                </h3>
                 <button
-                  type="submit"
-                  className="p-2 bg-gray-700 text-white rounded-md hover:bg-gray-800 disabled:opacity-50 text-sm"
-                  disabled={isLoading || !releaseStudentId.trim()}
+                  type="button"
+                  onClick={() => void loadApprovals()}
+                  className="text-xs text-blue-600 hover:underline"
                 >
-                  Sıfırla
+                  Yenile
                 </button>
               </div>
-            </form>
+              <p className="text-xs text-gray-500">
+                Telefonu ya da tarayıcısı değişen (çerez silme, gizli sekme, yeni telefon) veya başka bir
+                öğrenciye kayıtlı telefondan gelen yoklamalar burada bekler; onaylanmadan yoklama sayılmaz.
+                Onaylanan öğrenci yeni telefonuna kaydedilir.
+              </p>
+              {approvals?.registration && (
+                <p className="text-xs text-gray-600">
+                  {approvals.registration.open
+                    ? `İlk telefon kaydı serbest (kayıt dönemi: ilk ${approvals.registration.limit} ders günü).`
+                    : 'Kayıt dönemi bitti: ilk kez gelen öğrenciler de onaya düşer.'}
+                </p>
+              )}
+
+              {approvals && approvals.pending.length === 0 && (
+                <p className="text-sm text-gray-400">Bekleyen istek yok</p>
+              )}
+
+              {approvals && approvals.pending.some(item => item.level === 'clean') && (
+                <button
+                  type="button"
+                  onClick={() => void approvalAction({ action: 'approveClean' })}
+                  className="w-full p-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm"
+                  disabled={approvalBusy}
+                >
+                  Uyarısız olanların hepsini onayla ({approvals.pending.filter(item => item.level === 'clean').length})
+                </button>
+              )}
+
+              {approvals?.pending.map(item => (
+                <div
+                  key={`${item.studentId}-${item.week}`}
+                  className={`p-3 rounded-lg border text-sm space-y-1 ${
+                    item.level === 'strong' ? 'border-red-300 bg-red-50'
+                      : item.level === 'weak' ? 'border-yellow-300 bg-yellow-50'
+                        : 'border-green-300 bg-green-50'}`}
+                >
+                  <div className="font-semibold text-gray-800">
+                    {item.studentId} {item.name}
+                    <span className="font-normal text-gray-500"> · Hafta {item.week} · {item.at}</span>
+                  </div>
+                  <div className="text-gray-700">{item.reason}</div>
+                  {item.warnings.length === 0 ? (
+                    <div className="text-green-700">✓ Uyarı yok</div>
+                  ) : item.warnings.map((warning, i) => (
+                    <div key={i} className={warning.level === 'strong' ? 'text-red-700' : 'text-yellow-800'}>
+                      {warning.level === 'strong' ? '⚠️' : '•'} {warning.text}
+                    </div>
+                  ))}
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => void approvalAction({ action: 'approve', studentId: item.studentId, week: item.week })}
+                      className="flex-1 p-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+                      disabled={approvalBusy}
+                    >
+                      Onayla
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void approvalAction({ action: 'reject', studentId: item.studentId, week: item.week })}
+                      className="flex-1 p-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 disabled:opacity-50"
+                      disabled={approvalBusy}
+                    >
+                      Reddet
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              <label className="flex items-start gap-2 text-sm text-gray-700 pt-2">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={!!approvals?.autoApproveEnabled}
+                  disabled={!approvals || approvalBusy}
+                  onChange={(e) => void approvalAction({ action: 'setAutoApprove', enabled: e.target.checked })}
+                />
+                <span>
+                  Uyarısız cihaz değişikliklerini otomatik onayla
+                  <span className="block text-xs text-gray-500">
+                    Her öğrenci için dönemde 1 kez. Öğretmenin işi azalır ama ağ değiştiren biri bu hakkı arkadaşı
+                    için bir kez kullanabilir; otomatik onaylananlar aşağıda listelenir ve iptal edilebilir.
+                  </span>
+                </span>
+              </label>
+
+              {approvals && approvals.autoApproved.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-semibold text-gray-700">Bugün otomatik onaylananlar</h4>
+                  {approvals.autoApproved.map(item => (
+                    <div
+                      key={`auto-${item.studentId}-${item.week}`}
+                      className={`p-2 rounded-lg border text-xs space-y-1 ${
+                        item.level === 'clean' ? 'border-gray-200' : 'border-yellow-300 bg-yellow-50'}`}
+                    >
+                      <div className="font-semibold text-gray-800">
+                        {item.studentId} {item.name}
+                        <span className="font-normal text-gray-500"> · Hafta {item.week} · {item.at}</span>
+                      </div>
+                      {item.warnings.map((warning, i) => (
+                        <div key={i} className={warning.level === 'strong' ? 'text-red-700' : 'text-yellow-800'}>
+                          {warning.level === 'strong' ? '⚠️' : '•'} {warning.text}
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm(`${item.studentId} ${item.name} için Hafta ${item.week} yoklaması silinsin mi?`)) {
+                            void approvalAction({ action: 'cancel', studentId: item.studentId, week: item.week });
+                          }
+                        }}
+                        className="text-red-600 hover:underline disabled:opacity-50"
+                        disabled={approvalBusy}
+                      >
+                        Yoklamayı iptal et
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <div className="border-t pt-4">
               <button
@@ -911,8 +1099,15 @@ const AttendanceSystem = () => {
           <>
             {inAppBrowser && (
               <div className="p-4 rounded-lg bg-yellow-100 text-yellow-900 text-sm">
-                ⚠️ Bu sayfa {inAppBrowser} içinde açıldı. Kamera bu tarayıcıda çalışmayabilir.
+                ⚠️ Bu sayfa {inAppBrowser} içinde açıldı. Kamera bu tarayıcıda çalışmayabilir ve telefonunuz bu uygulamaya kaydedilemez.
                 Sağ üstteki menüden <b>&quot;Tarayıcıda aç&quot;</b> (Safari/Chrome) seçeneğini kullanın.
+              </div>
+            )}
+
+            {ephemeralBrowser && !inAppBrowser && (
+              <div className="p-4 rounded-lg bg-yellow-100 text-yellow-900 text-sm">
+                ⚠️ {ephemeralBrowser} kapanınca site verilerini siler; telefonunuzun kaydı her seferinde kaybolur
+                ve yoklamanız öğretmen onayına düşer. Yoklamayı Chrome veya Safari&apos;den verin.
               </div>
             )}
 

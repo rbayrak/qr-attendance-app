@@ -11,7 +11,8 @@ export default function handler(
   if (req.method === 'GET') {
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json({
-      places: getPlaces().map(({ code, name }) => ({ code, name }))
+      places: getPlaces().map(({ code, name }) => ({ code, name })),
+      serverTime: Date.now()
     });
   }
 

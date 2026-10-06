@@ -7,29 +7,45 @@ import {
   writeMainCell,
   appendLogRow,
   isRetryableError,
-  columnLetter,
-  SheetRows
+  columnLetter
 } from '@/utils/sheets';
 import {
   getDeviceIdentity,
-  getDeviceBindings,
-  findDeviceConflict,
+  analyzeDevices,
+  decideDevice,
+  warningsFor,
+  reasonTag,
+  openPendingEntries,
   findSuspicion,
   buildLogRow,
   getClientIP,
-  RESULT
+  RESULT,
+  NOTE_AUTO_APPROVED
 } from '@/utils/deviceGuard';
+import {
+  STUDENT_ID_COLUMN,
+  STUDENT_NAME_COLUMN,
+  FIRST_WEEK_COLUMN,
+  MAX_WEEK,
+  findStudentRow,
+  rowStudentId,
+  rowStudentName,
+  weekColumn,
+  hasAttended,
+  nameLookup
+} from '@/utils/roster';
 import { getPlace, distanceKm, isValidCoordinate, MAX_DISTANCE_KM } from '@/utils/places';
 import { parseQrPayload, isLegacyQr } from '@/utils/qrFormat';
 import { isQrSignatureValid, requireTeacher } from '@/utils/teacherAuth';
+import { detectInAppBrowser } from '@/utils/browserInfo';
 
-// Öğrenci numarası B, adı C sütununda; 1. hafta D sütununda
-const STUDENT_ID_COLUMN = 1;
-const STUDENT_NAME_COLUMN = 2;
-const FIRST_WEEK_COLUMN = 3;
-const MAX_WEEK = 16;
-// Öğretmen bilgisayarı ile sunucu saati arasındaki küçük farklar için tolerans
-const QR_EXPIRY_TOLERANCE_SEC = 5 * 60;
+// QR öğretmen ekranında 60 sn'de bir değişir. Süresi dolan QR bir süre daha
+// kabul edilir: öğrenci QR'ı geçerliyken okutmuş ama istek yavaş ağ ya da
+// sunucu yoğunluğu yüzünden geç ulaşmış olabilir.
+const QR_GRACE_SEC = 2 * 60;
+// Geçerlilik süresi bundan uzun bir QR'ı yalnızca uygulamanın eski sürümü üretir
+// (15 dk geçerli QR); fotoğrafı paylaşılıp uzun süre kullanılmasın diye kabul edilmez.
+const QR_MAX_REMAINING_SEC = 5 * 60;
 
 export default async function handler(
   req: NextApiRequest,
@@ -45,16 +61,6 @@ export default async function handler(
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
-function findStudentRow(rows: SheetRows, studentId: string): number {
-  for (let i = 1; i < rows.length; i++) {
-    const cell = rows[i]?.[STUDENT_ID_COLUMN];
-    if (cell !== undefined && cell !== null && String(cell).trim() === studentId) {
-      return i;
-    }
-  }
-  return -1;
-}
-
 // Kayıt sayfasına yazılamaması yoklama sonucunu değiştirmemeli
 async function safeAppendLog(row: string[]) {
   try {
@@ -64,6 +70,8 @@ async function safeAppendLog(row: string[]) {
   }
 }
 
+const REGISTERED_HINT = 'Bu telefon ve tarayıcı adınıza kaydedildi. Yoklamayı hep bu tarayıcıdan verin; gizli sekme kullanmayın.';
+
 // POST: yoklama kaydı
 async function handlePostRequest(
   req: NextApiRequest,
@@ -71,7 +79,7 @@ async function handlePostRequest(
 ) {
   try {
     const body = req.body || {};
-    const studentId = String(body.studentId ?? '').trim();
+    const inputStudentId = String(body.studentId ?? '').trim();
     const qrText = typeof body.qr === 'string' ? body.qr : '';
     const lat = body.lat;
     const lng = body.lng;
@@ -80,7 +88,7 @@ async function handlePostRequest(
       : 'unknown';
 
     // 1. Temel validasyonlar
-    if (!studentId) {
+    if (!inputStudentId) {
       return res.status(400).json({ error: 'Öğrenci numarası gerekli' });
     }
 
@@ -99,7 +107,7 @@ async function handlePostRequest(
       });
     }
     if (!isQrSignatureValid(qr)) {
-      console.warn(`Geçersiz QR imzası: öğrenci=${studentId} qr=${qrText}`);
+      console.warn(`Geçersiz QR imzası: öğrenci=${inputStudentId} qr=${qrText}`);
       return res.status(400).json({ error: 'Geçersiz QR kod. Öğretmenin yansıttığı QR kodu okutun.' });
     }
     const week = qr.week;
@@ -107,8 +115,17 @@ async function handlePostRequest(
       return res.status(400).json({ error: 'Geçersiz hafta numarası' });
     }
     const now = Date.now();
-    if (now / 1000 > qr.expiresAtSec + QR_EXPIRY_TOLERANCE_SEC) {
-      return res.status(400).json({ error: 'QR kodun süresi dolmuş. Öğretmeninizden yeni QR isteyin.' });
+    const nowSec = now / 1000;
+    if (nowSec > qr.expiresAtSec + QR_GRACE_SEC) {
+      return res.status(400).json({
+        error: 'QR kodun süresi doldu. Ekrandaki güncel QR kodu tekrar okutun.',
+        qrExpired: true
+      });
+    }
+    if (qr.expiresAtSec - nowSec > QR_MAX_REMAINING_SEC) {
+      return res.status(400).json({
+        error: 'Bu QR kod uygulamanın eski sürümüyle üretilmiş. Öğretmeninizden sayfayı yenileyip yeni QR oluşturmasını isteyin.'
+      });
     }
 
     const place = getPlace(qr.place);
@@ -119,13 +136,16 @@ async function handlePostRequest(
     const device = getDeviceIdentity(req, res);
     const ip = getClientIP(req) || 'unknown';
 
-    // 3. Öğrenciyi bul (ana sayfa + kayıt sayfası tek okumada, paylaşılan önbellekten)
+    // 3. Öğrenciyi bul (ana sayfa + kayıt sayfası tek okumada, paylaşılan önbellekten).
+    //    "ç..." / "C..." gibi yazımlar listedeki asıl numarayla eşleşir; bundan
+    //    sonra her yerde tablodaki asıl numara kullanılır.
     const data = await getSheetData();
-    const studentRowIndex = findStudentRow(data.main, studentId);
+    const studentRowIndex = findStudentRow(data.main, inputStudentId);
     if (studentRowIndex === -1) {
       return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
-    const studentName = String(data.main[studentRowIndex]?.[STUDENT_NAME_COLUMN] ?? '');
+    const studentId = rowStudentId(data.main, studentRowIndex);
+    const studentName = rowStudentName(data.main, studentRowIndex);
     const logBase = { now, week, studentId, name: studentName, deviceId: device.id, model, ip };
 
     // 4. Konum kontrolü (sunucuda; QR'daki konuma göre)
@@ -145,48 +165,96 @@ async function handlePostRequest(
       });
     }
 
-    // 5. Öğrenci-cihaz eşleştirmesi: bu cihaz başka öğrenciye mi kayıtlı,
-    //    ya da öğrencinin kayıtlı cihazı başka mı? (bkz. utils/deviceGuard.ts)
-    const bindings = getDeviceBindings(data.log);
-    const conflict = findDeviceConflict(bindings, device.id, studentId);
-    if (conflict?.kind === 'deviceOwnedByOther') {
-      await safeAppendLog(buildLogRow({
-        ...logBase,
-        result: RESULT.blocked,
-        note: `Bu cihaz ${conflict.otherStudentId} numaralı öğrenciye kayıtlı`
-      }));
-      return res.status(403).json({
-        error: `Bu telefon (tarayıcı) ${conflict.otherStudentId} numaralı öğrenciye kayıtlı. ` +
-          'Her öğrenci yoklamayı yalnızca kendi telefonundan verebilir. Bir sorun varsa öğretmeninize başvurun.',
-        blockedStudentId: conflict.otherStudentId
-      });
-    }
-    if (conflict?.kind === 'studentBoundElsewhere') {
-      await safeAppendLog(buildLogRow({
-        ...logBase,
-        result: RESULT.blocked,
-        note: `Öğrencinin kayıtlı cihazı farklı (${conflict.registeredDeviceId}); ` +
-          'çerez silinmiş, gizli sekme/başka tarayıcı ya da başka telefon olabilir'
-      }));
-      return res.status(403).json({
-        error: 'Bu öğrenci numarası başka bir telefona (tarayıcıya) kayıtlı; yoklama yalnızca o cihazdan verilebilir. ' +
-          'Gizli sekme ya da farklı bir tarayıcı kullanıyorsanız, her zaman kullandığınız tarayıcıyla tekrar deneyin. ' +
-          'Telefonunuzu değiştirdiyseniz veya tarayıcı verilerini sildiyseniz öğretmeninize başvurun.',
-        deviceMismatch: true
-      });
+    // 5. Bu hafta yoklaması zaten alınmış mı? Hiçbir şey yazmadığı için cihaz
+    //    kontrolünden önce yapılır: başka tarayıcıdan tekrar okutan öğrenci
+    //    gereksiz bir uyarı görmez. (Kota tasarrufu; istemcinin otomatik tekrar
+    //    denemeleri de güvenle sonuçlanır.)
+    const weekColumnIndex = weekColumn(week);
+    if (hasAttended(data.main, studentRowIndex, week)) {
+      return res.status(200).json({ success: true, isAlreadyAttended: true, studentId });
     }
 
-    // 6. Mevcut yoklama kontrolü - zaten varsa tekrar yazma (kota tasarrufu,
-    //    ayrıca istemcinin otomatik tekrar denemeleri güvenle sonuçlanır)
-    const weekColumnIndex = FIRST_WEEK_COLUMN + week - 1;
-    const currentValue = data.main[studentRowIndex]?.[weekColumnIndex];
-    if (typeof currentValue === 'string' && currentValue.includes('VAR')) {
-      return res.status(200).json({ success: true, isAlreadyAttended: true });
+    // 6. Öğrenci-cihaz eşleştirmesi (bkz. utils/deviceGuard.ts)
+    const analysis = analyzeDevices(data.log);
+    const decision = decideDevice(analysis, device.id, studentId, now);
+
+    // Yeni bir eşleşme oluşturacak istekler uygulama içi tarayıcıdan kabul edilmez:
+    // Instagram vb. kendi tarayıcısının ayrı çerezleri vardır, öğrenci sonraki
+    // hafta Safari/Chrome'dan gelince telefonu "değişmiş" görünürdü.
+    if (decision.kind !== 'registered') {
+      const inApp = detectInAppBrowser(String(req.headers['user-agent'] ?? ''));
+      if (inApp) {
+        await safeAppendLog(buildLogRow({
+          ...logBase,
+          result: RESULT.blocked,
+          note: `Uygulama içi tarayıcı (${inApp}): Safari/Chrome'da açması istendi`
+        }));
+        return res.status(400).json({
+          error: `Bu sayfa ${inApp} içinde açıldı. Yoklamayı vermek için sağ üstteki menüden ` +
+            '"Tarayıcıda aç" (Safari/Chrome) seçeneğini kullanın ve QR\'ı orada okutun.',
+          inAppBrowser: true
+        });
+      }
+    }
+
+    const nameOf = nameLookup(data.main);
+
+    if (decision.kind === 'pending') {
+      // Aynı cihazdan aynı hafta için zaten bekleyen bir istek varsa tekrar yazma
+      const alreadyPending = openPendingEntries(analysis).some(entry =>
+        entry.studentId === studentId && entry.week === week && entry.deviceId === device.id);
+      const ownedByOther = decision.reason.code === 'deviceOwnedByOther';
+
+      if (!alreadyPending) {
+        const subject = { studentId, week, deviceId: device.id, model, ip, timestamp: now };
+        const { level, warnings } = warningsFor(analysis, subject, decision.reason, nameOf, now);
+
+        // İsteğe bağlı otomatik onay: uyarısız cihaz değişikliği, öğrenci başına dönemde 1 kez
+        if (analysis.autoApproveEnabled && level === 'clean' && !ownedByOther &&
+          !analysis.autoApprovalUsed.has(studentId)) {
+          await Promise.all([
+            writeMainCell(studentRowIndex, weekColumnIndex, 'VAR'),
+            appendLogRow(buildLogRow({
+              ...logBase, deviceId: '', model: '', ip: '', result: RESULT.release,
+              note: 'Otomatik onay: önceki cihaz eşleşmesi kaldırıldı'
+            })),
+            appendLogRow(buildLogRow({
+              ...logBase, now: now + 1, result: RESULT.recorded,
+              note: `${NOTE_AUTO_APPROVED} (${decision.reason.code === 'firstRegistration' ? 'ilk kayıt' : 'cihaz değişikliği'})`
+            }))
+          ]);
+          return res.status(200).json({
+            success: true,
+            isAlreadyAttended: false,
+            studentId,
+            registered: true,
+            message: REGISTERED_HINT
+          });
+        }
+
+        await appendLogRow(buildLogRow({
+          ...logBase,
+          result: RESULT.pending,
+          note: [reasonTag(decision.reason), ...warnings.map(w => `${w.level === 'strong' ? '⚠️' : '•'} ${w.text}`)].join(' ')
+        }));
+      }
+
+      const message = ownedByOther
+        ? 'Bu telefon başka bir öğrenciye kayıtlı. Yoklamanız öğretmen onayına gönderildi; ' +
+          'aynı telefondan birden fazla öğrenci için yoklama verildiği öğretmeninize bildirildi.'
+        : decision.reason.code === 'firstRegistration'
+          ? 'İlk kez yoklama veriyorsunuz; yoklamanız öğretmen onayına gönderildi. Başka bir şey yapmanıza gerek yok.'
+          : 'Telefonunuz veya tarayıcınız değişmiş görünüyor (çerezler silinmiş, gizli sekme ya da farklı tarayıcı). ' +
+            'Yoklamanız öğretmen onayına gönderildi; başka bir şey yapmanıza gerek yok.';
+      // Eski sürüm sayfalar "success" görmeden "error" metnini gösterir
+      return res.status(202).json({ pendingApproval: true, studentId, message, error: message });
     }
 
     // 7. Yoklamayı kaydet: hücreye sadece "VAR", tarih/saat ve ayrıntılar kayıt
     //    sayfasına (ikisi diğer öğrencilerin yazmalarıyla birlikte tek istekte gider)
-    const note = findSuspicion(bindings, { device, model, ip, studentId, now });
+    const note = decision.kind === 'register'
+      ? findSuspicion(analysis, { device, model, ip, studentId, now })
+      : '';
     await Promise.all([
       writeMainCell(studentRowIndex, weekColumnIndex, 'VAR'),
       appendLogRow(buildLogRow({ ...logBase, result: RESULT.recorded, note }))
@@ -195,6 +263,8 @@ async function handlePostRequest(
     return res.status(200).json({
       success: true,
       isAlreadyAttended: false,
+      studentId,
+      ...(decision.kind === 'register' ? { registered: true, message: REGISTERED_HINT } : {}),
       debug: {
         operationDetails: {
           ogrenciNo: studentId,
@@ -221,7 +291,8 @@ async function handlePostRequest(
 
 // DELETE: "Cihaz Kayıtlarını Temizle"
 //  - Kayıt sayfasına SIFIRLAMA satırı ekler: bu andan önceki cihaz eşleşmeleri
-//    artık engel oluşturmaz (kayıtlar silinmez, geçmiş korunur)
+//    ve onay bekleyen istekler artık sayılmaz, yeni kayıt dönemi başlar
+//    (kayıtlar silinmez, geçmiş korunur)
 //  - Eski sürümün yazdığı "VAR (DF:..) (HW:..) (IP:..) (DATE:..)" hücrelerini
 //    sadece "VAR" yapar; hücredeki tarih/saat kayıt sayfasına aktarılır
 async function handleResetRequest(res: NextApiResponse<ResponseData>) {

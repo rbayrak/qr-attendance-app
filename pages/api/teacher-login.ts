@@ -26,5 +26,6 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     return res.status(401).json({ error: 'Yanlış şifre' });
   }
 
-  return res.status(200).json({ success: true });
+  // Öğretmen sayfası QR geçerlilik süresini bilgisayarın saatine değil sunucu saatine göre hesaplar
+  return res.status(200).json({ success: true, serverTime: Date.now() });
 }
