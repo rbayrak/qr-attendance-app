@@ -1,14 +1,19 @@
 // pages/api/location.ts
+// Öğretmen panelindeki konum seçimi için tanımlı yoklama konumlarının listesi
+// (yalnızca kod ve ad; koordinatlar gönderilmez)
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { STATIC_CLASS_LOCATION } from '../../config/constants';
+import { getPlaces } from '@/utils/places';
 
 export default function handler(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
   if (req.method === 'GET') {
-    return res.status(200).json(STATIC_CLASS_LOCATION);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).json({
+      places: getPlaces().map(({ code, name }) => ({ code, name }))
+    });
   }
-  
+
   return res.status(405).json({ error: 'Method not allowed' });
 }

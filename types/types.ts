@@ -35,6 +35,8 @@ export interface ResponseData {
   isAlreadyAttended?: boolean;
   unauthorizedDevice?: boolean; // YENİ: Cihaz yetkilendirme hatası flag'i
   timeout?: boolean;
+  retryable?: boolean; // Geçici hata: istemci otomatik tekrar deneyebilir
+  locationError?: boolean; // Öğrenci yoklama konumunda değil
 }
 
 // Konum bilgisi için interface

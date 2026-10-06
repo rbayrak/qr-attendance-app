@@ -91,7 +91,7 @@ GOOGLE_CLIENT_EMAIL=your_service_account@project.iam.gserviceaccount.com
 
 1. Yeni bir incognito/private window açın
 2. https://qr-attendance-app-ramazan-bayraks-projects.vercel.app adresine gidin
-3. Öğretmen moduna geçin (şifre: teacher123)
+3. Öğretmen moduna geçin (şifre: Vercel'deki TEACHER_PASSWORD ortam değişkeni)
 4. Google yetkilendirme popup'ını bekleyin
 5. Google hesabınızı seçin ve izinleri onaylayın
 

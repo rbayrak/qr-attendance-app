@@ -2,523 +2,247 @@
 
 import { NextApiRequest, NextApiResponse } from 'next';
 import { ResponseData } from '@/types/types';
-import { deviceTracker } from '@/utils/deviceTracker';
-import { google } from 'googleapis';
+import {
+  getSheetData,
+  writeMainCell,
+  appendLogRow,
+  isRetryableError,
+  columnLetter,
+  SheetRows
+} from '@/utils/sheets';
+import {
+  getDeviceIdentity,
+  findDeviceConflict,
+  findSuspicion,
+  buildLogRow,
+  getClientIP,
+  RESULT
+} from '@/utils/deviceGuard';
+import { getPlace, distanceKm, isValidCoordinate, MAX_DISTANCE_KM } from '@/utils/places';
+import { formatIstanbul } from '@/utils/time';
+import { parseQrPayload, isLegacyQr } from '@/utils/qrFormat';
+import { isQrSignatureValid, requireTeacher } from '@/utils/teacherAuth';
 
-// API istek kuyruğu
-interface QueueItem {
-  req: NextApiRequest;
-  res: NextApiResponse<ResponseData>;
-  timestamp: number;
-}
+// Öğrenci numarası B, adı C sütununda; 1. hafta D sütununda
+const STUDENT_ID_COLUMN = 1;
+const STUDENT_NAME_COLUMN = 2;
+const FIRST_WEEK_COLUMN = 3;
+const MAX_WEEK = 16;
+// Öğretmen bilgisayarı ile sunucu saati arasındaki küçük farklar için tolerans
+const QR_EXPIRY_TOLERANCE_SEC = 5 * 60;
 
-// Kuyruk yapısı
-let processingQueue: boolean = false;
-let requestQueue: QueueItem[] = [];
-
-// Önbellek
-const cache = {
-  mainSheet: {
-    data: null as any[] | null,
-    timestamp: 0
-  },
-  studentLookup: new Map<string, number>() // Öğrenci ID -> satır indeksi eşlemesi
-};
-
-// Sheets API işlemleri için yardımcı fonksiyonlar
-async function getGoogleAuth() {
-  return new google.auth.GoogleAuth({
-    credentials: {
-      type: 'service_account',
-      project_id: process.env.GOOGLE_PROJECT_ID,
-      private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-      client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets']
-  });
-}
-
-async function getSheetsClient() {
-  const auth = await getGoogleAuth();
-  return google.sheets({ version: 'v4', auth });
-}
-
-// Yeniden deneme mekanizması
-async function retryableOperation<T>(operation: () => Promise<T>, maxRetries = 5): Promise<T> {
-  let lastError;
-  
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      // İstekler arasında minimum gecikme
-      if (attempt > 0) {
-        // Exponential backoff (her denemede daha uzun süre bekle)
-        const delay = Math.min(Math.pow(2, attempt) * 1000, 10000); // Max 10 saniye
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-      
-      return await operation();
-    } catch (error: any) {
-      lastError = error;
-      
-      // API limit aşımı veya geçici hata durumlarında yeniden dene
-      if (error.code === 429 || error.code === 503 || error.code === 'ECONNRESET') {
-        console.log(`API hatası, yeniden deneniyor. Deneme: ${attempt + 1}/${maxRetries}`);
-        continue;
-      }
-      
-      // Diğer hatalarda yeniden deneme yapma
-      throw error;
-    }
-  }
-  
-  throw lastError;
-}
-
-// Ana sayfayı önbellekten veya API'den al
-async function getMainSheetData(forceRefresh = false): Promise<any[] | null> {
-  const CACHE_DURATION = 2000; // 2 saniye önbellek süresi (fingerprint çakışması için)
-  const now = Date.now();
-  
-  // Önbellekte geçerli veri var mı kontrol et
-  if (!forceRefresh && 
-      cache.mainSheet.data && 
-      (now - cache.mainSheet.timestamp) < CACHE_DURATION) {
-    return cache.mainSheet.data;
-  }
-  
-  // Yoksa API'den al
-  try {
-    const sheets = await getSheetsClient();
-    
-    const response = await retryableOperation(() => 
-      sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.SPREADSHEET_ID,
-        range: 'A:Z',
-      })
-    );
-    
-    const data = response.data.values || [];
-    
-    // Öğrenci indekslerini önbelleğe al
-    cache.studentLookup.clear();
-    for (let i = 1; i < data.length; i++) {
-      if (data[i][1]) { // Öğrenci ID'si
-        cache.studentLookup.set(data[i][1], i);
-      }
-    }
-    
-    // Önbelleğe al
-    cache.mainSheet = {
-      data,
-      timestamp: now
-    };
-    
-    return data;
-  } catch (error) {
-    console.error('Sheets veri alma hatası:', error);
-    // Önbellekteki eski verileri döndürmeye çalış
-    return cache.mainSheet.data;
-  }
-}
-
-// Ana API handler 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<ResponseData>
 ) {
   if (req.method === 'POST') {
-    // POST isteklerini kuyruğa ekle
-    requestQueue.push({
-      req,
-      res,
-      timestamp: Date.now()
-    });
-    
-    // Kuyruk işlenmiyorsa başlat
-    if (!processingQueue) {
-      processQueue();
+    return handlePostRequest(req, res);
+  }
+  if (req.method === 'DELETE') {
+    if (!requireTeacher(req, res)) return;
+    return handleResetRequest(res);
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+function findStudentRow(rows: SheetRows, studentId: string): number {
+  for (let i = 1; i < rows.length; i++) {
+    const cell = rows[i]?.[STUDENT_ID_COLUMN];
+    if (cell !== undefined && cell !== null && String(cell).trim() === studentId) {
+      return i;
     }
   }
-  else if (req.method === 'DELETE') {
-    // DELETE istekleri doğrudan işleniyor (daha az yoğun olduğu için)
-    await handleDeleteRequest(req, res);
-  }
-  else {
-    return res.status(405).json({ error: 'Method not allowed' });
+  return -1;
+}
+
+// Kayıt sayfasına yazılamaması yoklama sonucunu değiştirmemeli
+async function safeAppendLog(row: string[]) {
+  try {
+    await appendLogRow(row);
+  } catch (error) {
+    console.error('Kayıt satırı yazılamadı:', error);
   }
 }
 
-// İstek kuyruğunu işleyen fonksiyon
-async function processQueue() {
-  processingQueue = true;
-  
-  while (requestQueue.length > 0) {
-    const { req, res } = requestQueue.shift()!;
-    
-    try {
-      await processPostRequest(req, res);
-    } catch (error) {
-      console.error('Queue processing error:', error);
-      res.status(500).json({ 
-        error: error instanceof Error ? error.message : 'Bilinmeyen hata'
-      });
-    }
-    
-    // API rate limit aşımını önlemek için küçük bir bekleme
-    // 60 kişilik sınıflar için optimize edildi: 50ms
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
-  
-  processingQueue = false;
-}
-
-// POST isteklerini işleyen asıl fonksiyon
-// POST isteklerini işleyen asıl fonksiyon
-async function processPostRequest(
+// POST: yoklama kaydı
+async function handlePostRequest(
   req: NextApiRequest,
   res: NextApiResponse<ResponseData>
 ) {
   try {
-    const { 
-      studentId, 
-      week, 
-      clientIP, 
-      deviceFingerprint,
-      hardwareSignature 
-    } = req.body;
+    const body = req.body || {};
+    const studentId = String(body.studentId ?? '').trim();
+    const qrText = typeof body.qr === 'string' ? body.qr : '';
+    const lat = body.lat;
+    const lng = body.lng;
+    const model = typeof body.hardwareSignature === 'string'
+      ? body.hardwareSignature.slice(0, 8)
+      : 'unknown';
 
     // 1. Temel validasyonlar
-    if (!studentId || !week) {
-      return res.status(400).json({ 
-        error: 'Öğrenci ID ve hafta bilgisi gerekli' 
+    if (!studentId) {
+      return res.status(400).json({ error: 'Öğrenci numarası gerekli' });
+    }
+
+    if (!qrText || !isValidCoordinate(lat, lng)) {
+      // Öğrencinin tarayıcısında uygulamanın eski sürümü açık kalmış olabilir
+      return res.status(400).json({ error: 'Uygulama güncellendi. Lütfen sayfayı yenileyip tekrar deneyin.' });
+    }
+
+    // 2. QR doğrulama: biçim, öğretmen imzası, süre
+    const qr = parseQrPayload(qrText);
+    if (!qr) {
+      return res.status(400).json({
+        error: isLegacyQr(qrText)
+          ? 'Bu QR kod uygulamanın eski sürümüne ait. Öğretmeninizden sayfayı yenileyip yeni QR oluşturmasını isteyin.'
+          : 'Geçersiz QR kod'
       });
     }
-
-    if (!deviceFingerprint || !hardwareSignature) {
-      return res.status(400).json({ 
-        error: 'Cihaz tanımlama bilgileri eksik' 
-      });
+    if (!isQrSignatureValid(qr)) {
+      console.warn(`Geçersiz QR imzası: öğrenci=${studentId} qr=${qrText}`);
+      return res.status(400).json({ error: 'Geçersiz QR kod. Öğretmenin yansıttığı QR kodu okutun.' });
+    }
+    const week = qr.week;
+    if (week < 1 || week > MAX_WEEK) {
+      return res.status(400).json({ error: 'Geçersiz hafta numarası' });
+    }
+    const now = Date.now();
+    if (now / 1000 > qr.expiresAtSec + QR_EXPIRY_TOLERANCE_SEC) {
+      return res.status(400).json({ error: 'QR kodun süresi dolmuş. Öğretmeninizden yeni QR isteyin.' });
     }
 
-    // 2. Öğrenci cihaz kaydı (önceki kontrol kaldırıldı)
-    // Artık bu fonksiyon her zaman { isValid: true } dönecek
-    await deviceTracker.validateStudentDevice(
-      studentId, 
-      deviceFingerprint,
-      hardwareSignature,
-      clientIP
-    );
-
-    // 3. Device Tracker kontrolü - asıl önemli olan kontrol
-    // "Bugün başka öğrenci tarafından kullanılmış mı?" kontrolü
-    const validationResult = await deviceTracker.validateDeviceAccess(
-      deviceFingerprint,
-      studentId,
-      clientIP,
-      hardwareSignature
-    );
-
-    if (!validationResult.isValid) {
-      return res.status(403).json({ 
-        error: validationResult.error,
-        blockedStudentId: validationResult.blockedStudentId 
-      });
+    const place = getPlace(qr.place);
+    if (!place) {
+      return res.status(400).json({ error: 'QR koddaki konum sunucuda tanımlı değil. Lütfen öğretmeninize bildirin.' });
     }
 
-    // 4. Ana sayfayı önbellekten al
-    const rows = await getMainSheetData();
-    if (!rows) {
-      return res.status(404).json({ error: 'Veri bulunamadı' });
-    }
+    const device = getDeviceIdentity(req, res);
+    const ip = getClientIP(req) || 'unknown';
 
-    // 5. Öğrenciyi bul (önbellekten)
-    let studentRowIndex = -1;
-    if (cache.studentLookup.has(studentId)) {
-      studentRowIndex = cache.studentLookup.get(studentId)!;
-    } else {
-      // Önbellekte yoksa elle ara
-      studentRowIndex = rows.findIndex(row => row[1] === studentId);
-      if (studentRowIndex > 0) {
-        cache.studentLookup.set(studentId, studentRowIndex);
-      }
-    }
-
+    // 3. Öğrenciyi bul (ana sayfa + kayıt sayfası tek okumada, paylaşılan önbellekten)
+    const data = await getSheetData();
+    const studentRowIndex = findStudentRow(data.main, studentId);
     if (studentRowIndex === -1) {
       return res.status(404).json({ error: 'Öğrenci bulunamadı' });
     }
+    const studentName = String(data.main[studentRowIndex]?.[STUDENT_NAME_COLUMN] ?? '');
+    const logBase = { now, week, studentId, name: studentName, deviceId: device.id, model, ip };
 
-    // 6. Hafta kontrolü
-    if (week < 1 || week > 16) {
-      return res.status(400).json({ error: 'Geçersiz hafta numarası' });
+    // 4. Konum kontrolü (sunucuda; QR'daki konuma göre)
+    const distance = distanceKm(lat, lng, place.lat, place.lng);
+    if (distance > MAX_DISTANCE_KM) {
+      const meters = Math.round(distance * 1000);
+      await safeAppendLog(buildLogRow({
+        ...logBase,
+        result: RESULT.outOfLocation,
+        note: `${place.name} konumuna ${meters} m uzakta`
+      }));
+      return res.status(403).json({
+        error: place.code === 'O'
+          ? `Sınıf konumunda değilsiniz (${meters} metre uzaktasınız)`
+          : 'Yoklama konumunda değilsiniz',
+        locationError: true
+      });
     }
 
-    // 7. Hafta sütununu belirle
-    const weekColumnIndex = 3 + Number(week) - 1;
-    const studentRow = studentRowIndex + 1;
-    const weekColumn = String.fromCharCode(68 + Number(week) - 1);
-    const range = `${weekColumn}${studentRow}`;
-
-    // 8. Mevcut yoklama kontrolü
-    const isAlreadyAttended = rows[studentRowIndex][weekColumnIndex] && 
-                            rows[studentRowIndex][weekColumnIndex].includes('VAR');
-
-    
-    // 9. Sheets client'ı al
-    const sheets = await getSheetsClient();
-
-    // 10. Yoklamayı kaydet (her durumda)
-    const updateResult = await sheets.spreadsheets.values.update({
-      spreadsheetId: process.env.SPREADSHEET_ID,
-      range: range,
-      valueInputOption: 'RAW',
-      requestBody: {
-        values: [[`VAR (DF:${deviceFingerprint.slice(0, 8)}) (HW:${hardwareSignature.slice(0, 8)}) (IP:${clientIP}) (DATE:${Date.now()})`]]
-      }
-    });
-
-
-    // 11. Önbelleği güncelle (yoklama bilgileri değişti)
-    if (rows[studentRowIndex]) {
-      rows[studentRowIndex][weekColumnIndex] = `VAR (DF:${deviceFingerprint.slice(0, 8)}) (HW:${hardwareSignature.slice(0, 8)}) (IP:${clientIP}) (DATE:${Date.now()})`;
+    // 5. "Bu telefonla bugün başka öğrenci yoklama verdi mi?"
+    const conflictStudentId = findDeviceConflict(data.log, device.id, studentId, now);
+    if (conflictStudentId) {
+      await safeAppendLog(buildLogRow({
+        ...logBase,
+        result: RESULT.blocked,
+        note: `Bu cihazla bugün ${conflictStudentId} yoklama vermiş`
+      }));
+      return res.status(403).json({
+        error: `Bu telefonla bugün ${conflictStudentId} numaralı öğrenci yoklama verdi. ` +
+          'Her öğrenci kendi telefonunu kullanmalı. Bir sorun varsa öğretmeninize başvurun.',
+        blockedStudentId: conflictStudentId
+      });
     }
 
-    // 12. Başarılı yanıt
-    res.status(200).json({ 
+    // 6. Mevcut yoklama kontrolü - zaten varsa tekrar yazma (kota tasarrufu,
+    //    ayrıca istemcinin otomatik tekrar denemeleri güvenle sonuçlanır)
+    const weekColumnIndex = FIRST_WEEK_COLUMN + week - 1;
+    const currentValue = data.main[studentRowIndex]?.[weekColumnIndex];
+    if (typeof currentValue === 'string' && currentValue.includes('VAR')) {
+      return res.status(200).json({ success: true, isAlreadyAttended: true });
+    }
+
+    // 7. Yoklamayı kaydet: hücreye sadece "VAR <tarih saat>", ayrıntılar kayıt
+    //    sayfasına (ikisi diğer öğrencilerin yazmalarıyla birlikte tek istekte gider)
+    const note = findSuspicion(data.log, { device, model, ip, studentId, now });
+    await Promise.all([
+      writeMainCell(studentRowIndex, weekColumnIndex, `VAR ${formatIstanbul(now)}`),
+      appendLogRow(buildLogRow({ ...logBase, result: RESULT.recorded, note }))
+    ]);
+
+    return res.status(200).json({
       success: true,
-      isAlreadyAttended: isAlreadyAttended, // Burada öğrencinin önceden yoklama alıp almadığı bilgisini gönderiyoruz
+      isAlreadyAttended: false,
       debug: {
         operationDetails: {
           ogrenciNo: studentId,
-          bulunanSatir: studentRow,
-          sutun: weekColumn,
-          aralik: range,
-          weekNumber: week,
-          deviceFingerprint: deviceFingerprint.slice(0, 8) + '...' // Güvenlik için kısalt
-        },
-        updateResult: updateResult.data
+          bulunanSatir: studentRowIndex + 1,
+          sutun: columnLetter(weekColumnIndex),
+          weekNumber: week
+        }
       }
     });
 
   } catch (error) {
-    console.error('Error:', error);
-    res.status(500).json({ 
+    console.error('Yoklama kayıt hatası:', error);
+    if (isRetryableError(error)) {
+      return res.status(503).json({
+        error: 'Sunucu yoğun, lütfen tekrar deneyin',
+        retryable: true
+      });
+    }
+    return res.status(500).json({
       error: error instanceof Error ? error.message : 'Bilinmeyen hata'
     });
   }
 }
 
-// DELETE isteklerini işleyen fonksiyon
-// DELETE isteklerini işleyen fonksiyon
-// DELETE isteklerini işleyen fonksiyon
-// DELETE isteklerini işleyen fonksiyon
-// DELETE isteklerini işleyen fonksiyon
-async function handleDeleteRequest(
-  req: NextApiRequest,
-  res: NextApiResponse<ResponseData>
-) {
-  const { fingerprint, cleanStep } = req.query;
-
+// DELETE: "Cihaz Kayıtlarını Temizle"
+//  - Kayıt sayfasına SIFIRLAMA satırı ekler: bu andan önceki cihaz eşleşmeleri
+//    artık engel oluşturmaz (kayıtlar silinmez, geçmiş korunur)
+//  - Eski sürümün yazdığı "VAR (DF:..) (HW:..) (IP:..) (DATE:..)" hücrelerini
+//    "VAR <tarih saat>" biçimine çevirir
+async function handleResetRequest(res: NextApiResponse<ResponseData>) {
   try {
-    if (fingerprint) {
-      // 1. Google Sheets'ten fingerprint'i temizle
-      const sheets = await getSheetsClient();
-      
-      // Önbellekli veriyi al
-      const rows = await getMainSheetData();
-      if (!rows) {
-        return res.status(404).json({ error: 'Veri bulunamadı' });
-      }
+    const now = Date.now();
+    const data = await getSheetData({ force: true });
 
-      let fingerprintFound = false;
-
-      // Fingerprint'i bul ve temizle
-      for (let i = 0; i < rows.length; i++) {
-        for (let j = 3; j < rows[i].length; j++) {
-          const cell = rows[i][j];
-          if (cell && cell.includes(`(DF:${fingerprint})`)) {
-            fingerprintFound = true;
-            const range = `${String.fromCharCode(65 + j)}${i + 1}`;
-            
-            await retryableOperation(() => 
-              sheets.spreadsheets.values.update({
-                spreadsheetId: process.env.SPREADSHEET_ID,
-                range: range,
-                valueInputOption: 'RAW',
-                requestBody: {
-                  values: [['VAR']]
-                }
-              })
-            );
-            
-            // Önbelleği güncelle
-            if (rows[i]) {
-              rows[i][j] = 'VAR';
-            }
-          }
-        }
-      }
-
-      if (!fingerprintFound) {
-        return res.status(404).json({ error: 'Fingerprint bulunamadı' });
-      }
-
-      // 2. StudentDevices sayfasında da temizle
-      try {
-        const devicesResponse = await retryableOperation(() =>
-          sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.SPREADSHEET_ID,
-            range: 'StudentDevices!A:C',
-          })
-        );
-        
-        const deviceRows = devicesResponse.data.values || [];
-        
-        for (let i = 1; i < deviceRows.length; i++) {
-          if (deviceRows[i][1] && deviceRows[i][1].includes(fingerprint)) {
-            await retryableOperation(() =>
-              sheets.spreadsheets.values.update({
-                spreadsheetId: process.env.SPREADSHEET_ID,
-                range: `StudentDevices!B${i + 1}`,
-                valueInputOption: 'RAW',
-                requestBody: {
-                  values: [['TEMIZLENDI']]
-                }
-              })
-            );
-            console.log(`StudentDevices tablosunda ${fingerprint} temizlendi`);
-          }
-        }
-      } catch (error) {
-        console.error('StudentDevices temizleme hatası:', error);
-        // Bu hata kritik değil, devam et
-      }
-
-      // Önbelleği yenile
-      await getMainSheetData(true);
-
-      return res.status(200).json({ 
-        success: true,
-        message: `${fingerprint} fingerprint'i silindi`
-      });
-    } 
-    else if (cleanStep) {
-      // Aşamalı temizleme işlemi
-      if (cleanStep === 'memory') {
-        // Memory store ve StudentDevices sayfasını temizle
-        deviceTracker.clearMemoryStore();
-        
-        // StudentDevices sayfasını da temizle
-        try {
-          await deviceTracker.clearStudentDevices();
-          console.log('StudentDevices sayfası temizlendi');
-        } catch (error) {
-          console.error('StudentDevices temizleme hatası:', error);
-          // Kritik olmayan hata, devam et
-        }
-        
-        // Önbelleği temizle
-        cache.mainSheet = {
-          data: null,
-          timestamp: 0
-        };
-        cache.studentLookup.clear();
-        
-        console.log('Memory store, StudentDevices ve önbellek temizlendi');
-        return res.status(200).json({ 
-          success: true,
-          message: 'Memory store ve cihaz eşleştirmeleri temizlendi'
-        });
-      }
-      else if (cleanStep === 'sheets') {
-        const selectedWeek = req.query.week ? parseInt(req.query.week as string) : null;
-        
-        // Eğer hafta yoksa
-        if (!selectedWeek) {
-          return res.status(400).json({ 
-            success: false,
-            error: 'Hafta bilgisi gerekli'
-          });
-        }
-        
-        try {
-          // İlk olarak StudentDevices sayfasını temizleyelim
-          await deviceTracker.clearStudentDevices();
-          console.log('StudentDevices sayfası temizlendi');
-          
-          // Şimdi belirlenen haftayı temizleyelim
-          console.log(`${selectedWeek}. hafta için temizleme işlemi başlıyor...`);
-          
-          // Yanıtı hemen dönelim - işlem arka planda devam edecek
-          res.status(200).json({ 
-            success: true,
-            message: `İşlem başlatıldı. Tamamlanması birkaç dakika sürebilir.`,
-            timeout: true
-          });
-          
-          // İşlemi arka planda başlat
-          setTimeout(async () => {
-            try {
-              // Büyük batch size ile daha verimli temizleme yapacak
-              const updateCount = await deviceTracker.clearSheetWeek(selectedWeek);
-              console.log(`Arka planda ${selectedWeek}. haftada ${updateCount} hücre temizlendi`);
-            } catch (bgError) {
-              console.error('Arka plan temizleme hatası:', bgError);
-            }
-          }, 0);
-          
-          return; // Yanıt zaten gönderildiği için burada keselim
-        } catch (error: any) {
-          console.error('Google Sheets temizleme hatası:', error);
-          if (res.headersSent) {
-            console.log('Yanıt zaten gönderildi, hata bilgisi loglanıyor');
-            return;
-          }
-          return res.status(500).json({ 
-            success: false,
-            error: 'Google Sheets temizlenemedi: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata')
-          });
-        }
-      }
-      else {
-        return res.status(400).json({ 
-          success: false,
-          error: 'Geçersiz cleanStep değeri'
-        });
+    const writes: Promise<void>[] = [];
+    let convertedCells = 0;
+    for (let row = 1; row < data.main.length; row++) {
+      for (let col = FIRST_WEEK_COLUMN; col < FIRST_WEEK_COLUMN + MAX_WEEK; col++) {
+        const cell = data.main[row]?.[col];
+        if (typeof cell !== 'string' || !cell.startsWith('VAR') || !cell.includes('(')) continue;
+        const dateMatch = /\(DATE:(\d{12,14})\)/.exec(cell);
+        const newValue = dateMatch ? `VAR ${formatIstanbul(Number(dateMatch[1]))}` : 'VAR';
+        writes.push(writeMainCell(row, col, newValue));
+        convertedCells++;
       }
     }
-    else {
-      // Tüm cihaz kayıtlarını temizle
-      console.log('Tüm cihaz kayıtları temizleme işlemi başlatıldı');
-      
-      // 1. Memory store'u temizle
-      deviceTracker.clearMemoryStore();
-      
-      // 2. Google Sheets'teki öğrenci-cihaz eşleştirmelerini temizle
-      try {
-        await deviceTracker.clearStudentDevices();
-      } catch (error) {
-        console.error('StudentDevices temizleme hatası:', error);
-        // Bu hatayı yutup devam edelim
-      }
-      
-      // 3. Önbelleği temizle
-      cache.mainSheet = {
-        data: null,
-        timestamp: 0
-      };
-      cache.studentLookup.clear();
-      
-      console.log('Tüm cihaz kayıtları temizlendi');
+    writes.push(appendLogRow(buildLogRow({
+      now, week: '', studentId: '', name: '', result: RESULT.reset,
+      deviceId: '', model: '', ip: '', note: 'Öğretmen cihaz kayıtlarını sıfırladı'
+    })));
 
-      return res.status(200).json({ 
-        success: true,
-        message: 'Tüm cihaz kayıtları temizlendi'
-      });
-    }
+    await Promise.all(writes);
+    console.log(`Cihaz kayıtları sıfırlandı, ${convertedCells} eski biçimli hücre dönüştürüldü`);
+
+    return res.status(200).json({
+      success: true,
+      message: convertedCells > 0
+        ? `Cihaz kayıtları sıfırlandı, ${convertedCells} eski biçimli hücre sadeleştirildi`
+        : 'Cihaz kayıtları sıfırlandı'
+    });
   } catch (error) {
-    console.error('Delete Error:', error);
-    return res.status(500).json({ 
-      error: 'İşlem sırasında bir hata oluştu'
+    console.error('Sıfırlama hatası:', error);
+    return res.status(isRetryableError(error) ? 503 : 500).json({
+      error: 'Cihaz kayıtları sıfırlanamadı, lütfen tekrar deneyin'
     });
   }
 }

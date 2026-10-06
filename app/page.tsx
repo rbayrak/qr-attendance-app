@@ -1,137 +1,103 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Html5Qrcode } from 'html5-qrcode';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import QRCode from 'qrcode';
 import { MapPin, Calendar } from 'lucide-react';
 
-import { STATIC_CLASS_LOCATION } from '../config/constants';
 import { generateEnhancedFingerprint, isValidFingerprint } from '@/utils/clientFingerprint';
+import { detectInAppBrowser, browserSummary } from '@/utils/browserInfo';
+import { scanQrFromPhoto } from '@/utils/qrPhoto';
+import {
+  PlaceCode,
+  QrPayload,
+  buildQrPayload,
+  parseQrPayload,
+  isLegacyQr,
+  signingMessage,
+  signatureFromDigest
+} from '@/utils/qrFormat';
+import FullscreenQrScanner from '@/components/FullscreenQrScanner';
+import QrProjector from '@/components/QrProjector';
 
-// TypeScript için window tanımlamaları
-declare global {
-  interface Window {
-    google: any;
-    gapi: any;
-  }
+const QR_VALIDITY_MS = 15 * 60 * 1000; // 15 dakika
+// QR ekranı açıkken, süresinin dolmasına bu kadar kala yeni QR üretilir
+const QR_RENEW_BEFORE_MS = 60 * 1000;
+// Telefon saati ile öğretmen bilgisayarının saati arasındaki küçük farklar için tolerans
+const QR_CLOCK_TOLERANCE_MS = 2 * 60 * 1000;
+const MAX_SUBMIT_ATTEMPTS = 5;
+const SUBMIT_TIMEOUT_MS = 55000;
+const MAX_WEEK = 16;
+
+interface ScannedQr {
+  raw: string;        // sunucuya olduğu gibi gönderilir (imza sunucuda doğrulanır)
+  payload: QrPayload;
 }
 
-// ✅ GÜVENLİK: Client-side'da artık env variables kullanmıyoruz
-const MAX_DISTANCE = 0.8;
+interface AttendanceResponse {
+  success?: boolean;
+  error?: string;
+  isAlreadyAttended?: boolean;
+  blockedStudentId?: string;
+  retryable?: boolean;
+  locationError?: boolean;
+}
+
+interface WeekSuggestion {
+  suggestedWeek: number;
+  lastWeek: number | null;
+  lastDate: string | null;
+}
+
+interface PlaceOption {
+  code: PlaceCode;
+  name: string;
+}
 
 interface Student {
   studentId: string;
   studentName: string;
 }
 
-interface Location {
+interface StudentLocation {
   lat: number;
   lng: number;
+  accuracy: number;
 }
 
-// Google Auth yardımcı fonksiyonları
-let tokenClient: any;
-let accessToken: string | null = null;
+// QR imzası: öğretmen şifresiyle HMAC-SHA256 (sunucu aynı şekilde doğrular)
+async function signQr(password: string, week: number, expiresAtSec: number, place: PlaceCode): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw', encoder.encode(password), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  );
+  const digest = await crypto.subtle.sign('HMAC', key, encoder.encode(signingMessage(week, expiresAtSec, place)));
+  return signatureFromDigest(new Uint8Array(digest));
+}
 
-const initializeGoogleAuth = () => {
-  return new Promise((resolve, reject) => {
-    if (typeof window === 'undefined') {
-      reject(new Error('Window objesi bulunamadı'));
-      return;
-    }
-    
-    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    if (!clientId) {
-      reject(new Error('Client ID bulunamadı. Lütfen env değerlerini kontrol edin.'));
-      return;
-    }
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-    console.log('🔐 Google Auth başlatılıyor...');
-    console.log('📋 Client ID:', clientId.substring(0, 20) + '...');
-
-    // Google Identity Services'in yüklenmesini bekle
-    const checkGoogleLoaded = setInterval(() => {
-      if (window.google?.accounts?.oauth2) {
-        clearInterval(checkGoogleLoaded);
-        
-        try {
-          console.log('✅ Google Identity Services yüklendi');
-          
-          tokenClient = window.google.accounts.oauth2.initTokenClient({
-            client_id: clientId,
-            scope: 'https://www.googleapis.com/auth/spreadsheets',
-            callback: (tokenResponse: any) => {
-              if (tokenResponse.error) {
-                console.error('❌ Token hatası:', tokenResponse);
-                reject(new Error(`Token hatası: ${tokenResponse.error}`));
-                return;
-              }
-              accessToken = tokenResponse.access_token;
-              console.log('✅ Access token alındı');
-              resolve(accessToken);
-            },
-            error_callback: (error: any) => {
-              console.error('❌ OAuth hatası:', error);
-              reject(new Error(`OAuth hatası: ${JSON.stringify(error)}`));
-            }
-          });
-
-          console.log('🔄 Token isteniyor...');
-          // Token'ı talep et
-          setTimeout(() => {
-            try {
-              tokenClient.requestAccessToken({ 
-                prompt: 'consent',
-                // Hint ekleyelim
-                hint: 'teacher'
-              });
-            } catch (error) {
-              console.error('❌ Token talep hatası:', error);
-              reject(error);
-            }
-          }, 500);
-
-        } catch (error) {
-          console.error('❌ Google Identity Services init hatası:', error);
-          reject(error);
-        }
-      }
-    }, 100);
-
-    // 15 saniye sonra timeout
-    setTimeout(() => {
-      clearInterval(checkGoogleLoaded);
-      if (!accessToken) {
-        reject(new Error('Google Identity Services yüklenemedi (timeout). Lütfen sayfayı yenileyin.'));
-      }
-    }, 15000);
-  });
-};
-
-
-const getAccessToken = async () => {
-  if (!accessToken) {
-    tokenClient.requestAccessToken();
-    return new Promise((resolve) => {
-      const checkToken = setInterval(() => {
-        if (accessToken) {
-          clearInterval(checkToken);
-          resolve(accessToken);
-        }
-      }, 100);
-    });
+const parseJsonSafe = <T,>(text: string): T | null => {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
   }
-  return accessToken;
 };
 
-const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
-    Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-    Math.sin(dLon/2) * Math.sin(dLon/2);
-  return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+const readStorage = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const writeStorage = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // gizli sekme vb. - önemli değil
+  }
 };
 
 // Modal Component'leri - Component dışında tanımlandı
@@ -142,7 +108,13 @@ const PasswordModal: React.FC<{
   onClose: () => void;
 }> = ({ password, setPassword, onSubmit, onClose }) => (
   <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[100]">
-    <div className="bg-white rounded-xl p-6 w-full max-w-md space-y-4">
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSubmit();
+      }}
+      className="bg-white rounded-xl p-6 w-full max-w-md space-y-4"
+    >
       <h3 className="text-xl font-bold">Öğretmen Girişi</h3>
       <input
         type="password"
@@ -154,59 +126,20 @@ const PasswordModal: React.FC<{
       />
       <div className="flex gap-2">
         <button
+          type="button"
           onClick={onClose}
           className="flex-1 p-3 bg-gray-500 text-white rounded-lg"
         >
           İptal
         </button>
         <button
-          onClick={onSubmit}
+          type="submit"
           className="flex-1 p-3 bg-blue-600 text-white rounded-lg"
         >
           Giriş
         </button>
       </div>
-    </div>
-  </div>
-);
-
-const FingerprintModal: React.FC<{
-  fingerprint: string;
-  setFingerprint: (value: string) => void;
-  onSubmit: () => void;
-  onClose: () => void;
-}> = ({ fingerprint, setFingerprint, onSubmit, onClose }) => (
-  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[200]">
-    <div className="bg-white rounded-xl p-6 w-full max-w-md space-y-4">
-      <h3 className="text-xl font-bold">Fingerprint Silme</h3>
-      <p className="text-sm text-gray-600 mb-2">
-        Google Sheets&apos;te görünen DF:xxxx formatındaki fingerprint&apos;i girin.
-        <br />
-        Örnek: Eğer sheets&apos;te &quot;VAR (DF:123456)&quot; yazıyorsa, &quot;123456&quot; girin.
-      </p>
-      <input
-        type="text"
-        value={fingerprint}
-        onChange={(e) => setFingerprint(e.target.value.trim())}
-        placeholder="Fingerprint numarası"
-        className="w-full p-3 border rounded-lg"
-        autoFocus
-      />
-      <div className="flex gap-2">
-        <button
-          onClick={onClose}
-          className="flex-1 p-3 bg-gray-500 text-white rounded-lg"
-        >
-          İptal
-        </button>
-        <button
-          onClick={onSubmit}
-          className="flex-1 p-3 bg-red-600 text-white rounded-lg"
-        >
-          Sil
-        </button>
-      </div>
-    </div>
+    </form>
   </div>
 );
 
@@ -214,26 +147,42 @@ const AttendanceSystem = () => {
   const [mode, setMode] = useState<'teacher' | 'student'>('student');
   const [showPasswordModal, setShowPasswordModal] = useState<boolean>(false);
   const [password, setPassword] = useState<string>('');
-  const [isTeacherAuthenticated, setIsTeacherAuthenticated] = useState<boolean>(false);
-  const [selectedWeek, setSelectedWeek] = useState<number>(1);
-  const [qrData, setQrData] = useState<string>('');
-  const [location, setLocation] = useState<Location | null>(null);
-  const [studentId, setStudentId] = useState<string>('');
-  const [attendance, setAttendance] = useState<Student[]>([]);
   const [status, setStatus] = useState<string>('');
-  const [isScanning, setIsScanning] = useState<boolean>(false);
-  const [html5QrCode, setHtml5QrCode] = useState<Html5Qrcode | null>(null);
-  const [validStudents, setValidStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [isValidLocation, setIsValidLocation] = useState<boolean>(false);
-  const [classLocation, setClassLocation] = useState<Location | null>(null);
+
+  // Öğretmen
+  const [selectedWeek, setSelectedWeek] = useState<number>(1);
+  // Öğretmen haftayı elle değiştirdiyse öneri onun seçimini ezmesin
+  const weekTouchedRef = useRef<boolean>(false);
+  const [weekSuggestion, setWeekSuggestion] = useState<WeekSuggestion | null>(null);
+  const [places, setPlaces] = useState<PlaceOption[]>([{ code: 'O', name: 'Okul' }]);
+  const [selectedPlace, setSelectedPlace] = useState<PlaceCode>('O');
+  const [qrImageSrc, setQrImageSrc] = useState<string>('');
+  const [qrValidUntil, setQrValidUntil] = useState<number>(0);
+  const [showProjector, setShowProjector] = useState<boolean>(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
-  const [showFingerprintModal, setShowFingerprintModal] = useState<boolean>(false);
-  const [fingerprintToDelete, setFingerprintToDelete] = useState<string>('');
-  const [qrSubmitCount, setQrSubmitCount] = useState<number>(0);
-  const [connectionError, setConnectionError] = useState<boolean>(false);
-  const [queuePosition, setQueuePosition] = useState<number>(0); // Kuyruk pozisyonu
+  const [showDebugConsole, setShowDebugConsole] = useState<boolean>(false);
+  const debugConsoleRef = useRef<HTMLDivElement>(null);
+  const qrSettingsRef = useRef<{ week: number; place: PlaceCode }>({ week: 1, place: 'O' });
+  // Sunucuda doğrulanan öğretmen şifresi: QR imzası ve öğretmene özel istekler için
+  // yalnızca bellekte tutulur (sayfa yenilenince yeniden giriş gerekir)
+  const teacherPasswordRef = useRef<string>('');
+  const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
+
+  const teacherHeaders = (): Record<string, string> => ({
+    Authorization: `Bearer ${teacherPasswordRef.current}`
+  });
+
+  // Öğrenci
+  const [studentId, setStudentId] = useState<string>('');
+  const [validStudents, setValidStudents] = useState<Student[]>([]);
+  const [location, setLocation] = useState<StudentLocation | null>(null);
+  const [isCheckingLocation, setIsCheckingLocation] = useState<boolean>(false);
+  const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [pendingQr, setPendingQr] = useState<ScannedQr | null>(null);
+  const [inAppBrowser, setInAppBrowser] = useState<string | null>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   const updateDebugLogs = async (newLog: string) => {
     try {
@@ -247,158 +196,118 @@ const AttendanceSystem = () => {
     }
   };
 
-  const clearMemoryStore = async () => {
-    try {
-      setIsLoading(true);
-      setStatus('🔄 Cihaz kayıtları temizleniyor...');
-      updateDebugLogs(`🔄 Cihaz kayıtları temizleme işlemi başlatıldı`);
-      
-      try {
-        // 1. Adım: Memory store ve StudentDevices sayfasını temizle
-        const response1 = await fetch('/api/attendance?cleanStep=memory', {
-          method: 'DELETE'
-        });
-        
-        if (!response1.ok) {
-          const errorText = await response1.text();
-          setStatus('❌ Memory store temizlenemedi');
-          updateDebugLogs(`❌ HATA: Memory store temizleme hatası: ${errorText}`);
-          return;
-        }
+  // ---------------------------------------------------------------------------
+  // Öğretmen
+  // ---------------------------------------------------------------------------
 
-        setStatus('✅ Memory store ve cihaz eşleştirmeleri temizlendi, Google Sheets temizleniyor...');
-        updateDebugLogs(`✅ Memory store ve StudentDevices temizlendi, Google Sheets işlemi başlatılıyor...`);
-        
-        const jobId = `sheets-cleanup-${Date.now()}`;
-        
-        // 2. Adım: Job başlat (ÖNEMLİ: action=start)
-        const startResponse = await fetch(`/api/job-status?action=start&jobId=${jobId}&week=${selectedWeek}`);
-        
-        if (!startResponse.ok) {
-          const errorText = await startResponse.text();
-          throw new Error(`Job başlatılamadı: ${errorText}`);
-        }
-        
-        const startData = await startResponse.json();
-        updateDebugLogs(`✅ Job başlatıldı: ${startData.totalCells} hücre temizlenecek`);
-        
-        // 3. Adım: Batch işlemleri
-        let isCompleted = false;
-        let attempts = 0;
-        const MAX_ATTEMPTS = 30;
-        
-        while (!isCompleted && attempts < MAX_ATTEMPTS) {
-          attempts++;
-          
-          try {
-            const processResponse = await fetch(`/api/job-status?action=process&jobId=${jobId}&week=${selectedWeek}`);
-            
-            if (!processResponse.ok) {
-              const errorText = await processResponse.text();
-              throw new Error(`İşlem hatası: ${errorText}`);
-            }
-            
-            const processData = await processResponse.json();
-            isCompleted = processData.completed;
-            
-            const progress = processData.progress || 0;
-            const processedCells = processData.processedCells || 0;
-            const totalCells = processData.totalCells || 0;
-            
-            setStatus(`⏳ Temizleme sürüyor... (${progress}% - ${processedCells}/${totalCells})`);
-            updateDebugLogs(`📊 İlerleme: ${progress}% (${processedCells}/${totalCells})`);
-            
-            // Tamamlandıysa döngüden çık
-            if (isCompleted) {
-              break;
-            }
-            
-            await new Promise(resolve => setTimeout(resolve, 1500));
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-            updateDebugLogs(`⚠️ UYARI: Batch işleme hatası (${attempts}. deneme): ${errorMessage}`);
-            
-            // Hata durumunda 3 saniye bekle
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            
-            if (attempts >= MAX_ATTEMPTS) {
-              throw new Error(`Maksimum deneme sayısına ulaşıldı (${MAX_ATTEMPTS}): ${errorMessage}`);
-            }
-          }
-        }
-        
-        if (isCompleted) {
-          setStatus('✅ Tüm cihaz kayıtları başarıyla temizlendi');
-          updateDebugLogs(`✅ Google Sheets kayıtları tamamen temizlendi`);
-          setTimeout(() => setStatus(''), 5000);
-        } else {
-          setStatus('⚠️ Temizleme işlemi yarım kaldı, daha sonra tekrar deneyiniz');
-          updateDebugLogs(`⚠️ UYARI: Maksimum deneme sayısına ulaşıldı, işlem yarım kaldı`);
-        }
-      } catch (error: any) {
-        const errorMessage = error.message || 'Bilinmeyen hata';
-        setStatus(`❌ Hata: ${errorMessage}`);
-        updateDebugLogs(`❌ HATA: ${errorMessage}`);
+  const resetDeviceRecords = async () => {
+    const confirmed = window.confirm(
+      'Cihaz kayıtları sıfırlansın mı?\n\n' +
+      'Bugün yoklama verilmiş telefonlar başka öğrenciler için tekrar kullanılabilir hale gelir. ' +
+      'Eski biçimdeki uzun hücreler de "VAR tarih saat" biçimine sadeleştirilir.'
+    );
+    if (!confirmed) return;
+
+    setIsLoading(true);
+    setStatus('⏳ Cihaz kayıtları sıfırlanıyor...');
+    try {
+      const response = await fetch('/api/attendance', { method: 'DELETE', headers: teacherHeaders() });
+      const data = parseJsonSafe<{ message?: string; error?: string }>(await response.text());
+      if (response.ok) {
+        setStatus(`✅ ${data?.message || 'Cihaz kayıtları sıfırlandı'}`);
+        updateDebugLogs(`🔄 ${data?.message || 'Cihaz kayıtları sıfırlandı'}`);
+      } else {
+        setStatus(`❌ ${data?.error || 'Cihaz kayıtları sıfırlanamadı'}`);
       }
+    } catch {
+      setStatus('❌ Bağlantı hatası, cihaz kayıtları sıfırlanamadı');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const deleteFingerprint = async () => {
+  // Öğretmen paneline girince önerilen haftayı ve konum seçeneklerini yükle
+  useEffect(() => {
+    if (mode !== 'teacher') return;
+
+    const savedPlace = readStorage('teacherPlace');
+
+    fetch('/api/location')
+      .then(response => response.json())
+      .then((data: { places?: PlaceOption[] }) => {
+        if (!data.places?.length) return;
+        setPlaces(data.places);
+        if (savedPlace && data.places.some(place => place.code === savedPlace)) {
+          setSelectedPlace(savedPlace as PlaceCode);
+        }
+      })
+      .catch(() => undefined);
+
+    fetch('/api/week-suggestion')
+      .then(response => (response.ok ? response.json() : null))
+      .then((data: WeekSuggestion | null) => {
+        if (!data || !Number.isInteger(data.suggestedWeek)) return;
+        setWeekSuggestion(data);
+        if (!weekTouchedRef.current) setSelectedWeek(data.suggestedWeek);
+      })
+      .catch(() => undefined);
+  }, [mode]);
+
+  const createQr = useCallback(async (week: number, place: PlaceCode) => {
+    const validUntil = Date.now() + QR_VALIDITY_MS;
+    const expiresAtSec = Math.floor(validUntil / 1000);
+    const signature = await signQr(teacherPasswordRef.current, week, expiresAtSec, place);
+    const svg = await QRCode.toString(buildQrPayload({ week, expiresAtSec, place, signature }), {
+      type: 'svg',
+      errorCorrectionLevel: 'M',
+      margin: 2
+    });
+    qrSettingsRef.current = { week, place };
+    setQrImageSrc(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+    setQrValidUntil(validUntil);
+  }, []);
+
+  const generateQR = async () => {
+    // Tarayıcı çubuklarını da gizlemek için tam ekran iste (tıklama anında istenmeli)
+    document.documentElement.requestFullscreen?.().catch(() => undefined);
     try {
-      setIsLoading(true);
-      updateDebugLogs(`🔄 Fingerprint silme işlemi başlatıldı: ${fingerprintToDelete}`);
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 saniye (60 kişilik sınıf için)
-      
-      try {
-        const response = await fetch(`/api/attendance?fingerprint=${fingerprintToDelete}`, {
-          method: 'DELETE',
-          signal: controller.signal
-        });
-        
-        clearTimeout(timeoutId);
-        
-        let data;
-        try {
-          data = await response.json();
-        } catch (parseError) {
-          throw new Error('API yanıtı JSON değil');
-        }
-        
-        if (response.ok) {
-          setStatus('✅ Fingerprint başarıyla silindi');
-          updateDebugLogs(`✅ Fingerprint memory ve sheets'ten silindi: ${fingerprintToDelete}`);
-          setTimeout(() => setStatus(''), 3000);
-        } else {
-          setStatus(`❌ ${data.error || 'Fingerprint silinemedi'}`);
-          updateDebugLogs(`❌ HATA: ${data.error}`);
-        }
-      } catch (fetchError: any) {
-        if (fetchError.name === 'AbortError') {
-          setStatus('⚠️ İşlem zaman aşımına uğradı');
-          updateDebugLogs(`⚠️ TIMEOUT: Fingerprint silme işlemi zaman aşımına uğradı`);
-        } else {
-          const errorMessage = fetchError.message || 'Bilinmeyen hata';
-          setStatus(`❌ Hata: ${errorMessage}`);
-          updateDebugLogs(`❌ HATA: ${errorMessage}`);
-        }
-      }
-    } finally {
-      setIsLoading(false);
-      setShowFingerprintModal(false);
-      setFingerprintToDelete('');
+      await createQr(selectedWeek, selectedPlace);
+      setShowProjector(true);
+      setStatus('');
+      const placeName = places.find(place => place.code === selectedPlace)?.name || selectedPlace;
+      updateDebugLogs(`🔳 Hafta ${selectedWeek} için QR oluşturuldu (konum: ${placeName})`);
+    } catch (error) {
+      console.error('QR oluşturma hatası:', error);
+      setStatus('❌ QR kod oluşturulamadı');
     }
   };
 
+  const closeProjector = useCallback(() => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => undefined);
+    }
+    setShowProjector(false);
+  }, []);
+
+  // QR ekranı açık kaldığı sürece QR'ın süresi dolmasın: bitmesine az kala yenile
+  useEffect(() => {
+    if (!showProjector) return;
+    const interval = setInterval(() => {
+      if (qrValidUntil - Date.now() < QR_RENEW_BEFORE_MS) {
+        const { week, place } = qrSettingsRef.current;
+        createQr(week, place).catch(error => console.error('QR yenileme hatası:', error));
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [showProjector, qrValidUntil, createQr]);
+
+  // Loglar yalnızca debug konsolu açıkken çekilir
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    
+
     const fetchLogs = async () => {
       try {
-        const response = await fetch('/api/logs');
+        const response = await fetch('/api/logs', { headers: teacherHeaders() });
         if (response.ok) {
           const data = await response.json();
           if (data.logs && data.logs.length !== debugLogs.length) {
@@ -409,535 +318,381 @@ const AttendanceSystem = () => {
         console.error('Log alma hatası:', error);
       }
     };
-  
-    if (mode === 'teacher') {
+
+    if (mode === 'teacher' && showDebugConsole) {
       fetchLogs();
       interval = setInterval(fetchLogs, 1000);
     }
-  
+
     return () => {
       if (interval) {
         clearInterval(interval);
       }
     };
-  }, [mode, debugLogs.length]);
+  }, [mode, showDebugConsole, debugLogs.length]);
 
+  // Yeni log geldiğinde konsolu en alta kaydır
   useEffect(() => {
-    if (mode === 'student') {
-      const lastAttendanceCheck = localStorage.getItem('lastAttendanceCheck');
-      if (lastAttendanceCheck) {
-        const checkData = JSON.parse(lastAttendanceCheck);
-        
-        setStudentId(checkData.studentId);
-        
-        if (validStudents.length > 0) {
-          const isValid = validStudents.some(s => s.studentId === checkData.studentId);
-          if (isValid) {
-            const now = new Date();
-            const checkTime = new Date(checkData.timestamp);
-            
-            if (now.toDateString() === checkTime.toDateString()) {
-              setStatus('✅ Öğrenci numarası doğrulandı');
-              setIsValidLocation(true);
-            }
-          }
-        }
-      }
+    if (showDebugConsole && debugConsoleRef.current) {
+      debugConsoleRef.current.scrollTop = debugConsoleRef.current.scrollHeight;
     }
-  }, [mode, validStudents]);
-
-  
-  const getClientIP = async () => {
-    try {
-      const response = await fetch('https://api.ipify.org?format=json');
-      const data = await response.json();
-      
-      const { fingerprint, hardwareSignature } = await generateEnhancedFingerprint();
-      
-      if (!isValidFingerprint(fingerprint, hardwareSignature)) {
-        throw new Error('Geçersiz cihaz tanımlama');
-      }
-      
-      return {
-        ip: data.ip,
-        deviceFingerprint: fingerprint,
-        hardwareSignature
-      };
-    } catch (error) {
-      console.error('IP/Fingerprint alınamadı:', error);
-      throw new Error('Cihaz tanımlama başarısız');
-    }
-  };
-  
+  }, [showDebugConsole, debugLogs.length]);
 
   const handleModeChange = () => {
     if (mode === 'student') {
       setShowPasswordModal(true);
     } else {
       setMode('student');
-      setIsTeacherAuthenticated(false);
-      const savedClassLocation = localStorage.getItem('classLocation');
-      if (savedClassLocation) {
-        setClassLocation(JSON.parse(savedClassLocation));
-      }
+      teacherPasswordRef.current = '';
     }
   };
 
-  
-  
-  const handlePasswordSubmit = () => {
-    if (password === 'teacher123') {
-      setIsTeacherAuthenticated(true);
-      setMode('teacher');
-      setShowPasswordModal(false);
-      
-      const savedLogs = localStorage.getItem('debugLogs');
-      if (savedLogs) {
-        setDebugLogs(JSON.parse(savedLogs));
-      }
-  
-      updateDebugLogs(`===== ÖĞRETMEN OTURUMU BAŞLADI =====`);
-  
-      const savedClassLocation = localStorage.getItem('classLocation');
-      if (savedClassLocation) {
-        setClassLocation(JSON.parse(savedClassLocation));
-      }
-      
-      // Google Auth'u başlat
-      console.log('🔄 Google yetkilendirme başlatılıyor...');
-      initializeGoogleAuth().then(() => {
-        console.log('✅ Google yetkilendirme tamamlandı');
-        setIsAuthenticated(true);
-        fetchStudentList();
-      }).catch(error => {
-        const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-        console.error('❌ Google yetkilendirme hatası:', errorMessage);
-        updateDebugLogs(`❌ HATA: Google yetkilendirme hatası - ${errorMessage}`);
-        setStatus(`❌ Google yetkilendirme hatası: ${errorMessage}`);
-      });
-    } else {
-      setStatus('❌ Yanlış şifre');
-    }
+  // Şifre sunucuda doğrulanır (artık tarayıcı kodunda yazılı değil).
+  // Sheets işlemleri sunucuda servis hesabıyla yapıldığı için Google OAuth gerekmiyor.
+  const handlePasswordSubmit = async () => {
+    if (isLoggingIn) return;
+    const enteredPassword = password;
     setPassword('');
+    setIsLoggingIn(true);
+    try {
+      const response = await fetch('/api/teacher-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: enteredPassword })
+      });
+      const data = parseJsonSafe<{ error?: string }>(await response.text());
+      if (response.ok) {
+        teacherPasswordRef.current = enteredPassword;
+        setMode('teacher');
+        setShowPasswordModal(false);
+        setStatus('');
+        updateDebugLogs(`===== ÖĞRETMEN OTURUMU BAŞLADI =====`);
+      } else {
+        setStatus(`❌ ${data?.error || 'Giriş yapılamadı'}`);
+      }
+    } catch {
+      setStatus('❌ Bağlantı hatası, giriş yapılamadı');
+    } finally {
+      setIsLoggingIn(false);
+    }
   };
 
+  // ---------------------------------------------------------------------------
+  // Öğrenci
+  // ---------------------------------------------------------------------------
 
   useEffect(() => {
+    if (mode !== 'student') return;
+
+    setInAppBrowser(detectInAppBrowser(navigator.userAgent));
+
+    // Öğrenci numarasını bir önceki yoklamadan hatırla
+    const lastAttendanceCheck = readStorage('lastAttendanceCheck');
+    const savedId = lastAttendanceCheck ? parseJsonSafe<{ studentId?: string }>(lastAttendanceCheck)?.studentId : null;
+    if (savedId) setStudentId(current => current || savedId);
+
     const loadStudentList = async () => {
       try {
-        if (mode === 'student') {
-          const response = await fetch('/api/students');
-          
-          if (!response.ok) {
-            throw new Error('Öğrenci listesi alınamadı');
-          }
-          
-          const data = await response.json();
-          setValidStudents(data.students || []);
+        const response = await fetch('/api/students');
+        if (!response.ok) {
+          throw new Error('Öğrenci listesi alınamadı');
         }
+        const data = await response.json();
+        setValidStudents(data.students || []);
       } catch (error) {
         console.error('Öğrenci listesi yükleme hatası:', error);
-        setStatus('❌ Öğrenci listesi yüklenemedi');
+        setStatus('❌ Öğrenci listesi yüklenemedi. Sayfayı yenileyin.');
       }
     };
 
     loadStudentList();
   }, [mode]);
 
-  const fetchStudentList = async () => {
-    try {
-      const response = await fetch('/api/students');
-      
-      if (!response.ok) {
-        throw new Error('Öğrenci listesi alınamadı');
-      }
-      
-      const data = await response.json();
-      setValidStudents(data.students || []);
-    } catch (error) {
-      console.error('Öğrenci listesi çekme hatası:', error);
-      setStatus('❌ Öğrenci listesi yüklenemedi');
-    }
-  };
-
-  const updateAttendance = async (studentId: string) => {
-    console.warn('updateAttendance deprecated - backend kullanılıyor');
-    return false;
-  };
-  
-  const getLocation = async () => {
+  const getLocation = () => {
     if (!navigator.geolocation) {
-      setStatus('❌ Konum desteği yok');
+      setStatus('❌ Bu tarayıcı konum özelliğini desteklemiyor');
       return;
     }
-  
+
+    setIsCheckingLocation(true);
     setStatus('📍 Konum alınıyor...');
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const currentLocation = {
           lat: position.coords.latitude,
-          lng: position.coords.longitude
+          lng: position.coords.longitude,
+          accuracy: position.coords.accuracy
         };
-        setLocation(currentLocation);
-  
         try {
-          const distance = calculateDistance(
-            currentLocation.lat,
-            currentLocation.lng,
-            STATIC_CLASS_LOCATION.lat,
-            STATIC_CLASS_LOCATION.lng
-          );
-  
-          if (distance > MAX_DISTANCE) {
-            setIsValidLocation(false);
-            setStatus(`❌ Sınıf konumunda değilsiniz (${(distance * 1000).toFixed(0)} metre uzaktasınız)`);
-          } else {
-            setIsValidLocation(true);
+          // Okula uzaklık sunucuda hesaplanır. Asıl kontrol yoklama kaydında,
+          // QR'daki konuma (okul/ev) göre sunucuda yapılır; burası öğrenciye ön bilgidir.
+          const response = await fetch('/api/check-location', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lat: currentLocation.lat, lng: currentLocation.lng })
+          });
+          const data = parseJsonSafe<{ atSchool?: boolean; distanceToSchoolM?: number }>(await response.text());
+          if (!response.ok || !data) throw new Error('Konum kontrolü başarısız');
+
+          setLocation(currentLocation);
+          if (data.atSchool) {
             setStatus('✅ Konum doğrulandı');
+          } else {
+            setStatus(`⚠️ Okul konumunda görünmüyorsunuz (${data.distanceToSchoolM} metre uzakta). ` +
+              'Sınıftaysanız konumunuz tam algılanamamış olabilir; tekrar deneyin veya QR\'ı okutun.');
           }
-        } catch (error) {
-          setStatus('❌ Konum kontrolü yapılamadı');
+        } catch {
+          setStatus('❌ Konum doğrulanamadı (bağlantı hatası). Tekrar deneyin.');
+        } finally {
+          setIsCheckingLocation(false);
         }
       },
       (error) => {
-        setStatus(`❌ Konum hatası: ${error.message}`);
-        setIsValidLocation(false);
-      }
+        if (error.code === error.PERMISSION_DENIED) {
+          setStatus('❌ Konum izni verilmedi. Tarayıcı ayarlarından konum izni verin.');
+        } else if (error.code === error.TIMEOUT) {
+          setStatus('❌ Konum alınamadı (zaman aşımı). Tekrar deneyin.');
+        } else {
+          setStatus(`❌ Konum hatası: ${error.message}`);
+        }
+        setIsCheckingLocation(false);
+      },
+      // Konum alınamazsa sonsuza kadar beklemesin; 1 dk içindeki konum yeniden kullanılabilir
+      { timeout: 15000, maximumAge: 60000 }
     );
-  };
-
-  const generateQR = async () => {
-    try {
-      await fetch('/api/location', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(STATIC_CLASS_LOCATION)
-      });
-      
-      const payload = {
-        timestamp: Date.now(),
-        classLocation: STATIC_CLASS_LOCATION,
-        validUntil: Date.now() + 900000,
-        week: selectedWeek
-      };
-      
-      setQrData(JSON.stringify(payload));
-      setStatus('✅ QR kod oluşturuldu');
-    } catch (error) {
-      setStatus('❌ QR kod oluşturulamadı');
-    }
   };
 
   const handleStudentIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newId = e.target.value;
     setStudentId(newId);
-    
-    setIsValidLocation(false);
-    
+    setPendingQr(null);
+
     if (!newId) {
       setStatus('');
       return;
     }
-    
+
     if (validStudents.length === 0) {
       setStatus('⚠️ Öğrenci listesi henüz yüklenmedi');
       return;
     }
-    
-    const validStudent = validStudents.find(s => s.studentId === newId);
-    
+
+    const validStudent = validStudents.find(s => s.studentId === newId.trim());
+
     if (!validStudent) {
       setStatus('⚠️ Bu öğrenci numarası listede yok');
       return;
     }
-    
+
     setStatus('✅ Öğrenci numarası doğrulandı');
   };
 
-  const handleQrScan = async (decodedText: string) => {
-    const lastScanTime = localStorage.getItem('lastQrScanTime');
-    const currentTime = Date.now();
-    
-    if (lastScanTime && currentTime - parseInt(lastScanTime) < 3000) {
+  // Yoklamayı sunucuya gönderir. Sunucu yoğunsa (zaman aşımı, 5xx, JSON
+  // olmayan yanıt) öğrencinin bir şey yapmasına gerek kalmadan otomatik
+  // tekrar dener. Aynı öğrenci için tekrar gönderim güvenlidir: sunucu
+  // "zaten alınmış" yanıtı döner.
+  const submitAttendance = async (qr: ScannedQr) => {
+    const trimmedId = studentId.trim();
+    const validStudent = validStudents.find(s => s.studentId === trimmedId);
+
+    if (!validStudent) {
+      setStatus('❌ Öğrenci numarası listede bulunamadı');
       return;
     }
-    
-    localStorage.setItem('lastQrScanTime', currentTime.toString());
 
-    const newCount = qrSubmitCount + 1;
-    setQrSubmitCount(newCount);
-    if (newCount > 0) {
-      setStatus('🔄 İşlem sürüyor... Yoğun saatlerde bekleme süresi uzayabilir.');
+    if (qr.payload.expiresAtSec * 1000 + QR_CLOCK_TOLERANCE_MS < Date.now()) {
+      setPendingQr(null);
+      setStatus('❌ QR kodun süresi dolmuş. Öğretmeninizden yeni QR isteyin.');
+      updateDebugLogs(`❌ ${trimmedId}: QR süresi dolmuş`);
+      return;
     }
 
+    if (!location) {
+      setStatus('❌ Önce konumunuzu doğrulayın');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setPendingQr(null);
+    setStatus('⏳ Yoklamanız gönderiliyor...');
+
     try {
-      const scannedData = JSON.parse(decodedText);
-      const currentTimeString = new Date().toLocaleTimeString();
-      const studentInfo = validStudents.find(s => s.studentId === studentId);
-
-      const scanLog = `
-      ===== YENİ YOKLAMA KAYDI =====
-      Zaman: ${currentTimeString}
-      Öğrenci: ${studentInfo?.studentName || 'Bilinmiyor'} (${studentId})
-      Hafta: ${scannedData.week}
-      `;
-      updateDebugLogs(scanLog);
-
-      const validStudent = validStudents.find(s => s.studentId === studentId);
-      if (!validStudent) {
-        const errorLog = `❌ HATA: Öğrenci numarası (${studentId}) listede bulunamadı`;
-        updateDebugLogs(errorLog);
-        setStatus('❌ Öğrenci numarası listede bulunamadı');
-        return;
-      }
-
-      if (scannedData.validUntil < Date.now()) {
-        updateDebugLogs(`❌ HATA: QR kod süresi dolmuş`);
-        setStatus('❌ QR kod süresi dolmuş');
-        return;
-      }
-
-      if (!location) {
-        updateDebugLogs(`❌ HATA: Konum bilgisi yok`);
-        setStatus('❌ Önce konum alın');
-        return;
-      }
-
-      const clientIPData = await getClientIP();
-      if (!clientIPData || !clientIPData.deviceFingerprint || !clientIPData.hardwareSignature) {
-        updateDebugLogs(`❌ HATA: Cihaz tanımlama başarısız`);
-        setStatus('❌ Cihaz tanımlama hatası. Lütfen tekrar deneyin.');
-        return;
-      }
-
-      const { ip, deviceFingerprint, hardwareSignature } = clientIPData;
-
-      const locationLog = `
-      📍 KONUM BİLGİLERİ:
-      Öğrenci Konumu: ${location.lat}, ${location.lng}
-      Sınıf Konumu: ${scannedData.classLocation.lat}, ${scannedData.classLocation.lng}
-      Konum Durumu: ${isValidLocation ? '✅ Geçerli' : '❌ Geçersiz'}
-
-      📱 CİHAZ BİLGİLERİ:
-      IP: ${ip}
-      Fingerprint: ${deviceFingerprint.slice(0, 8)}...
-      Hardware ID: ${hardwareSignature.slice(0, 8)}...
-      `;
-      updateDebugLogs(locationLog);
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 saniye (60 kişilik sınıf için)
-      
+      // Cihaz modeli imzası yalnızca şüpheli kayıtları işaretlemek için kullanılır;
+      // alınamazsa yoklama engellenmez
+      let hardwareSignature = 'unknown';
       try {
-        const attendanceResponse = await fetch('/api/attendance', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            studentId,
-            week: scannedData.week,
-            clientIP: ip,
-            deviceFingerprint,
-            hardwareSignature
-          }),
-          signal: controller.signal
-        });
-        
-        clearTimeout(timeoutId);
-        setConnectionError(false);
-
-        const responseData = await attendanceResponse.json();
-
-        if (!attendanceResponse.ok) {
-          if (responseData.unauthorizedDevice) {
-            updateDebugLogs(`❌ HATA: Bu cihaz bu öğrenciye ait değil`);
-            setStatus(`❌ Bu cihaz ${studentId} numaralı öğrenciye ait değil. Kendi cihazınızı kullanmalısınız!`);
-            setIsScanning(false);
-            if (html5QrCode) {
-              await html5QrCode.stop();
-            }
-            return;
-          }
-          
-          if (responseData.blockedStudentId) {
-            updateDebugLogs(`❌ HATA: Cihaz ${responseData.blockedStudentId} no'lu öğrenci tarafından kullanılmış`);
-            setStatus(`❌ Bu cihaz bugün ${responseData.blockedStudentId} numaralı öğrenci için kullanılmış`);
-            setIsScanning(false);
-            if (html5QrCode) {
-              await html5QrCode.stop();
-            }
-            return;
-          }
-          
-          throw new Error(responseData.error || 'Yoklama kaydedilemedi');
+        const ids = await generateEnhancedFingerprint();
+        if (isValidFingerprint(ids.fingerprint, ids.hardwareSignature)) {
+          hardwareSignature = ids.hardwareSignature;
         }
-
-        localStorage.setItem('lastAttendanceCheck', JSON.stringify({
-          studentId: studentId,
-          timestamp: new Date().toISOString()
-        }));
-
-        if (responseData.isAlreadyAttended) {
-          updateDebugLogs(`⚠️ UYARI: ${studentId} no'lu öğrenci için yoklama zaten alınmış`);
-          setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
-        } else {
-          updateDebugLogs(`✅ BAŞARILI: ${studentId} no'lu öğrenci için yoklama kaydedildi`);
-          setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
-        }
-
-      } catch (fetchError: any) {
-        if (fetchError.name === 'AbortError') {
-          updateDebugLogs(`⚠️ API TIMEOUT: İstek zaman aşımına uğradı (60 saniye)`);
-          setStatus('⚠️ Sunucu yoğun, lütfen biraz sonra tekrar deneyin (60sn timeout)');
-          setConnectionError(true);
-          return;
-        }
-        
-        if (fetchError instanceof TypeError && fetchError.message.includes('fetch')) {
-          updateDebugLogs(`❌ NETWORK HATASI: Sunucuya bağlanılamadı`);
-          setStatus('❌ Bağlantı hatası, internet bağlantınızı kontrol edin');
-          setConnectionError(true);
-          return;
-        }
-        
-        throw fetchError;
+      } catch {
+        // önemli değil
       }
 
-    } catch (error: any) {
-      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-      
-      if (errorMessage.includes('fingerprint') || 
-          errorMessage.includes('tanımlama') || 
-          errorMessage.includes('hardware')) {
-        updateDebugLogs(`❌ CİHAZ TANIMA HATASI: ${errorMessage}`);
-        setStatus('❌ Cihaz tanımlama hatası. Lütfen öğretmeninize başvurun.');
-      } else {
-        updateDebugLogs(`❌ GENEL HATA: ${errorMessage}`);
-        setStatus(`❌ ${errorMessage}`);
-      }
-    } finally {
-      setQrSubmitCount(0);
-      
-      if (!connectionError) {
-        setIsScanning(false);
-        if (html5QrCode) {
-          await html5QrCode.stop();
-        }
-      }
-    }
-  };
+      for (let attempt = 1; attempt <= MAX_SUBMIT_ATTEMPTS; attempt++) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), SUBMIT_TIMEOUT_MS);
 
-  useEffect(() => {
-    let scanner: Html5Qrcode;
-    
-    const initializeScanner = async () => {
-      if (isScanning) {
         try {
-          scanner = new Html5Qrcode("qr-reader");
-          await scanner.start(
-            { facingMode: "environment" },
-            { fps: 10, qrbox: 250 },
-            handleQrScan,
-            () => {}
-          );
-          setHtml5QrCode(scanner);
+          const response = await fetch('/api/attendance', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              studentId: trimmedId,
+              qr: qr.raw,
+              lat: location.lat,
+              lng: location.lng,
+              accuracy: location.accuracy,
+              hardwareSignature
+            }),
+            signal: controller.signal
+          });
+
+          // Sunucu zaman aşımı gibi durumlarda yanıt JSON olmayabilir
+          // (Safari'deki "The string did not match the expected pattern" hatası)
+          const data = parseJsonSafe<AttendanceResponse>(await response.text());
+
+          if (response.ok && data?.success) {
+            writeStorage('lastAttendanceCheck', JSON.stringify({
+              studentId: trimmedId,
+              timestamp: new Date().toISOString()
+            }));
+
+            if (data.isAlreadyAttended) {
+              setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
+              updateDebugLogs(`ℹ️ ${trimmedId} ${validStudent.studentName}: Hafta ${qr.payload.week} zaten alınmış`);
+            } else {
+              setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi`);
+              updateDebugLogs(`✅ ${trimmedId} ${validStudent.studentName}: Hafta ${qr.payload.week} kaydedildi` +
+                (attempt > 1 ? ` (${attempt}. denemede)` : ''));
+            }
+            return;
+          }
+
+          const isRetryable = !data || data.retryable === true ||
+            response.status >= 500 || response.status === 429 || response.status === 408;
+
+          if (!isRetryable) {
+            // Kesin hata (cihaz engeli, konum dışı, öğrenci bulunamadı vb.) - tekrar denemek anlamsız
+            setStatus(`❌ ${data.error || 'Yoklama kaydedilemedi'}`);
+            updateDebugLogs(`❌ ${trimmedId}: ${data.error || response.status}`);
+            return;
+          }
         } catch (error) {
-          setStatus('❌ Kamera başlatılamadı');
-          setIsScanning(false);
+          // Ağ hatası veya istemci zaman aşımı - tekrar denenebilir
+          console.warn('Yoklama gönderme hatası:', error);
+        } finally {
+          clearTimeout(timeoutId);
+        }
+
+        if (attempt < MAX_SUBMIT_ATTEMPTS) {
+          setStatus(`⏳ Sunucu yoğun, otomatik olarak tekrar deneniyor (${attempt + 1}/${MAX_SUBMIT_ATTEMPTS})... Lütfen bekleyin.`);
+          await sleep(attempt * 2000 + Math.random() * 1500);
         }
       }
-    };
 
-    initializeScanner();
-    return () => {
-      if (scanner) scanner.stop().catch(() => {});
-    };
-  }, [isScanning]);
-
-  const clearAllRecords = async () => {
-    try {
-      const deviceResponse = await fetch('/api/attendance', {
-        method: 'DELETE'
-      });
-  
-      const logsResponse = await fetch('/api/logs', {
-        method: 'DELETE'
-      });
-  
-      if (deviceResponse.ok && logsResponse.ok) {
-        setDebugLogs([]);
-        setStatus('✅ Tüm kayıtlar temizlendi');
-      } else {
-        throw new Error('Kayıtlar temizlenemedi');
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Bilinmeyen hata';
-      setStatus('❌ Kayıtlar temizlenemedi');
+      // Tüm denemeler başarısız: QR'ı sakla, öğrenci yeniden okutmadan tekrar deneyebilsin
+      setPendingQr(qr);
+      setStatus('⚠️ Sunucu şu an çok yoğun. Birkaç saniye sonra "Tekrar Gönder" butonuna basın.');
+      updateDebugLogs(`⚠️ ${trimmedId}: ${MAX_SUBMIT_ATTEMPTS} deneme başarısız`);
+    } finally {
+      setIsSubmitting(false);
     }
   };
-  
-  
 
-  if (mode === 'teacher' && !isAuthenticated && isTeacherAuthenticated) {
-    return (
-      <div className="min-h-screen p-4 bg-gray-50">
-        <div className="max-w-md mx-auto p-4 bg-white rounded-xl shadow-md space-y-4">
-          <p className="text-center text-lg font-semibold">Google hesabı yetkilendiriliyor...</p>
-          {status && (
-            <div className={`p-4 rounded-lg ${
-              status.startsWith('❌') ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'
-            }`}>
-              <p className="font-medium">Durum:</p>
-              <p className="mt-1 text-sm">{status}</p>
-              {status.startsWith('❌') && (
-                <div className="mt-3 text-sm space-y-2">
-                  <p className="font-semibold">Çözüm Adımları:</p>
-                  <ol className="list-decimal list-inside space-y-1">
-                    <li>Tarayıcı önbelleğini temizleyin</li>
-                    <li>Sayfayı yenileyin (F5 veya Ctrl+R)</li>
-                    <li>Google Cloud Console&apos;da OAuth ayarlarını kontrol edin</li>
-                    <li>Sorun devam ederse geliştirici desteği alın</li>
-                  </ol>
-                </div>
-              )}
-            </div>
-          )}
-          <div className="flex gap-2">
-            <button
-              onClick={() => window.location.reload()}
-              className="flex-1 p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              Yeniden Dene
-            </button>
-            <button
-              onClick={() => {
-                setMode('student');
-                setIsTeacherAuthenticated(false);
-              }}
-              className="flex-1 p-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
-            >
-              İptal
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // Okunan QR metnini değerlendirir. true: tarama bitsin, false: yoklama QR'ı değil, devam et
+  const processQrText = (text: string): boolean => {
+    const payload = parseQrPayload(text);
+    if (payload) {
+      setIsScanning(false);
+      void submitAttendance({ raw: text.trim(), payload });
+      return true;
+    }
+    if (isLegacyQr(text)) {
+      setIsScanning(false);
+      setStatus('❌ Bu QR kod uygulamanın eski sürümüne ait. Öğretmeninizden sayfayı yenileyip yeni QR oluşturmasını isteyin.');
+      return true;
+    }
+    return false;
+  };
+
+  const handleQrDecoded = (decodedText: string): boolean => processQrText(decodedText);
+
+  // Kamera hatasının nedenini öğretmenin görebilmesi için kayda geçir
+  const reportCameraError = (detail: string) => {
+    const userAgent = navigator.userAgent;
+    void fetch('/api/diagnostics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        studentId: studentId.trim(),
+        error: detail,
+        browser: browserSummary(userAgent),
+        inAppBrowser: !!detectInAppBrowser(userAgent)
+      })
+    }).catch(() => undefined);
+    updateDebugLogs(`📷 ${studentId.trim()}: Kamera hatası - ${detail} (${browserSummary(userAgent)})`);
+  };
+
+  const handleCameraError = (message: string, detail: string) => {
+    setIsScanning(false);
+    setStatus(`❌ ${message}`);
+    reportCameraError(detail);
+  };
+
+  // Telefonun kendi kamera uygulamasıyla fotoğraf çekip QR'ı fotoğraftan oku
+  const openPhotoCapture = () => {
+    setIsScanning(false);
+    photoInputRef.current?.click();
+  };
+
+  const handlePhotoSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = ''; // aynı fotoğraf tekrar seçilebilsin
+    if (!file) return;
+
+    setStatus('⏳ Fotoğraftaki QR kod okunuyor...');
+    try {
+      const text = await scanQrFromPhoto(file);
+      if (!processQrText(text)) {
+        setStatus('❌ Fotoğraftaki QR yoklama kodu değil. Öğretmenin yansıttığı QR kodu çekin.');
+      }
+    } catch {
+      setStatus('❌ Fotoğrafta QR kod bulunamadı. QR kodu ortalayıp daha yakından (gerekirse yakınlaştırarak) tekrar çekin.');
+    }
+  };
+
+  const isKnownStudent = !!studentId.trim() &&
+    validStudents.some(s => s.studentId === studentId.trim());
+  const canScan = !!location && isKnownStudent && !isLoading && !isSubmitting;
 
   return (
     <div className="min-h-screen p-4 bg-gray-50">
 
-      {showFingerprintModal && (
-        <FingerprintModal
-          fingerprint={fingerprintToDelete}
-          setFingerprint={setFingerprintToDelete}
-          onSubmit={deleteFingerprint}
-          onClose={() => {
-            setShowFingerprintModal(false);
-            setFingerprintToDelete('');
-          }}
+      {/* Tam ekran katmanlar en üst seviyede: space-y-* kapsayıcısı içinde
+          kalırlarsa margin-top alıp ekranın üstünde boşluk bırakıyorlar */}
+      {mode === 'teacher' && showProjector && qrImageSrc && (
+        <QrProjector qrImageSrc={qrImageSrc} onClose={closeProjector} />
+      )}
+
+      {mode === 'student' && isScanning && (
+        <FullscreenQrScanner
+          onDecoded={handleQrDecoded}
+          onClose={() => setIsScanning(false)}
+          onCameraError={handleCameraError}
+          onUsePhoto={openPhotoCapture}
         />
       )}
-      
+
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={handlePhotoSelected}
+      />
+
       {showPasswordModal && (
         <PasswordModal
           password={password}
@@ -954,63 +709,102 @@ const AttendanceSystem = () => {
           <div className={`p-4 rounded-lg ${
             status.startsWith('❌') ? 'bg-red-100 text-red-800' :
             status.startsWith('⚠️') ? 'bg-yellow-100 text-yellow-800' :
+            status.startsWith('⏳') || status.startsWith('📍') ? 'bg-blue-100 text-blue-800' :
             'bg-green-100 text-green-800'}`}
+            role="status"
+            aria-live="polite"
           >
             {status}
           </div>
         )}
-  
+
         {mode === 'teacher' ? (
-          <div className="bg-white p-6 pb-80 rounded-xl shadow-md space-y-4">
+          <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
             <div className="flex items-center justify-center mb-6">
-                <h2 className="text-xl font-bold text-gray-800 mr-2">Öğretmen Paneli</h2>
-                <img 
-                  src="/ytu-logo.png" 
-                  alt="YTÜ Logo" 
-                  className="w-14 h-14 object-contain ml-1"
-                />
-              </div>
-            
-              <div className="flex items-center gap-2">
-                <Calendar size={24} className="text-blue-600" />
-                <select 
-                  value={selectedWeek}
-                  onChange={(e) => setSelectedWeek(Number(e.target.value))}
-                  className="p-3 border-2 border-gray-300 rounded-lg flex-1 text-lg font-medium text-gray-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 appearance-none"
-                  disabled={isLoading}
-                >
-                  {[...Array(16)].map((_, i) => (
-                    <option key={i+1} value={i+1}>Hafta {i+1}</option>
-                  ))}
-                </select>
-              </div>
-  
+              <h2 className="text-xl font-bold text-gray-800 mr-2">Öğretmen Paneli</h2>
+              <img
+                src="/ytu-logo.png"
+                alt="YTÜ Logo"
+                className="w-14 h-14 object-contain ml-1"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Calendar size={24} className="text-blue-600" />
+              <select
+                value={selectedWeek}
+                onChange={(e) => {
+                  setSelectedWeek(Number(e.target.value));
+                  weekTouchedRef.current = true;
+                }}
+                className="p-3 border-2 border-gray-300 rounded-lg flex-1 text-lg font-medium text-gray-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 appearance-none"
+                disabled={isLoading}
+                aria-label="Hafta"
+              >
+                {Array.from({ length: MAX_WEEK }, (_, i) => i + 1).map(week => (
+                  <option key={week} value={week}>
+                    Hafta {week}{weekSuggestion?.suggestedWeek === week ? ' (önerilen)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {weekSuggestion?.lastWeek && (
+              <p className="text-xs text-gray-500 -mt-2">
+                Son yoklama: Hafta {weekSuggestion.lastWeek}
+                {weekSuggestion.lastDate ? ` (${weekSuggestion.lastDate})` : ''}
+                {' · '}Önerilen: Hafta {weekSuggestion.suggestedWeek}
+              </p>
+            )}
+
+            <div className="flex items-center gap-2">
+              <MapPin size={20} className="text-gray-500" />
+              <label htmlFor="place-select" className="text-sm text-gray-600">Konum:</label>
+              <select
+                id="place-select"
+                value={selectedPlace}
+                onChange={(e) => {
+                  const place = e.target.value as PlaceCode;
+                  setSelectedPlace(place);
+                  writeStorage('teacherPlace', place);
+                }}
+                className={`p-1.5 border rounded-md text-sm ${
+                  selectedPlace === 'O' ? 'border-gray-300 text-gray-700' : 'border-orange-400 text-orange-700 bg-orange-50'
+                }`}
+                disabled={isLoading}
+              >
+                {places.map(place => (
+                  <option key={place.code} value={place.code}>{place.name}</option>
+                ))}
+              </select>
+              {selectedPlace !== 'O' && (
+                <span className="text-xs text-orange-600">Test modu</span>
+              )}
+            </div>
+
             <button
               onClick={generateQR}
-              className="w-full p-3 bg-purple-600 text-white rounded-lg disabled:opacity-50 hover:bg-purple-700"
+              className="w-full p-3 bg-purple-600 text-white rounded-lg disabled:opacity-50 hover:bg-purple-700 text-lg font-semibold"
               disabled={isLoading}
             >
               QR Oluştur
             </button>
 
-            <div className="absolute bottom-4 right-4 flex gap-2">
+            {qrImageSrc && !showProjector && qrValidUntil > Date.now() && (
               <button
-                onClick={() => setShowFingerprintModal(true)}
-                className="p-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 text-sm"
-                disabled={isLoading}
+                onClick={() => {
+                  document.documentElement.requestFullscreen?.().catch(() => undefined);
+                  setShowProjector(true);
+                }}
+                className="w-full p-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm"
               >
-                🔑 FP Temizle
+                Son QR&apos;ı tekrar göster (Hafta {qrSettingsRef.current.week})
               </button>
-              <button
-                onClick={clearAllRecords}
-                className="p-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 text-sm"
-                disabled={isLoading}
-              >
-                🗑️ Temizle
-              </button>
+            )}
 
+            <div className="flex justify-end pt-2">
               <button
-                onClick={clearMemoryStore}
+                onClick={resetDeviceRecords}
                 className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 text-sm"
                 disabled={isLoading}
               >
@@ -1018,129 +812,113 @@ const AttendanceSystem = () => {
               </button>
             </div>
 
-  
-            {qrData && (
-              <div className="mt-4 text-center relative z-[100]">
-                <img 
-                  src={`https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qrData)}&size=200x200`}
-                  alt="QR Code"
-                  className="mx-auto border-4 border-white rounded-lg shadow-lg"
-                />
-                <p className="mt-2 text-sm text-gray-600">15 dakika geçerli</p>
-              </div>
-            )}
-  
-            {attendance.length > 0 && (
-              <div className="mt-4">
-                <h3 className="text-lg font-semibold mb-2">Yoklama Listesi</h3>
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {attendance.map((item, index) => (
-                    <div key={index} className="p-2 bg-gray-50 rounded-lg">
-                      <span className="font-medium">#{item.studentId}</span> - {item.studentName}
-                    </div>
-                  ))}
+            <div className="border-t pt-4">
+              <button
+                onClick={() => setShowDebugConsole(!showDebugConsole)}
+                className="w-full p-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm flex items-center justify-between"
+                aria-expanded={showDebugConsole}
+              >
+                <span>🖥️ Debug Konsolu</span>
+                <span>{showDebugConsole ? '▲ Gizle' : '▼ Göster'}</span>
+              </button>
+
+              {showDebugConsole && (
+                <div
+                  ref={debugConsoleRef}
+                  className="mt-2 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-60"
+                >
+                  {debugLogs.length === 0 ? (
+                    <div className="text-gray-400">Henüz log yok</div>
+                  ) : (
+                    debugLogs.map((log, i) => (
+                      <div key={i} className="whitespace-pre-wrap mb-1">{log}</div>
+                    ))
+                  )}
                 </div>
+              )}
+            </div>
+
+          </div>
+
+        ) : (
+          <>
+            {inAppBrowser && (
+              <div className="p-4 rounded-lg bg-yellow-100 text-yellow-900 text-sm">
+                ⚠️ Bu sayfa {inAppBrowser} içinde açıldı. Kamera bu tarayıcıda çalışmayabilir.
+                Sağ üstteki menüden <b>&quot;Tarayıcıda aç&quot;</b> (Safari/Chrome) seçeneğini kullanın.
               </div>
             )}
 
-            <div className="mt-6 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-60 fixed bottom-4 left-4 right-4 max-w-md mx-auto z-50">
-              <h3 className="text-sm font-bold mb-2">Debug Konsolu</h3>
-              {debugLogs.map((log, i) => (
-                <div key={i} className="whitespace-pre-wrap mb-1">{log}</div>
-              ))}
-            </div>
-            
-          </div>
-          
-        ) : (
-          <>
             <div className="bg-white p-6 rounded-xl shadow-md space-y-4">
               <div className="flex items-center justify-center mb-6">
                 <h2 className="text-xl font-bold text-gray-800 mr-2">Öğrenci Yoklaması</h2>
-                <img 
-                  src="/ytu-logo.png" 
-                  alt="YTÜ Logo" 
+                <img
+                  src="/ytu-logo.png"
+                  alt="YTÜ Logo"
                   className="w-14 h-14 object-contain ml-1"
                 />
               </div>
-              
+
               <div className="space-y-4">
                 <input
                   value={studentId}
                   onChange={handleStudentIdChange}
                   placeholder="Öğrenci Numaranız"
+                  autoComplete="off"
                   className={`w-full p-3 border-2 rounded-lg text-lg font-bold tracking-wider focus:ring-2 ${
-                    studentId && !validStudents.some(s => s.studentId === studentId)
+                    studentId && !isKnownStudent
                       ? 'border-red-500 focus:ring-red-500 text-red-800'
                       : 'border-blue-400 focus:ring-blue-500 text-blue-900'
                   }`}
-                  disabled={isLoading}
+                  disabled={isLoading || isSubmitting}
                 />
-  
-                {studentId && (
-                  <p className={`text-sm ${
-                    validStudents.some(s => s.studentId === studentId)
-                      ? 'text-green-600'
-                      : 'text-red-600'
-                  }`}>
-                    {validStudents.some(s => s.studentId === studentId)
+
+                {studentId && validStudents.length > 0 && (
+                  <p className={`text-sm ${isKnownStudent ? 'text-green-600' : 'text-red-600'}`}>
+                    {isKnownStudent
                       ? '✅ Öğrenci numarası doğrulandı'
                       : '❌ Öğrenci numarası listede bulunamadı'}
                   </p>
                 )}
-  
-  
+
+                {/* Not: Butonlar önceden herhangi bir ❌ mesajından sonra kilitleniyordu;
+                    öğrenci tekrar deneyebilmek için numarasını yeniden yazmak zorunda kalıyordu */}
                 <button
                   onClick={getLocation}
                   className="w-full p-3 bg-blue-600 text-white rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={
-                    isLoading || 
-                    !studentId || 
-                    status.startsWith('❌') && !status.startsWith('⚠️') ||
-                    !validStudents.some(s => s.studentId === studentId)
-                  }
+                  disabled={isLoading || isSubmitting || isCheckingLocation || !isKnownStudent}
                 >
-                  <MapPin size={18} /> Konumu Doğrula
+                  <MapPin size={18} /> {isCheckingLocation ? 'Konum kontrol ediliyor...' : 'Konumu Doğrula'}
                 </button>
 
                 <button
-                  onClick={() => setIsScanning(!isScanning)}
-                  className="w-full p-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={
-                    !location || 
-                    !studentId || 
-                    status.startsWith('❌') && !status.startsWith('⚠️') ||
-                    !validStudents.some(s => s.studentId === studentId) || 
-                    !isValidLocation ||
-                    isLoading
-                  }
+                  onClick={() => setIsScanning(true)}
+                  className="w-full p-4 bg-green-600 text-white rounded-lg text-lg font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!canScan}
                 >
-                  {isScanning ? '❌ Taramayı Durdur' : '📷 QR Tara'}
+                  {isSubmitting ? '⏳ Gönderiliyor...' : '📷 QR Tara'}
                 </button>
-  
-                {isScanning && (
-                  <div className="relative aspect-square bg-gray-200 rounded-xl overflow-hidden">
-                    <div id="qr-reader" className="w-full h-full"></div>
-                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-sm">
-                      QR kodu kameraya gösterin
-                    </div>
-                  </div>
-                )}
-                {connectionError && (
+
+                {canScan && (
                   <button
-                    onClick={() => {
-                      setConnectionError(false);
-                      setIsScanning(true);
-                    }}
-                    className="w-full p-3 mt-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600"
+                    onClick={openPhotoCapture}
+                    className="w-full text-sm text-gray-600 underline"
                   >
-                    🔄 Bağlantıyı Yeniden Dene
+                    Kamera açılmıyor mu? 📸 Fotoğraf çekerek okut
                   </button>
                 )}
 
+                {pendingQr && !isSubmitting && (
+                  <button
+                    onClick={() => void submitAttendance(pendingQr)}
+                    className="w-full p-3 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 font-semibold"
+                  >
+                    🔄 Tekrar Gönder (QR&apos;ı yeniden okutmanız gerekmez)
+                  </button>
+                )}
               </div>
             </div>
-  
+
             <button
               onClick={handleModeChange}
               className="w-full p-3 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300 transition-colors mt-4"
