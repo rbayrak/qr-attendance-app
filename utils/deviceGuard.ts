@@ -515,9 +515,18 @@ export function warningsFor(
   let sameModelOnly: LogEntry | null = null;
   let sameBrowser: LogEntry | null = null;
   let sameModelCount = 0;
+  // Kontrol listesinde (recordedOnly) öğretmenin kendi kararıyla yazdığı yoklamalar uyarı
+  // kaynağı sayılmaz: öğretmen o ikiliyi onay kartında zaten görüp karar verdi. Aksi halde
+  // "yine de yoklama ver" sonrası telefonun asıl sahibinin geçerli kaydı şüpheli görünürdü.
+  const comparable = (entry: LogEntry) => {
+    if (entry.result === RESULT.pending) return !options.recordedOnly;
+    if (entry.result !== RESULT.recorded) return false;
+    return !options.recordedOnly ||
+      !(entry.note.startsWith(NOTE_TEACHER_OVERRIDE) || entry.note.startsWith(NOTE_TEACHER_APPROVED));
+  };
   for (const entry of analysis.entries) {
     if (until !== undefined && entry.timestamp >= until) break;
-    if (entry.result !== RESULT.recorded && (options.recordedOnly || entry.result !== RESULT.pending)) continue;
+    if (!comparable(entry)) continue;
     if (entry.studentId === subject.studentId || entry.timestamp <= analysis.lastResetAt) continue;
     const delta = subject.timestamp - entry.timestamp;
     if (Math.abs(delta) > SIMILARITY_WINDOW_MS) continue;
@@ -540,7 +549,7 @@ export function warningsFor(
       if (until !== undefined && entry.timestamp >= until) break;
       if (entry.timestamp <= analysis.lastResetAt || entry.studentId === subject.studentId) continue;
       if (entry.deviceId !== subject.deviceId) continue;
-      if (entry.result !== RESULT.recorded && (options.recordedOnly || entry.result !== RESULT.pending)) continue;
+      if (!comparable(entry)) continue;
       if (!sameBrowser || Math.abs(subject.timestamp - entry.timestamp) < Math.abs(subject.timestamp - sameBrowser.timestamp)) {
         sameBrowser = entry;
       }
