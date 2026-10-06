@@ -37,6 +37,7 @@ export interface ResponseData {
   timeout?: boolean;
   retryable?: boolean; // Geçici hata: istemci otomatik tekrar deneyebilir
   locationError?: boolean; // Öğrenci yoklama konumunda değil
+  deviceMismatch?: boolean; // Öğrencinin kayıtlı cihazı farklı
 }
 
 // Konum bilgisi için interface

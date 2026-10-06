@@ -12,6 +12,7 @@ import {
 } from '@/utils/sheets';
 import {
   getDeviceIdentity,
+  getDeviceBindings,
   findDeviceConflict,
   findSuspicion,
   buildLogRow,
@@ -144,18 +145,34 @@ async function handlePostRequest(
       });
     }
 
-    // 5. "Bu telefonla bugün başka öğrenci yoklama verdi mi?"
-    const conflictStudentId = findDeviceConflict(data.log, device.id, studentId, now);
-    if (conflictStudentId) {
+    // 5. Öğrenci-cihaz eşleştirmesi: bu cihaz başka öğrenciye mi kayıtlı,
+    //    ya da öğrencinin kayıtlı cihazı başka mı? (bkz. utils/deviceGuard.ts)
+    const bindings = getDeviceBindings(data.log);
+    const conflict = findDeviceConflict(bindings, device.id, studentId);
+    if (conflict?.kind === 'deviceOwnedByOther') {
       await safeAppendLog(buildLogRow({
         ...logBase,
         result: RESULT.blocked,
-        note: `Bu cihazla bugün ${conflictStudentId} yoklama vermiş`
+        note: `Bu cihaz ${conflict.otherStudentId} numaralı öğrenciye kayıtlı`
       }));
       return res.status(403).json({
-        error: `Bu telefonla bugün ${conflictStudentId} numaralı öğrenci yoklama verdi. ` +
-          'Her öğrenci kendi telefonunu kullanmalı. Bir sorun varsa öğretmeninize başvurun.',
-        blockedStudentId: conflictStudentId
+        error: `Bu telefon (tarayıcı) ${conflict.otherStudentId} numaralı öğrenciye kayıtlı. ` +
+          'Her öğrenci yoklamayı yalnızca kendi telefonundan verebilir. Bir sorun varsa öğretmeninize başvurun.',
+        blockedStudentId: conflict.otherStudentId
+      });
+    }
+    if (conflict?.kind === 'studentBoundElsewhere') {
+      await safeAppendLog(buildLogRow({
+        ...logBase,
+        result: RESULT.blocked,
+        note: `Öğrencinin kayıtlı cihazı farklı (${conflict.registeredDeviceId}); ` +
+          'çerez silinmiş, gizli sekme/başka tarayıcı ya da başka telefon olabilir'
+      }));
+      return res.status(403).json({
+        error: 'Bu öğrenci numarası başka bir telefona (tarayıcıya) kayıtlı; yoklama yalnızca o cihazdan verilebilir. ' +
+          'Gizli sekme ya da farklı bir tarayıcı kullanıyorsanız, her zaman kullandığınız tarayıcıyla tekrar deneyin. ' +
+          'Telefonunuzu değiştirdiyseniz veya tarayıcı verilerini sildiyseniz öğretmeninize başvurun.',
+        deviceMismatch: true
       });
     }
 
@@ -169,7 +186,7 @@ async function handlePostRequest(
 
     // 7. Yoklamayı kaydet: hücreye sadece "VAR", tarih/saat ve ayrıntılar kayıt
     //    sayfasına (ikisi diğer öğrencilerin yazmalarıyla birlikte tek istekte gider)
-    const note = findSuspicion(data.log, { device, model, ip, studentId, now });
+    const note = findSuspicion(bindings, { device, model, ip, studentId, now });
     await Promise.all([
       writeMainCell(studentRowIndex, weekColumnIndex, 'VAR'),
       appendLogRow(buildLogRow({ ...logBase, result: RESULT.recorded, note }))

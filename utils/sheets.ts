@@ -32,6 +32,11 @@ const MIN_FLUSH_INTERVAL_MS = 1500;
 // Yazılan veri, Sheets'ten gelen eski bir okuma tarafından gizlenmesin diye
 // yazmadan sonra bir süre daha önbelleğe yeniden uygulanır
 const RECENT_WRITE_TTL_MS = 15000;
+// Sheets okunamadığında önbellekteki eski veri en fazla bu kadar eskiyse kullanılır.
+// Daha eski veriyle devam etmek, başka sunucu örneklerinin yazdığı cihaz
+// eşleşmelerini görmeden yoklama kabul etmek demektir; bu durumda istek
+// "sunucu yoğun" yanıtıyla döner ve istemci otomatik tekrar dener.
+const MAX_STALE_FALLBACK_MS = 60000;
 
 let sheetsClient: sheets_v4.Sheets | null = null;
 
@@ -253,13 +258,20 @@ async function fetchData(): Promise<SheetData> {
   return data;
 }
 
+interface ReadOptions {
+  maxAgeMs?: number;
+  force?: boolean;
+  // Okuma başarısızsa kullanılabilecek önbellek verisinin en fazla yaşı
+  maxStaleFallbackMs?: number;
+}
+
 /**
  * Ana sayfa ve kayıt sayfası verisini döndürür. Önbellek `maxAgeMs`'den
  * yeniyse API'ye gidilmez; aynı anda gelen istekler tek bir okumayı paylaşır.
  * `force` true ise mutlaka bu çağrıdan sonra başlatılmış taze bir okuma yapılır.
  */
-export async function getSheetData(options: { maxAgeMs?: number; force?: boolean } = {}): Promise<SheetData> {
-  const { maxAgeMs = DEFAULT_MAX_AGE_MS, force = false } = options;
+export async function getSheetData(options: ReadOptions = {}): Promise<SheetData> {
+  const { maxAgeMs = DEFAULT_MAX_AGE_MS, force = false, maxStaleFallbackMs = MAX_STALE_FALLBACK_MS } = options;
 
   if (!force && dataCache && Date.now() - dataCache.at < maxAgeMs) {
     return dataCache.data;
@@ -280,7 +292,7 @@ export async function getSheetData(options: { maxAgeMs?: number; force?: boolean
     return await dataInflight;
   } catch (error) {
     // Okuma başarısızsa ve elde eski veri varsa onunla devam et
-    if (!force && dataCache) {
+    if (!force && dataCache && Date.now() - dataCache.at < maxStaleFallbackMs) {
       console.warn('Sheets okunamadı, önbellekteki eski veri kullanılıyor');
       return dataCache.data;
     }
@@ -288,8 +300,9 @@ export async function getSheetData(options: { maxAgeMs?: number; force?: boolean
   }
 }
 
-export async function getMainRows(options: { maxAgeMs?: number; force?: boolean } = {}): Promise<SheetRows> {
-  return (await getSheetData(options)).main;
+// Öğrenci listesi nadiren değişir: Sheets okunamazsa ne kadar eski olursa olsun önbellekteki liste kullanılır
+export async function getMainRows(options: ReadOptions = {}): Promise<SheetRows> {
+  return (await getSheetData({ maxStaleFallbackMs: Number.POSITIVE_INFINITY, ...options })).main;
 }
 
 export function invalidateSheetData() {
@@ -369,6 +382,10 @@ function toCellData(value: string): sheets_v4.Schema$CellData {
 async function runFlushLoop() {
   flushRunning = true;
   try {
+    // Aynı anda (aynı işlem adımında) kuyruğa giren yazmalar tek isteğe girsin:
+    // ör. yoklamadaki "VAR" hücresi ve kayıt satırı. Bu bekleme olmadan ilk yazma
+    // tek başına gönderiliyor, ikincisi 1,5 sn sonra ayrı bir istekle gidiyordu.
+    await Promise.resolve();
     while (writeQueue.length > 0) {
       const wait = lastFlushAt + MIN_FLUSH_INTERVAL_MS - Date.now();
       if (wait > 0) await sleep(wait);

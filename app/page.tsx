@@ -168,6 +168,7 @@ const AttendanceSystem = () => {
   // yalnızca bellekte tutulur (sayfa yenilenince yeniden giriş gerekir)
   const teacherPasswordRef = useRef<string>('');
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
+  const [releaseStudentId, setReleaseStudentId] = useState<string>('');
 
   const teacherHeaders = (): Record<string, string> => ({
     Authorization: `Bearer ${teacherPasswordRef.current}`
@@ -202,8 +203,11 @@ const AttendanceSystem = () => {
 
   const resetDeviceRecords = async () => {
     const confirmed = window.confirm(
-      'Cihaz kayıtları sıfırlansın mı?\n\n' +
-      'Bugün yoklama verilmiş telefonlar başka öğrenciler için tekrar kullanılabilir hale gelir. ' +
+      'TÜM öğrencilerin cihaz kayıtları sıfırlansın mı?\n\n' +
+      'Hangi telefonun hangi öğrenciye ait olduğu unutulur; herkes bir sonraki yoklamada kullandığı ' +
+      'telefona yeniden kaydedilir. Bu sırada bir telefondan birden fazla öğrenci yoklama verebilir, ' +
+      'bu yüzden yalnızca dönem başında veya test sonrasında kullanın. ' +
+      'Tek bir öğrenci için aşağıdaki "Öğrencinin cihazını sıfırla" bölümünü kullanın.\n\n' +
       'Eski biçimdeki uzun hücreler de sadece "VAR" olarak sadeleştirilir (tarih/saat Yoklama Kayıtları sayfasına aktarılır).'
     );
     if (!confirmed) return;
@@ -221,6 +225,33 @@ const AttendanceSystem = () => {
       }
     } catch {
       setStatus('❌ Bağlantı hatası, cihaz kayıtları sıfırlanamadı');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Telefonunu değiştiren / tarayıcı verilerini silen öğrencinin cihaz kaydını sıfırlar
+  const releaseStudentDevice = async () => {
+    const id = releaseStudentId.trim();
+    if (!id) return;
+    setIsLoading(true);
+    setStatus(`⏳ ${id} numaralı öğrencinin cihaz kaydı sıfırlanıyor...`);
+    try {
+      const response = await fetch('/api/device-release', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...teacherHeaders() },
+        body: JSON.stringify({ studentId: id })
+      });
+      const data = parseJsonSafe<{ message?: string; error?: string }>(await response.text());
+      if (response.ok) {
+        setStatus(`✅ ${data?.message || 'Cihaz kaydı sıfırlandı'}`);
+        setReleaseStudentId('');
+        updateDebugLogs(`🔓 ${data?.message || `${id}: cihaz kaydı sıfırlandı`}`);
+      } else {
+        setStatus(`❌ ${data?.error || 'Cihaz kaydı sıfırlanamadı'}`);
+      }
+    } catch {
+      setStatus('❌ Bağlantı hatası, cihaz kaydı sıfırlanamadı');
     } finally {
       setIsLoading(false);
     }
@@ -811,6 +842,42 @@ const AttendanceSystem = () => {
                 🔄 Cihaz Kayıtlarını Temizle
               </button>
             </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void releaseStudentDevice();
+              }}
+              className="border-t pt-4 space-y-2"
+            >
+              <label htmlFor="release-student" className="block text-sm font-medium text-gray-700">
+                Öğrencinin cihazını sıfırla
+              </label>
+              <p className="text-xs text-gray-500">
+                Her öğrenci yalnızca kayıtlı telefonundan yoklama verebilir. Telefonunu değiştiren veya
+                tarayıcı verilerini silen öğrencinin numarasını yazın; bir sonraki yoklamada kullandığı telefon kaydedilir.
+                &quot;Bu telefon X numaralı öğrenciye kayıtlı&quot; uyarısında ise X numarasını sıfırlayın.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  id="release-student"
+                  value={releaseStudentId}
+                  onChange={(e) => setReleaseStudentId(e.target.value)}
+                  placeholder="Öğrenci no"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  className="flex-1 min-w-0 p-2 border rounded-md text-sm"
+                  disabled={isLoading}
+                />
+                <button
+                  type="submit"
+                  className="p-2 bg-gray-700 text-white rounded-md hover:bg-gray-800 disabled:opacity-50 text-sm"
+                  disabled={isLoading || !releaseStudentId.trim()}
+                >
+                  Sıfırla
+                </button>
+              </div>
+            </form>
 
             <div className="border-t pt-4">
               <button
