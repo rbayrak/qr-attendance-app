@@ -445,7 +445,7 @@ export function parseReasonTag(note: string): PendingReason {
 
 export function reasonLabel(reason: PendingReason, nameOf: (id: string) => string): string {
   switch (reason.code) {
-    case 'deviceChanged': return 'Telefonu / tarayıcısı değişmiş';
+    case 'deviceChanged': return 'Telefonu / tarayıcısı değişmiş (çerezler silinmiş, gizli sekme ya da yeni telefon olabilir)';
     case 'firstRegistration': return 'İlk kez yoklama veriyor (kayıt dönemi bitti)';
     case 'suspiciousRegistration': return 'Yeni tarayıcıdan ilk kayıt; aynı telefondan başka öğrenci olabilir';
     case 'deviceOwnedByOther':
@@ -511,7 +511,9 @@ export function warningsFor(
       !current || Math.abs(subject.timestamp - entry.timestamp) < Math.abs(subject.timestamp - current.timestamp);
     if (!modelKnown || !sameHardware(entry.model, subject.model)) continue;
     sameModelCount++;
-    if (sameFullModel(entry.model, subject.model) && entry.ip && entry.ip === subject.ip) {
+    // Yüksek risk: 5 dk içinde aynı ağdan, aynı cihaz imzasıyla başka öğrenci (aynı telefon olabilir)
+    if (sameFullModel(entry.model, subject.model) && entry.ip && entry.ip === subject.ip &&
+      Math.abs(delta) <= SUSPICION_WINDOW_MS) {
       if (closer(sameNetwork)) sameNetwork = entry;
     } else if (closer(sameModelOnly)) {
       sameModelOnly = entry;
@@ -549,7 +551,7 @@ export function warningsFor(
   } else if (sameModelOnly) {
     warnings.push({
       level: 'weak',
-      text: `Aynı model telefondan (farklı ağ ya da ayar) ${describe(sameModelOnly)}` +
+      text: `Aynı model telefondan (farklı ağ / ayar ya da 5 dk'dan uzun arayla) ${describe(sameModelOnly)}` +
         (sameModelCount > 1 ? `; bu aralıkta aynı modelden ${sameModelCount} kayıt var` : '')
     });
   }

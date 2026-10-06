@@ -173,7 +173,7 @@ async function handlePostRequest(
     //    denemeleri de güvenle sonuçlanır.)
     const weekColumnIndex = weekColumn(week);
     if (hasAttended(data.main, studentRowIndex, week)) {
-      return res.status(200).json({ success: true, isAlreadyAttended: true, studentId });
+      return res.status(200).json({ success: true, isAlreadyAttended: true, studentId, studentName });
     }
 
     // 6. Öğrenci-cihaz eşleştirmesi (bkz. utils/deviceGuard.ts)
@@ -245,6 +245,7 @@ async function handlePostRequest(
             success: true,
             isAlreadyAttended: false,
             studentId,
+            studentName,
             registered: true,
             message: REGISTERED_HINT
           });
@@ -265,7 +266,7 @@ async function handlePostRequest(
           : 'Telefonunuz veya tarayıcınız değişmiş görünüyor (çerezler silinmiş, gizli sekme ya da farklı tarayıcı). ' +
             'Yoklamanız öğretmen onayına gönderildi; başka bir şey yapmanıza gerek yok.';
       // Eski sürüm sayfalar "success" görmeden "error" metnini gösterir
-      return res.status(202).json({ pendingApproval: true, studentId, message, error: message });
+      return res.status(202).json({ pendingApproval: true, studentId, studentName, message, error: message });
     }
 
     // 7. Yoklamayı kaydet: hücreye sadece "VAR", tarih/saat ve ayrıntılar kayıt
@@ -288,6 +289,7 @@ async function handlePostRequest(
       success: true,
       isAlreadyAttended: false,
       studentId,
+      studentName,
       ...(decision.kind === 'register' ? { registered: true, message: REGISTERED_HINT } : {}),
       debug: {
         operationDetails: {

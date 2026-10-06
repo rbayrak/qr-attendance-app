@@ -6,7 +6,6 @@ import { MapPin, Calendar } from 'lucide-react';
 
 import { generateEnhancedFingerprint, isValidFingerprint } from '@/utils/clientFingerprint';
 import { detectInAppBrowser, detectEphemeralBrowser, browserSummary } from '@/utils/browserInfo';
-import { matchStudentId } from '@/utils/studentId';
 import { scanQrFromPhoto } from '@/utils/qrPhoto';
 import {
   PlaceCode,
@@ -46,6 +45,7 @@ interface AttendanceResponse {
   registered?: boolean;
   message?: string;
   qrExpired?: boolean;
+  studentName?: string;
 }
 
 interface ApprovalItem {
@@ -77,10 +77,14 @@ interface PlaceOption {
   name: string;
 }
 
-interface Student {
-  studentId: string;
-  studentName: string;
+// Sunucuda doğrulanan öğrenci numarası (tüm sınıf listesi artık indirilmiyor)
+interface VerifiedStudent {
+  input: string;      // öğrencinin yazdığı (kırpılmış) metin
+  studentId: string;  // listedeki asıl numara
+  initials: string;   // adın baş harfleri, ör. "Z. T."
 }
+
+type LookupState = 'idle' | 'checking' | 'found' | 'notFound' | 'error';
 
 interface StudentLocation {
   lat: number;
@@ -99,6 +103,24 @@ async function signQr(password: string, week: number, expiresAtSec: number, plac
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const lowerFirst = (text: string) => text.charAt(0).toLocaleLowerCase('tr-TR') + text.slice(1);
+const upperFirst = (text: string) => text.charAt(0).toLocaleUpperCase('tr-TR') + text.slice(1);
+
+// "Sn. Ad Soyad, yoklamanız ..." (ad bilinmiyorsa yalnızca cümle)
+const withGreeting = (name: string | undefined, text: string) =>
+  name ? `Sn. ${name}, ${lowerFirst(text)}` : upperFirst(text);
+
+// Öğretmen panelindeki risk etiketleri
+const RISK_LABEL = { strong: 'YÜKSEK RİSK', weak: 'ORTA RİSK', clean: 'DÜŞÜK RİSK' } as const;
+const RISK_BADGE = {
+  strong: 'bg-red-600 text-white',
+  weak: 'bg-yellow-400 text-yellow-950',
+  clean: 'bg-green-600 text-white'
+} as const;
+
+// Debug konsoluna öğretmenin kendi oturumundan eklenen satırın saati
+const clockNow = () => new Date().toLocaleTimeString('tr-TR', { hour12: false, timeZone: 'Europe/Istanbul' });
 
 // Çerez silinince ya da gizli sekmede değişmeyen tarayıcı ayrıntıları: sunucu
 // bunları donanım imzasıyla birlikte özetler. Aynı model iki farklı telefonu
@@ -234,7 +256,9 @@ const AttendanceSystem = () => {
 
   // Öğrenci
   const [studentId, setStudentId] = useState<string>('');
-  const [validStudents, setValidStudents] = useState<Student[]>([]);
+  const [verifiedStudent, setVerifiedStudent] = useState<VerifiedStudent | null>(null);
+  const [lookupState, setLookupState] = useState<LookupState>('idle');
+  const lookupSeqRef = useRef<number>(0);
   const [location, setLocation] = useState<StudentLocation | null>(null);
   const [isCheckingLocation, setIsCheckingLocation] = useState<boolean>(false);
   const [isScanning, setIsScanning] = useState<boolean>(false);
@@ -244,16 +268,12 @@ const AttendanceSystem = () => {
   const [ephemeralBrowser, setEphemeralBrowser] = useState<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
-  const updateDebugLogs = async (newLog: string) => {
-    try {
-      await fetch('/api/logs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ log: newLog })
-      });
-    } catch (error) {
-      console.error('Log gönderme hatası:', error);
-    }
+  // Debug konsolu: olaylar sunucuda "Yoklama Kayıtları" sayfasından okunur (sahte
+  // satır eklenemez). Öğretmenin bu oturumdaki kendi işlemleri (QR oluşturma vb.)
+  // yalnızca bu tarayıcıda gösterilir.
+  const [localLogs, setLocalLogs] = useState<string[]>([]);
+  const updateDebugLogs = (newLog: string) => {
+    setLocalLogs(current => [...current.slice(-99), `[${clockNow()}] ${newLog}`]);
   };
 
   // ---------------------------------------------------------------------------
@@ -279,7 +299,6 @@ const AttendanceSystem = () => {
       const data = parseJsonSafe<{ message?: string; error?: string }>(await response.text());
       if (response.ok) {
         setStatus(`✅ ${data?.message || 'Cihaz kayıtları sıfırlandı'}`);
-        updateDebugLogs(`🔄 ${data?.message || 'Cihaz kayıtları sıfırlandı'}`);
       } else {
         setStatus(`❌ ${data?.error || 'Cihaz kayıtları sıfırlanamadı'}`);
       }
@@ -324,7 +343,6 @@ const AttendanceSystem = () => {
       if (response.ok && data) {
         if (data.pending) setApprovals(data);
         setStatus(`✅ ${data.message || 'İşlem tamamlandı'}`);
-        if (data.message) updateDebugLogs(`🔐 ${data.message}`);
       } else {
         setStatus(`❌ ${data?.error || 'İşlem yapılamadı'}`);
         void loadApprovals();
@@ -458,7 +476,7 @@ const AttendanceSystem = () => {
 
     if (mode === 'teacher' && showDebugConsole) {
       fetchLogs();
-      interval = setInterval(fetchLogs, 1000);
+      interval = setInterval(fetchLogs, 5000);
     }
 
     return () => {
@@ -468,12 +486,15 @@ const AttendanceSystem = () => {
     };
   }, [mode, showDebugConsole, debugLogs.length]);
 
+  // Sunucudaki olaylar ve öğretmenin bu oturumdaki işlemleri saat sırasıyla
+  const consoleLines = [...debugLogs, ...localLogs].sort();
+
   // Yeni log geldiğinde konsolu en alta kaydır
   useEffect(() => {
     if (showDebugConsole && debugConsoleRef.current) {
       debugConsoleRef.current.scrollTop = debugConsoleRef.current.scrollHeight;
     }
-  }, [showDebugConsole, debugLogs.length]);
+  }, [showDebugConsole, consoleLines.length]);
 
   const handleModeChange = () => {
     if (mode === 'student') {
@@ -530,22 +551,6 @@ const AttendanceSystem = () => {
     const lastAttendanceCheck = readStorage('lastAttendanceCheck');
     const savedId = lastAttendanceCheck ? parseJsonSafe<{ studentId?: string }>(lastAttendanceCheck)?.studentId : null;
     if (savedId) setStudentId(current => current || savedId);
-
-    const loadStudentList = async () => {
-      try {
-        const response = await fetch('/api/students');
-        if (!response.ok) {
-          throw new Error('Öğrenci listesi alınamadı');
-        }
-        const data = await response.json();
-        setValidStudents(data.students || []);
-      } catch (error) {
-        console.error('Öğrenci listesi yükleme hatası:', error);
-        setStatus('❌ Öğrenci listesi yüklenemedi. Sayfayı yenileyin.');
-      }
-    };
-
-    loadStudentList();
   }, [mode]);
 
   const getLocation = () => {
@@ -602,52 +607,71 @@ const AttendanceSystem = () => {
     );
   };
 
-  // "ç23051608" ya da "C23051608" yazan öğrenci listedeki "Ç23051608" ile eşleşir
-  const findStudent = (input: string): Student | undefined => {
-    const id = matchStudentId(input, validStudents.map(s => s.studentId));
-    return id === null ? undefined : validStudents.find(s => s.studentId === id);
-  };
-
   const handleStudentIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newId = e.target.value;
-    setStudentId(newId);
+    setStudentId(e.target.value);
     setPendingQr(null);
-
-    if (!newId) {
-      setStatus('');
-      return;
-    }
-
-    if (validStudents.length === 0) {
-      setStatus('⚠️ Öğrenci listesi henüz yüklenmedi');
-      return;
-    }
-
-    const validStudent = findStudent(newId);
-
-    if (!validStudent) {
-      setStatus('⚠️ Bu öğrenci numarası listede yok');
-      return;
-    }
-
-    setStatus(validStudent.studentId === newId.trim()
-      ? '✅ Öğrenci numarası doğrulandı'
-      : `✅ Öğrenci numarası doğrulandı (${validStudent.studentId})`);
+    setStatus('');
   };
+
+  // Yazılan numara sunucuda doğrulanır (yazma bittikten kısa süre sonra).
+  // "ç23051608" ya da "C23051608" listedeki "Ç23051608" ile eşleşir.
+  useEffect(() => {
+    if (mode !== 'student') return;
+    const input = studentId.trim();
+    const seq = ++lookupSeqRef.current;
+    if (!input) {
+      setVerifiedStudent(null);
+      setLookupState('idle');
+      return;
+    }
+    setLookupState('checking');
+    const timer = setTimeout(async () => {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const response = await fetch('/api/student-lookup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ studentId: input })
+          });
+          const data = parseJsonSafe<{ found?: boolean; studentId?: string; initials?: string }>(await response.text());
+          if (seq !== lookupSeqRef.current) return; // bu arada numara değişti
+          if (response.ok && data) {
+            if (data.found && data.studentId) {
+              setVerifiedStudent({ input, studentId: data.studentId, initials: data.initials || '' });
+              setLookupState('found');
+            } else {
+              setVerifiedStudent(null);
+              setLookupState('notFound');
+            }
+            return;
+          }
+        } catch {
+          // ağ hatası: tekrar dene
+        }
+        if (seq !== lookupSeqRef.current) return;
+        await sleep(attempt * 1500);
+      }
+      if (seq === lookupSeqRef.current) {
+        setVerifiedStudent(null);
+        setLookupState('error');
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [mode, studentId]);
 
   // Yoklamayı sunucuya gönderir. Sunucu yoğunsa (zaman aşımı, 5xx, JSON
   // olmayan yanıt) öğrencinin bir şey yapmasına gerek kalmadan otomatik
   // tekrar dener. Aynı öğrenci için tekrar gönderim güvenlidir: sunucu
   // "zaten alınmış" yanıtı döner.
   const submitAttendance = async (qr: ScannedQr) => {
-    const validStudent = findStudent(studentId);
+    const verified = verifiedStudent && verifiedStudent.input === studentId.trim() ? verifiedStudent : null;
 
-    if (!validStudent) {
+    if (!verified) {
       setStatus('❌ Öğrenci numarası listede bulunamadı');
       return;
     }
     // Sunucuya listedeki asıl numara gönderilir
-    const trimmedId = validStudent.studentId;
+    const trimmedId = verified.studentId;
     // QR'ın süresi telefon saatiyle kontrol edilmez (telefon saati yanlış olabilir);
     // karar sunucuda verilir
 
@@ -703,11 +727,7 @@ const AttendanceSystem = () => {
               studentId: trimmedId,
               timestamp: new Date().toISOString()
             }));
-            // Sunucu mesajı cümle başı gibi büyük harfle başlıyor; virgülden sonra küçült
-            const pendingText = data.message || 'yoklamanız öğretmen onayına gönderildi.';
-            setStatus(`⏳ Sn. ${validStudent.studentName}, ` +
-              `${pendingText.charAt(0).toLocaleLowerCase('tr-TR')}${pendingText.slice(1)}`);
-            updateDebugLogs(`🕓 ${trimmedId} ${validStudent.studentName}: Hafta ${qr.payload.week} öğretmen onayı bekliyor`);
+            setStatus(`⏳ ${withGreeting(data.studentName, data.message || 'yoklamanız öğretmen onayına gönderildi.')}`);
             return;
           }
 
@@ -718,13 +738,10 @@ const AttendanceSystem = () => {
             }));
 
             if (data.isAlreadyAttended) {
-              setStatus(`✅ Sn. ${validStudent.studentName}, bu hafta için yoklamanız zaten alınmış`);
-              updateDebugLogs(`ℹ️ ${trimmedId} ${validStudent.studentName}: Hafta ${qr.payload.week} zaten alınmış`);
+              setStatus(`✅ ${withGreeting(data.studentName, 'bu hafta için yoklamanız zaten alınmış')}`);
             } else {
-              setStatus(`✅ Sn. ${validStudent.studentName}, yoklamanız başarıyla kaydedildi.` +
+              setStatus(`✅ ${withGreeting(data.studentName, 'yoklamanız başarıyla kaydedildi.')}` +
                 (data.registered && data.message ? ` ${data.message}` : ''));
-              updateDebugLogs(`✅ ${trimmedId} ${validStudent.studentName}: Hafta ${qr.payload.week} kaydedildi` +
-                (attempt > 1 ? ` (${attempt}. denemede)` : ''));
             }
             return;
           }
@@ -735,7 +752,6 @@ const AttendanceSystem = () => {
           if (!isRetryable) {
             // Kesin hata (cihaz engeli, konum dışı, öğrenci bulunamadı vb.) - tekrar denemek anlamsız
             setStatus(`❌ ${data.error || 'Yoklama kaydedilemedi'}`);
-            updateDebugLogs(`❌ ${trimmedId}: ${data.error || response.status}`);
             return;
           }
         } catch (error) {
@@ -754,7 +770,6 @@ const AttendanceSystem = () => {
       // Tüm denemeler başarısız: QR'ı sakla, öğrenci yeniden okutmadan tekrar deneyebilsin
       setPendingQr(qr);
       setStatus('⚠️ Sunucu şu an çok yoğun. Birkaç saniye sonra "Tekrar Gönder" butonuna basın.');
-      updateDebugLogs(`⚠️ ${trimmedId}: ${MAX_SUBMIT_ATTEMPTS} deneme başarısız`);
     } finally {
       setIsSubmitting(false);
     }
@@ -791,7 +806,6 @@ const AttendanceSystem = () => {
         inAppBrowser: !!detectInAppBrowser(userAgent)
       })
     }).catch(() => undefined);
-    updateDebugLogs(`📷 ${studentId.trim()}: Kamera hatası - ${detail} (${browserSummary(userAgent)})`);
   };
 
   const handleCameraError = (message: string, detail: string) => {
@@ -822,7 +836,7 @@ const AttendanceSystem = () => {
     }
   };
 
-  const isKnownStudent = !!studentId.trim() && !!findStudent(studentId);
+  const isKnownStudent = lookupState === 'found' && verifiedStudent?.input === studentId.trim();
   const canScan = !!location && isKnownStudent && !isLoading && !isSubmitting;
 
   return (
@@ -1005,7 +1019,7 @@ const AttendanceSystem = () => {
                   className="w-full p-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm"
                   disabled={approvalBusy}
                 >
-                  Uyarısız olanların hepsini onayla ({approvals.pending.filter(item => item.level === 'clean').length})
+                  Düşük riskli olanların hepsini onayla ({approvals.pending.filter(item => item.level === 'clean').length})
                 </button>
               )}
 
@@ -1017,13 +1031,16 @@ const AttendanceSystem = () => {
                       : item.level === 'weak' ? 'border-yellow-300 bg-yellow-50'
                         : 'border-green-300 bg-green-50'}`}
                 >
+                  <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${RISK_BADGE[item.level]}`}>
+                    {RISK_LABEL[item.level]}
+                  </span>
                   <div className="font-semibold text-gray-800">
                     {item.studentId} {item.name}
                     <span className="font-normal text-gray-500"> · Hafta {item.week} · {item.at}</span>
                   </div>
                   <div className="text-gray-700">{item.reason}</div>
                   {item.warnings.length === 0 ? (
-                    <div className="text-green-700">✓ Uyarı yok</div>
+                    <div className="text-green-700">✓ Benzer cihaz yok; büyük olasılıkla öğrencinin kendi telefonu</div>
                   ) : item.warnings.map((warning, i) => (
                     <div key={i} className={warning.level === 'strong' ? 'text-red-700' : 'text-yellow-800'}>
                       {warning.level === 'strong' ? '⚠️' : '•'} {warning.text}
@@ -1067,6 +1084,9 @@ const AttendanceSystem = () => {
                         {item.studentId} {item.name}
                         <span className="font-normal text-gray-500"> · Hafta {item.week} · {item.at}</span>
                       </div>
+                      <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-red-800 text-white">
+                        KESİN: AYNI TARAYICI
+                      </span>
                       <div className="text-red-700">⛔ {item.reason}</div>
                       <button
                         type="button"
@@ -1118,6 +1138,9 @@ const AttendanceSystem = () => {
                       className={`p-2 rounded-lg border text-xs space-y-1 ${
                         item.level === 'clean' ? 'border-gray-200' : 'border-yellow-300 bg-yellow-50'}`}
                     >
+                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${RISK_BADGE[item.level]}`}>
+                        {RISK_LABEL[item.level]}
+                      </span>
                       <div className="font-semibold text-gray-800">
                         {item.studentId} {item.name}
                         <span className="font-normal text-gray-500"> · Hafta {item.week} · {item.at}</span>
@@ -1161,10 +1184,10 @@ const AttendanceSystem = () => {
                   ref={debugConsoleRef}
                   className="mt-2 p-4 bg-black text-white rounded-lg text-xs font-mono overflow-auto max-h-60"
                 >
-                  {debugLogs.length === 0 ? (
-                    <div className="text-gray-400">Henüz log yok</div>
+                  {consoleLines.length === 0 ? (
+                    <div className="text-gray-400">Bugün henüz kayıt yok</div>
                   ) : (
-                    debugLogs.map((log, i) => (
+                    consoleLines.map((log, i) => (
                       <div key={i} className="whitespace-pre-wrap mb-1">{log}</div>
                     ))
                   )}
@@ -1214,11 +1237,20 @@ const AttendanceSystem = () => {
                   disabled={isLoading || isSubmitting}
                 />
 
-                {studentId && validStudents.length > 0 && (
-                  <p className={`text-sm ${isKnownStudent ? 'text-green-600' : 'text-red-600'}`}>
-                    {isKnownStudent
-                      ? '✅ Öğrenci numarası doğrulandı'
-                      : '❌ Öğrenci numarası listede bulunamadı'}
+                {studentId.trim() && lookupState !== 'idle' && (
+                  <p className={`text-sm ${
+                    isKnownStudent ? 'text-green-600'
+                      : lookupState === 'checking' ? 'text-gray-500'
+                        : lookupState === 'error' ? 'text-yellow-700' : 'text-red-600'}`}
+                  >
+                    {lookupState === 'checking' && '⏳ Numara kontrol ediliyor...'}
+                    {isKnownStudent && verifiedStudent && (
+                      `✅ Öğrenci numarası doğrulandı` +
+                      (verifiedStudent.studentId !== verifiedStudent.input ? ` (${verifiedStudent.studentId})` : '') +
+                      (verifiedStudent.initials ? ` · ${verifiedStudent.initials}` : '')
+                    )}
+                    {lookupState === 'notFound' && '❌ Öğrenci numarası listede bulunamadı'}
+                    {lookupState === 'error' && '⚠️ Numara kontrol edilemedi (bağlantı). Numarayı silip yeniden yazarak tekrar deneyin.'}
                   </p>
                 )}
 

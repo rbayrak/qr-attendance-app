@@ -115,11 +115,16 @@ function blockedItems(data: SheetData, analysis: DeviceAnalysis, now: number) {
   });
 }
 
+const RISK_ORDER = { strong: 2, weak: 1, clean: 0 } as const;
+
 function buildState(data: SheetData) {
   const analysis = analyzeDevices(data.log);
   const now = Date.now();
   return {
-    pending: currentPending(data, analysis).map(entry => describe(analysis, data, entry)),
+    // Yüksek riskliler en üstte; aynı seviyede en yeni önce
+    pending: currentPending(data, analysis)
+      .map(entry => describe(analysis, data, entry))
+      .sort((a, b) => RISK_ORDER[b.level] - RISK_ORDER[a.level]),
     blocked: blockedItems(data, analysis, now).map(({ item }) => item),
     review: reviewItems(data, analysis, now).map(({ item }) => item),
     autoApproveEnabled: analysis.autoApproveEnabled,

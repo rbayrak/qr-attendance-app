@@ -40,6 +40,7 @@ export interface ResponseData {
   pendingApproval?: boolean; // Yoklama öğretmen onayına gönderildi (henüz sayılmadı)
   registered?: boolean; // Bu cihaz öğrenciye kaydedildi
   studentId?: string; // Listedeki asıl öğrenci numarası
+  studentName?: string; // Yoklama verildiğinde öğrencinin adı (selamlama için)
   qrExpired?: boolean; // QR'ın süresi doldu, ekrandaki güncel QR okutulmalı
   inAppBrowser?: boolean; // Uygulama içi tarayıcı: Safari/Chrome'da açılmalı
 }
