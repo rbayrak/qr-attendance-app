@@ -16,11 +16,13 @@ import {
   warningsFor,
   reasonTag,
   openPendingEntries,
-  findSuspicion,
+  deviceModel,
+  sameBrowserNote,
   buildLogRow,
   getClientIP,
   RESULT,
-  NOTE_AUTO_APPROVED
+  NOTE_AUTO_APPROVED,
+  NOTE_FIRST_REGISTRATION
 } from '@/utils/deviceGuard';
 import {
   STUDENT_ID_COLUMN,
@@ -83,9 +85,9 @@ async function handlePostRequest(
     const qrText = typeof body.qr === 'string' ? body.qr : '';
     const lat = body.lat;
     const lng = body.lng;
-    const model = typeof body.hardwareSignature === 'string'
-      ? body.hardwareSignature.slice(0, 8)
-      : 'unknown';
+    const userAgent = String(req.headers['user-agent'] ?? '');
+    // Cihaz imzası: donanım + tarayıcı ayrıntıları (yalnızca uyarı / onaya düşürme için)
+    const model = deviceModel(body.hardwareSignature, userAgent, body.deviceDetail);
 
     // 1. Temel validasyonlar
     if (!inputStudentId) {
@@ -176,13 +178,28 @@ async function handlePostRequest(
 
     // 6. Öğrenci-cihaz eşleştirmesi (bkz. utils/deviceGuard.ts)
     const analysis = analyzeDevices(data.log);
-    const decision = decideDevice(analysis, device.id, studentId, now);
+    const decision = decideDevice(analysis, { deviceId: device.id, studentId, model, ip, now });
+
+    // Aynı tarayıcı (çerez silinmemiş) başka bir öğrenciye kayıtlı: kesin kanıt, yoklama alınmaz
+    if (decision.kind === 'reject') {
+      await safeAppendLog(buildLogRow({
+        ...logBase,
+        result: RESULT.blocked,
+        note: sameBrowserNote(decision.otherStudentId)
+      }));
+      return res.status(403).json({
+        error: `Yoklamanız alınmadı. Bu telefon (tarayıcı) ${decision.otherStudentId} numaralı öğrenciye kayıtlı; ` +
+          'aynı telefondan ikinci bir öğrenci yoklama veremez. Kendi telefonunuzla tekrar deneyin. ' +
+          'Telefonunuz yanınızda değilse öğretmeninize başvurun.',
+        blockedStudentId: decision.otherStudentId
+      });
+    }
 
     // Yeni bir eşleşme oluşturacak istekler uygulama içi tarayıcıdan kabul edilmez:
     // Instagram vb. kendi tarayıcısının ayrı çerezleri vardır, öğrenci sonraki
     // hafta Safari/Chrome'dan gelince telefonu "değişmiş" görünürdü.
     if (decision.kind !== 'registered') {
-      const inApp = detectInAppBrowser(String(req.headers['user-agent'] ?? ''));
+      const inApp = detectInAppBrowser(userAgent);
       if (inApp) {
         await safeAppendLog(buildLogRow({
           ...logBase,
@@ -203,15 +220,16 @@ async function handlePostRequest(
       // Aynı cihazdan aynı hafta için zaten bekleyen bir istek varsa tekrar yazma
       const alreadyPending = openPendingEntries(analysis).some(entry =>
         entry.studentId === studentId && entry.week === week && entry.deviceId === device.id);
-      const ownedByOther = decision.reason.code === 'deviceOwnedByOther';
+      const reasonCode = decision.reason.code;
 
       if (!alreadyPending) {
         const subject = { studentId, week, deviceId: device.id, model, ip, timestamp: now };
         const { level, warnings } = warningsFor(analysis, subject, decision.reason, nameOf, now);
 
         // İsteğe bağlı otomatik onay: uyarısız cihaz değişikliği, öğrenci başına dönemde 1 kez
-        if (analysis.autoApproveEnabled && level === 'clean' && !ownedByOther &&
-          !analysis.autoApprovalUsed.has(studentId)) {
+        // (şüpheli yeni kayıt asla otomatik onaylanmaz)
+        if (analysis.autoApproveEnabled && level === 'clean' && reasonCode !== 'suspiciousRegistration' &&
+          reasonCode !== 'deviceOwnedByOther' && !analysis.autoApprovalUsed.has(studentId)) {
           await Promise.all([
             writeMainCell(studentRowIndex, weekColumnIndex, 'VAR'),
             appendLogRow(buildLogRow({
@@ -239,10 +257,10 @@ async function handlePostRequest(
         }));
       }
 
-      const message = ownedByOther
-        ? 'Bu telefon başka bir öğrenciye kayıtlı. Yoklamanız öğretmen onayına gönderildi; ' +
-          'aynı telefondan birden fazla öğrenci için yoklama verildiği öğretmeninize bildirildi.'
-        : decision.reason.code === 'firstRegistration'
+      const message = reasonCode === 'suspiciousRegistration'
+        ? 'Yoklamanız henüz alınmadı: bu telefondan az önce başka bir öğrenci yoklama vermiş görünüyor. ' +
+          'İsteğiniz öğretmen onayına gönderildi; öğretmeniniz onaylarsa yoklamanız sayılır.'
+        : reasonCode === 'firstRegistration'
           ? 'İlk kez yoklama veriyorsunuz; yoklamanız öğretmen onayına gönderildi. Başka bir şey yapmanıza gerek yok.'
           : 'Telefonunuz veya tarayıcınız değişmiş görünüyor (çerezler silinmiş, gizli sekme ya da farklı tarayıcı). ' +
             'Yoklamanız öğretmen onayına gönderildi; başka bir şey yapmanıza gerek yok.';
@@ -252,9 +270,15 @@ async function handlePostRequest(
 
     // 7. Yoklamayı kaydet: hücreye sadece "VAR", tarih/saat ve ayrıntılar kayıt
     //    sayfasına (ikisi diğer öğrencilerin yazmalarıyla birlikte tek istekte gider)
-    const note = decision.kind === 'register'
-      ? findSuspicion(analysis, { device, model, ip, studentId, now })
-      : '';
+    // Kayıt dönemindeki ilk kayıt işaretlenir: öğretmen panelinde, sonradan uyarı
+    // oluşursa (ör. ağ değiştirip aynı telefondan deneyen) "kontrol edin" listesinde görünür
+    let note = '';
+    if (decision.kind === 'register') {
+      const { warnings } = warningsFor(analysis,
+        { studentId, week, deviceId: device.id, model, ip, timestamp: now },
+        { code: 'firstRegistration' }, nameOf, now);
+      note = [NOTE_FIRST_REGISTRATION, ...warnings.map(w => `• ${w.text}`)].join(' ');
+    }
     await Promise.all([
       writeMainCell(studentRowIndex, weekColumnIndex, 'VAR'),
       appendLogRow(buildLogRow({ ...logBase, result: RESULT.recorded, note }))

@@ -60,7 +60,8 @@ interface ApprovalItem {
 
 interface ApprovalsState {
   pending: ApprovalItem[];
-  autoApproved: ApprovalItem[];
+  blocked: ApprovalItem[];   // bugün aynı tarayıcıdan reddedilenler
+  review: ApprovalItem[];    // bugün onaysız yazılıp kontrol edilmesi önerilenler
   autoApproveEnabled: boolean;
   registration: { open: boolean; classDays: number; limit: number };
 }
@@ -98,6 +99,36 @@ async function signQr(password: string, week: number, expiresAtSec: number, plac
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Çerez silinince ya da gizli sekmede değişmeyen tarayıcı ayrıntıları: sunucu
+// bunları donanım imzasıyla birlikte özetler. Aynı model iki farklı telefonu
+// ayırt etmeye yardım eder (dil listesi, karanlık mod, Android'de model adı).
+// Yalnızca öğretmene uyarı göstermek için kullanılır.
+async function collectDeviceDetail(): Promise<string> {
+  const parts: string[] = [];
+  try {
+    parts.push((navigator.languages?.length ? navigator.languages : [navigator.language]).join(','));
+  } catch {
+    // önemli değil
+  }
+  try {
+    parts.push(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  } catch {
+    // önemli değil
+  }
+  try {
+    const uaData = (navigator as Navigator & {
+      userAgentData?: { getHighEntropyValues?: (hints: string[]) => Promise<Record<string, string>> };
+    }).userAgentData;
+    if (uaData?.getHighEntropyValues) {
+      const values = await uaData.getHighEntropyValues(['model', 'platformVersion']);
+      parts.push(`${values.model ?? ''}|${values.platformVersion ?? ''}`);
+    }
+  } catch {
+    // önemli değil
+  }
+  return parts.join(';');
+}
 
 const parseJsonSafe = <T,>(text: string): T | null => {
   try {
@@ -641,6 +672,7 @@ const AttendanceSystem = () => {
       } catch {
         // önemli değil
       }
+      const deviceDetail = await collectDeviceDetail();
 
       for (let attempt = 1; attempt <= MAX_SUBMIT_ATTEMPTS; attempt++) {
         const controller = new AbortController();
@@ -656,7 +688,8 @@ const AttendanceSystem = () => {
               lat: location.lat,
               lng: location.lng,
               accuracy: location.accuracy,
-              hardwareSignature
+              hardwareSignature,
+              deviceDetail
             }),
             signal: controller.signal
           });
@@ -670,7 +703,10 @@ const AttendanceSystem = () => {
               studentId: trimmedId,
               timestamp: new Date().toISOString()
             }));
-            setStatus(`⏳ Sn. ${validStudent.studentName}, ${data.message || 'yoklamanız öğretmen onayına gönderildi.'}`);
+            // Sunucu mesajı cümle başı gibi büyük harfle başlıyor; virgülden sonra küçült
+            const pendingText = data.message || 'yoklamanız öğretmen onayına gönderildi.';
+            setStatus(`⏳ Sn. ${validStudent.studentName}, ` +
+              `${pendingText.charAt(0).toLocaleLowerCase('tr-TR')}${pendingText.slice(1)}`);
             updateDebugLogs(`🕓 ${trimmedId} ${validStudent.studentName}: Hafta ${qr.payload.week} öğretmen onayı bekliyor`);
             return;
           }
@@ -1014,6 +1050,41 @@ const AttendanceSystem = () => {
                 </div>
               ))}
 
+              {approvals && approvals.blocked.length > 0 && (
+                <div className="space-y-2 pt-2">
+                  <h4 className="text-sm font-semibold text-gray-800">Bugün reddedilenler ({approvals.blocked.length})</h4>
+                  <p className="text-xs text-gray-500">
+                    Başka bir öğrenciye kayıtlı telefondan (aynı tarayıcıdan) denendi; yoklama alınmadı.
+                    Telefonu bozuk olduğu için arkadaşınınkini kullanan öğrenciye yoklama verebilirsiniz
+                    (telefonun kaydı değişmez).
+                  </p>
+                  {approvals.blocked.map(item => (
+                    <div
+                      key={`blocked-${item.studentId}-${item.week}`}
+                      className="p-3 rounded-lg border border-red-300 bg-red-50 text-sm space-y-1"
+                    >
+                      <div className="font-semibold text-gray-800">
+                        {item.studentId} {item.name}
+                        <span className="font-normal text-gray-500"> · Hafta {item.week} · {item.at}</span>
+                      </div>
+                      <div className="text-red-700">⛔ {item.reason}</div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm(`${item.studentId} ${item.name} için Hafta ${item.week} yoklaması verilsin mi?`)) {
+                            void approvalAction({ action: 'override', studentId: item.studentId, week: item.week });
+                          }
+                        }}
+                        className="text-sm text-blue-700 hover:underline disabled:opacity-50"
+                        disabled={approvalBusy}
+                      >
+                        Yine de yoklama ver
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <label className="flex items-start gap-2 text-sm text-gray-700 pt-2">
                 <input
                   type="checkbox"
@@ -1027,16 +1098,23 @@ const AttendanceSystem = () => {
                   <span className="block text-xs text-gray-500">
                     Her öğrenci için dönemde 1 kez. Öğretmenin işi azalır ama ağ değiştiren biri bu hakkı arkadaşı
                     için bir kez kullanabilir; otomatik onaylananlar aşağıda listelenir ve iptal edilebilir.
+                    Şüpheli istekler hiçbir zaman otomatik onaylanmaz.
                   </span>
                 </span>
               </label>
 
-              {approvals && approvals.autoApproved.length > 0 && (
+              {approvals && approvals.review.length > 0 && (
                 <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-gray-700">Bugün otomatik onaylananlar</h4>
-                  {approvals.autoApproved.map(item => (
+                  <h4 className="text-xs font-semibold text-gray-700">
+                    Bugün kontrol edilmesi önerilenler ({approvals.review.length})
+                  </h4>
+                  <p className="text-xs text-gray-500">
+                    Size sorulmadan yazılan yoklamalar: otomatik onaylananlar ve kayıt döneminde serbestçe
+                    kaydedilip sonradan benzer cihaz uyarısı oluşanlar. Şüpheliyse iptal edin.
+                  </p>
+                  {approvals.review.map(item => (
                     <div
-                      key={`auto-${item.studentId}-${item.week}`}
+                      key={`review-${item.studentId}-${item.week}`}
                       className={`p-2 rounded-lg border text-xs space-y-1 ${
                         item.level === 'clean' ? 'border-gray-200' : 'border-yellow-300 bg-yellow-50'}`}
                     >
@@ -1044,6 +1122,7 @@ const AttendanceSystem = () => {
                         {item.studentId} {item.name}
                         <span className="font-normal text-gray-500"> · Hafta {item.week} · {item.at}</span>
                       </div>
+                      <div className="text-gray-600">{item.reason}</div>
                       {item.warnings.map((warning, i) => (
                         <div key={i} className={warning.level === 'strong' ? 'text-red-700' : 'text-yellow-800'}>
                           {warning.level === 'strong' ? '⚠️' : '•'} {warning.text}

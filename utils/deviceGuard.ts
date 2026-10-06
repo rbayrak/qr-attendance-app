@@ -13,32 +13,38 @@
 //  2. Öğrencinin yoklama verdiği cihaz onun kayıtlı cihazıdır.
 // Kayıtlı cihazından gelen öğrencinin yoklaması hemen yazılır.
 //
-// Çerez silinince (tarayıcı verilerini temizleme, gizli sekme, başka tarayıcı,
-// yeni telefon) gelen yeni kimlik, sunucu açısından "aynı telefonla başka
-// öğrenci" denemesinden ayırt edilemez. Bu yüzden şu durumlar reddedilmez,
-// ÖĞRETMEN ONAYINA düşer (ONAY BEKLİYOR satırı):
-//  - öğrencinin kayıtlı cihazı farklı (cihaz değişmiş)
-//  - bu cihaz başka bir öğrenciye kayıtlı (aynı telefondan iki öğrenci: güçlü uyarı)
-//  - kayıt dönemi bittikten sonra ilk kez gelen öğrenci
-// Öğretmen panelinde her bekleyen kaydın yanında, kayıt sayfasından hesaplanan
-// uyarılar görünür (ör. "40 sn önce aynı ağdan, aynı model telefondan X yoklama
-// verdi"). Onaylanınca yoklama yazılır ve öğrenci yeni cihazına kaydedilir.
-// Onay beklenen kayıt yoklama sayılmaz; öğretmen bakmazsa hiçbir şey yazılmaz.
+// Kanıtın gücüne göre üç sonuç:
+//  - KESİN RET (ENGELLENDİ): aynı tarayıcıdan (çerez silinmemiş) ikinci bir
+//    öğrenci. Tahmin değil, kesin kanıt; yoklama alınmaz. Telefonu bozuk öğrenci
+//    için öğretmen panelinden "yine de yoklama ver" denebilir (cihaz kaydı değişmez).
+//  - ÖĞRETMEN ONAYI (ONAY BEKLİYOR, yoklama sayılmaz):
+//      * öğrencinin kayıtlı cihazı farklı (çerez silinmiş, gizli sekme, yeni telefon)
+//      * kayıt dönemi bittikten sonra ilk kez gelen öğrenci
+//      * kayıt döneminde bile şüpheli yeni kayıt: son 5 dk içinde aynı ağdan ve
+//        aynı cihaz imzasıyla başka öğrenci yoklama verdi/denedi (çerez silinip
+//        aynı telefondan tekrar deneniyor olabilir), ya da bu öğrenci için bugün
+//        başka öğrencinin tarayıcısından denendi, ya da öğrencinin bekleyen isteği var
+//  - KAYIT: kayıtlı cihaz ya da kayıt döneminde temiz ilk kayıt.
+// Aynı Wi-Fi'daki aynı model iki telefon sunucuya aynı görünebildiği için
+// tahmine dayalı durumlar reddedilmez, öğretmene bırakılır.
 //
-// Kayıt dönemi: son "Cihaz Kayıtlarını Temizle"den sonraki ilk 2 ders gününde
-// herkes ilk telefonunu serbestçe kaydeder (ilk kez görülen kimlik + birkaç dk
-// içinde aynı ağ/model telefondan başka öğrenci -> "ŞÜPHELİ" notu).
+// Cihaz imzası: "hhhhhhhh-dddddd". İlk kısım donanım özellikleri (ekran, GPU vb.;
+// aynı model telefonlarda aynı), ikinci kısım tarayıcı sürümü, dil, karanlık mod,
+// depolama kotası ve Android'de telefon modeli gibi ayrıntılar. Çerez silinince
+// ikisi de değişmez. Tam imza + aynı ağ = güçlü benzerlik; yalnızca donanım
+// kısmı aynı = zayıf benzerlik (aynı model başka telefon ya da ağ/ayar değiştirmiş).
 //
-// İsteğe bağlı otomatik onay (öğretmen panelinden açılır): uyarısız bir cihaz
-// değişikliği, öğrenci başına dönemde 1 kez öğretmene sorulmadan onaylanır.
+// Kayıt dönemi: son "Cihaz Kayıtlarını Temizle"den sonraki ilk 2 ders günü.
+// İsteğe bağlı otomatik onay: uyarısız cihaz değişikliği, öğrenci başına dönemde 1 kez.
 
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { LOG_COL, SheetRows } from '@/utils/sheets';
 import { formatIstanbul, istanbulDayKey } from '@/utils/time';
 
 const COOKIE_NAME = 'ytu_did';
 const COOKIE_MAX_AGE_SECONDS = 400 * 24 * 60 * 60; // tarayıcıların izin verdiği en uzun süre
+// Kayıt döneminde bile yeni kaydı onaya düşüren benzerlik süresi
 const SUSPICION_WINDOW_MS = 5 * 60 * 1000;
 // Bekleyen kayıtlarda benzer cihaz aranan zaman aralığı (öncesi ve sonrası)
 const SIMILARITY_WINDOW_MS = 10 * 60 * 1000;
@@ -67,6 +73,11 @@ export const RESULT = {
 // KAYDEDİLDİ satırlarının not başlangıçları
 export const NOTE_AUTO_APPROVED = 'Otomatik onay';
 export const NOTE_TEACHER_APPROVED = 'Öğretmen onayı';
+export const NOTE_FIRST_REGISTRATION = 'İlk kayıt';
+// Öğretmenin reddedilen bir denemeye rağmen yoklama vermesi (cihaz kaydı değişmez)
+export const NOTE_TEACHER_OVERRIDE = 'Öğretmen kararı';
+// Aynı tarayıcıdan ikinci öğrenci denemesi (ENGELLENDİ satırının not etiketi)
+const SAME_BROWSER_TAG = '[AYNI TARAYICI:';
 
 const SETTING_AUTO_APPROVE = 'otomatikOnay';
 
@@ -152,6 +163,41 @@ export function getDeviceIdentity(req: NextApiRequest, res: NextApiResponse): De
 }
 
 // ---------------------------------------------------------------------------
+// Cihaz imzası
+// ---------------------------------------------------------------------------
+
+const HARDWARE_PART_LENGTH = 8;
+
+/**
+ * "hhhhhhhh-dddddd": donanım imzası + tarayıcı ayrıntılarının özeti.
+ * Donanım imzası alınamadıysa "unknown". İstemciden geldiği için yalnızca
+ * öğretmene uyarı göstermekte ve onaya düşürmekte kullanılır, asla tek başına
+ * yoklama vermek için kullanılmaz.
+ */
+export function deviceModel(hardwareSignature: unknown, userAgent: string, detail: unknown): string {
+  if (typeof hardwareSignature !== 'string' || !/^[0-9a-f]{8}/i.test(hardwareSignature)) return 'unknown';
+  const extra = typeof detail === 'string' ? detail.slice(0, 300) : '';
+  const digest = createHash('sha256').update(`${userAgent}|${extra}`).digest('hex').slice(0, 6);
+  return `${hardwareSignature.slice(0, HARDWARE_PART_LENGTH).toLowerCase()}-${digest}`;
+}
+
+function isKnownModel(model: string): boolean {
+  return /^[0-9a-f]{8}/i.test(model);
+}
+
+/** Donanım kısmı aynı mı? (aynı model telefon; eski 8 karakterlik kayıtlarla da çalışır) */
+function sameHardware(a: string, b: string): boolean {
+  return isKnownModel(a) && isKnownModel(b) &&
+    a.slice(0, HARDWARE_PART_LENGTH).toLowerCase() === b.slice(0, HARDWARE_PART_LENGTH).toLowerCase();
+}
+
+/** Tam imza aynı mı? (ayrıntı kısmı olmayan eski kayıtlarda yalnızca donanım karşılaştırılır) */
+function sameFullModel(a: string, b: string): boolean {
+  if (!sameHardware(a, b)) return false;
+  return a.length <= HARDWARE_PART_LENGTH || b.length <= HARDWARE_PART_LENGTH || a.toLowerCase() === b.toLowerCase();
+}
+
+// ---------------------------------------------------------------------------
 // Kayıt sayfasının çözümlenmesi
 // ---------------------------------------------------------------------------
 
@@ -201,8 +247,6 @@ export interface DeviceAnalysis {
   deviceOwner: Map<string, Binding>;
   /** öğrenci numarası -> öğrencinin kayıtlı cihazı */
   studentDevice: Map<string, Binding>;
-  /** Kayıt sayfasında (sıfırlamalardan bağımsız) yoklamada hiç görülmüş cihazlar */
-  seenDevices: Set<string>;
   /** Son sıfırlamadan sonra otomatik onay hakkını kullanmış öğrenciler */
   autoApprovalUsed: Set<string>;
   /** Son sıfırlamadan sonra öğretmen ya da otomatik onayla cihaz değiştirme sayısı */
@@ -236,14 +280,12 @@ export function analyzeDevices(log: SheetRows): DeviceAnalysis {
 
   const deviceOwner = new Map<string, Binding>();
   const studentDevice = new Map<string, Binding>();
-  const seenDevices = new Set<string>();
   const autoApprovalUsed = new Set<string>();
   const approvalCount = new Map<string, number>();
   const studentsPerDay = new Map<string, Set<string>>();
 
   for (const entry of entries) {
     if (entry.result !== RESULT.recorded || !entry.studentId) continue;
-    if (entry.deviceId) seenDevices.add(entry.deviceId);
     if (entry.timestamp <= lastResetAt) continue;
 
     const day = istanbulDayKey(entry.timestamp);
@@ -267,7 +309,7 @@ export function analyzeDevices(log: SheetRows): DeviceAnalysis {
     .sort();
 
   return {
-    entries, lastResetAt, deviceOwner, studentDevice, seenDevices,
+    entries, lastResetAt, deviceOwner, studentDevice,
     autoApprovalUsed, approvalCount, autoApproveEnabled, classDays
   };
 }
@@ -292,23 +334,63 @@ export function settingRow(now: number, autoApprove: boolean): string[] {
 
 export type PendingReason =
   | { code: 'deviceChanged' }
-  | { code: 'deviceOwnedByOther'; otherStudentId: string }
-  | { code: 'firstRegistration' };
+  | { code: 'deviceOwnedByOther'; otherStudentId: string } // eski sürümün satırları için
+  | { code: 'firstRegistration' }
+  | { code: 'suspiciousRegistration' };
 
 export type DeviceDecision =
   | { kind: 'registered' }           // öğrencinin kayıtlı cihazı
-  | { kind: 'register' }             // kayıt dönemi: ilk cihaz serbestçe kaydedilir
+  | { kind: 'register' }             // kayıt dönemi: temiz ilk kayıt
+  | { kind: 'reject'; otherStudentId: string } // aynı tarayıcı başka öğrenciye kayıtlı
   | { kind: 'pending'; reason: PendingReason };
 
-export function decideDevice(
-  analysis: DeviceAnalysis,
-  deviceId: string,
-  studentId: string,
-  now: number
-): DeviceDecision {
+export interface DeviceRequest {
+  deviceId: string;
+  studentId: string;
+  model: string;
+  ip: string;
+  now: number;
+}
+
+function isSameBrowserBlock(entry: LogEntry): boolean {
+  return entry.result === RESULT.blocked && entry.note.startsWith(SAME_BROWSER_TAG);
+}
+
+export function sameBrowserNote(otherStudentId: string): string {
+  return `${SAME_BROWSER_TAG} ${otherStudentId}] Bu tarayıcı başka bir öğrenciye kayıtlı; yoklama reddedildi`;
+}
+
+function sameBrowserOther(entry: LogEntry): string {
+  return /^\[AYNI TARAYICI: ([^\]]+)\]/.exec(entry.note)?.[1] ?? '';
+}
+
+/**
+ * Kayıt döneminde yeni bir kayıt şüpheli mi? (yalnızca geçmiş satırlara bakar)
+ * Çerezini silip aynı telefondan arkadaşı için tekrar deneyen birinin izleri.
+ */
+function isSuspiciousRegistration(analysis: DeviceAnalysis, request: DeviceRequest): boolean {
+  const today = istanbulDayKey(request.now);
+  if (openPendingEntries(analysis).some(entry => entry.studentId === request.studentId)) return true;
+  for (const entry of analysis.entries) {
+    if (entry.timestamp >= request.now) break;
+    if (entry.timestamp <= analysis.lastResetAt) continue;
+    if (entry.studentId === request.studentId) {
+      if (isSameBrowserBlock(entry) && istanbulDayKey(entry.timestamp) === today) return true;
+      continue;
+    }
+    if (entry.result !== RESULT.recorded && entry.result !== RESULT.pending) continue;
+    if (request.now - entry.timestamp > SUSPICION_WINDOW_MS) continue;
+    if (entry.deviceId === request.deviceId) continue;
+    if (sameFullModel(entry.model, request.model) && entry.ip && entry.ip === request.ip) return true;
+  }
+  return false;
+}
+
+export function decideDevice(analysis: DeviceAnalysis, request: DeviceRequest): DeviceDecision {
+  const { deviceId, studentId, now } = request;
   const owner = analysis.deviceOwner.get(deviceId);
   if (owner && owner.id !== studentId) {
-    return { kind: 'pending', reason: { code: 'deviceOwnedByOther', otherStudentId: owner.id } };
+    return { kind: 'reject', otherStudentId: owner.id };
   }
   const registered = analysis.studentDevice.get(studentId);
   if (registered) {
@@ -316,16 +398,20 @@ export function decideDevice(
       ? { kind: 'registered' }
       : { kind: 'pending', reason: { code: 'deviceChanged' } };
   }
-  return isRegistrationOpen(analysis, now)
-    ? { kind: 'register' }
-    : { kind: 'pending', reason: { code: 'firstRegistration' } };
+  if (!isRegistrationOpen(analysis, now)) {
+    return { kind: 'pending', reason: { code: 'firstRegistration' } };
+  }
+  return isSuspiciousRegistration(analysis, request)
+    ? { kind: 'pending', reason: { code: 'suspiciousRegistration' } }
+    : { kind: 'register' };
 }
 
 // Bekleyen satırın notunun başındaki neden etiketi
 const REASON_TAGS = {
   deviceChanged: '[CİHAZ DEĞİŞTİ]',
   deviceOwnedByOther: '[TELEFON BAŞKASINA KAYITLI:',
-  firstRegistration: '[İLK KAYIT]'
+  firstRegistration: '[İLK KAYIT]',
+  suspiciousRegistration: '[ŞÜPHELİ YENİ KAYIT]'
 };
 
 export function reasonTag(reason: PendingReason): string {
@@ -338,6 +424,7 @@ export function parseReasonTag(note: string): PendingReason {
   const owned = /^\[TELEFON BAŞKASINA KAYITLI: ([^\]]+)\]/.exec(note);
   if (owned) return { code: 'deviceOwnedByOther', otherStudentId: owned[1] };
   if (note.startsWith(REASON_TAGS.firstRegistration)) return { code: 'firstRegistration' };
+  if (note.startsWith(REASON_TAGS.suspiciousRegistration)) return { code: 'suspiciousRegistration' };
   return { code: 'deviceChanged' };
 }
 
@@ -345,6 +432,7 @@ export function reasonLabel(reason: PendingReason, nameOf: (id: string) => strin
   switch (reason.code) {
     case 'deviceChanged': return 'Telefonu / tarayıcısı değişmiş';
     case 'firstRegistration': return 'İlk kez yoklama veriyor (kayıt dönemi bitti)';
+    case 'suspiciousRegistration': return 'Yeni tarayıcıdan ilk kayıt; aynı telefondan başka öğrenci olabilir';
     case 'deviceOwnedByOther':
       return `Bu telefon ${reason.otherStudentId} ${nameOf(reason.otherStudentId)} adına kayıtlı`;
   }
@@ -377,7 +465,8 @@ export function warningsFor(
   subject: { studentId: string; week: number; deviceId: string; model: string; ip: string; timestamp: number },
   reason: PendingReason,
   nameOf: (id: string) => string,
-  until?: number
+  until?: number,
+  options: { recordedOnly?: boolean } = {}
 ): { level: WarningLevel; warnings: Warning[] } {
   const warnings: Warning[] = [];
 
@@ -388,7 +477,7 @@ export function warningsFor(
     });
   }
 
-  const modelKnown = !!subject.model && subject.model !== 'unknown';
+  const modelKnown = isKnownModel(subject.model);
   if (!modelKnown) {
     warnings.push({ level: 'weak', text: 'Telefon modeli alınamadı, benzer cihaz kontrolü yapılamadı' });
   }
@@ -399,7 +488,7 @@ export function warningsFor(
   let sameModelCount = 0;
   for (const entry of analysis.entries) {
     if (until !== undefined && entry.timestamp >= until) break;
-    if (entry.result !== RESULT.recorded && entry.result !== RESULT.pending) continue;
+    if (entry.result !== RESULT.recorded && (options.recordedOnly || entry.result !== RESULT.pending)) continue;
     if (entry.studentId === subject.studentId || entry.timestamp <= analysis.lastResetAt) continue;
     const delta = subject.timestamp - entry.timestamp;
     if (Math.abs(delta) > SIMILARITY_WINDOW_MS) continue;
@@ -408,9 +497,9 @@ export function warningsFor(
     if (entry.deviceId && entry.deviceId === subject.deviceId && reason.code !== 'deviceOwnedByOther') {
       if (closer(sameBrowser)) sameBrowser = entry;
     }
-    if (!modelKnown || entry.model !== subject.model) continue;
+    if (!modelKnown || !sameHardware(entry.model, subject.model)) continue;
     sameModelCount++;
-    if (entry.ip && entry.ip === subject.ip) {
+    if (sameFullModel(entry.model, subject.model) && entry.ip && entry.ip === subject.ip) {
       if (closer(sameNetwork)) sameNetwork = entry;
     } else if (closer(sameModelOnly)) {
       sameModelOnly = entry;
@@ -424,13 +513,28 @@ export function warningsFor(
     warnings.push({ level: 'strong', text: `Aynı tarayıcıdan ${describe(sameBrowser)}` });
   }
   if (sameNetwork) {
-    warnings.push({ level: 'strong', text: `Aynı ağdan ve aynı model telefondan ${describe(sameNetwork)}` });
+    warnings.push({ level: 'strong', text: `Aynı ağdan ve aynı cihaz imzasıyla ${describe(sameNetwork)}` });
   } else if (sameModelOnly) {
     warnings.push({
       level: 'weak',
-      text: `Aynı model telefondan (farklı ağ) ${describe(sameModelOnly)}` +
+      text: `Aynı model telefondan (farklı ağ ya da ayar) ${describe(sameModelOnly)}` +
         (sameModelCount > 1 ? `; bu aralıkta aynı modelden ${sameModelCount} kayıt var` : '')
     });
+  }
+
+  // Bu öğrenci için bugün başka öğrencinin tarayıcısından denendi mi?
+  const subjectDay = istanbulDayKey(subject.timestamp);
+  for (const entry of analysis.entries) {
+    if (until !== undefined && entry.timestamp >= until) break;
+    if (entry.studentId !== subject.studentId || !isSameBrowserBlock(entry)) continue;
+    if (entry.timestamp <= analysis.lastResetAt || istanbulDayKey(entry.timestamp) !== subjectDay) continue;
+    const other = sameBrowserOther(entry);
+    warnings.push({
+      level: 'strong',
+      text: `Bu öğrenci için ${timeDistance(subject.timestamp - entry.timestamp)} ${other} ${nameOf(other)} ` +
+        'adına kayıtlı tarayıcıdan denendi (reddedildi)'
+    });
+    break;
   }
 
   for (const entry of analysis.entries) {
@@ -440,6 +544,14 @@ export function warningsFor(
       warnings.push({ level: 'weak', text: 'Bu hafta için daha önce bir onay isteği reddedilmiş' });
       break;
     }
+  }
+
+  // Şüpheli yeni kayıt hiçbir zaman "uyarısız" görünmez (toplu/otomatik onaya girmez)
+  if (reason.code === 'suspiciousRegistration' && !warnings.some(w => w.level === 'strong')) {
+    warnings.push({
+      level: 'strong',
+      text: 'Kayıt döneminde şüpheli yeni kayıt: bu öğrencinin bekleyen bir isteği vardı ya da az önce aynı telefondan başka öğrenci denendi'
+    });
   }
 
   const changes = analysis.approvalCount.get(subject.studentId) ?? 0;
@@ -466,7 +578,11 @@ export function openPendingEntries(analysis: DeviceAnalysis): LogEntry[] {
     if (entry.timestamp <= analysis.lastResetAt || !entry.studentId) continue;
     if (entry.result === RESULT.pending) {
       latest.set(key(entry), entry);
-    } else if (entry.result === RESULT.recorded || entry.result === RESULT.rejected) {
+    } else if (entry.result === RESULT.rejected ||
+      (entry.result === RESULT.recorded && !entry.note.startsWith(NOTE_FIRST_REGISTRATION))) {
+      // Bekleyen istek yalnızca öğretmenin kararıyla (onay/ret/otomatik onay) ya da
+      // öğrencinin kayıtlı cihazından gelen yoklamayla kapanır; yeni bir tarayıcıdan
+      // yapılan ilk kayıt onu kapatamaz (çerez silinerek öğretmenden gizlenemez)
       resolvedAt.set(key(entry), Math.max(resolvedAt.get(key(entry)) ?? 0, entry.timestamp));
     }
   }
@@ -475,8 +591,12 @@ export function openPendingEntries(analysis: DeviceAnalysis): LogEntry[] {
     .sort((a, b) => b.timestamp - a.timestamp);
 }
 
-/** Bugün otomatik onaylanan ve iptal edilmemiş kayıtlar */
-export function autoApprovedToday(analysis: DeviceAnalysis, now: number): LogEntry[] {
+/**
+ * Bugün öğretmene sorulmadan yazılan ve iptal edilmemiş kayıtlar: otomatik
+ * onaylananlar ve kayıt döneminde serbestçe yapılan ilk kayıtlar. (Hangilerinin
+ * gösterileceğine uyarılara bakılarak API'de karar verilir.)
+ */
+export function unattendedRecordsToday(analysis: DeviceAnalysis, now: number): LogEntry[] {
   const today = istanbulDayKey(now);
   const cancelledAt = new Map<string, number>();
   for (const entry of analysis.entries) {
@@ -486,30 +606,32 @@ export function autoApprovedToday(analysis: DeviceAnalysis, now: number): LogEnt
     }
   }
   return analysis.entries
-    .filter(entry => entry.result === RESULT.recorded && entry.note.startsWith(NOTE_AUTO_APPROVED) &&
+    .filter(entry => entry.result === RESULT.recorded &&
+      (entry.note.startsWith(NOTE_AUTO_APPROVED) || entry.note.startsWith(NOTE_FIRST_REGISTRATION)) &&
       entry.timestamp > analysis.lastResetAt && istanbulDayKey(entry.timestamp) === today &&
       entry.timestamp > (cancelledAt.get(`${entry.studentId}|${entry.week}`) ?? 0))
     .sort((a, b) => b.timestamp - a.timestamp);
 }
 
-/** Kayıt döneminde ilk kez görülen kimlik için "ŞÜPHELİ" notu (engellemez). */
-export function findSuspicion(
-  analysis: DeviceAnalysis,
-  params: { device: DeviceIdentity; model: string; ip: string; studentId: string; now: number }
-): string {
-  const { device, model, ip, studentId, now } = params;
-  // Daha önce yoklamada kullanılmış bir cihaz "yeni kimlik" değildir
-  if (analysis.seenDevices.has(device.id) || !model || model === 'unknown' || !ip) return '';
+/** Bugün aynı tarayıcıdan reddedilen ve sonradan yoklaması yazılmamış denemeler (öğrenci+hafta başına son deneme) */
+export function sameBrowserBlocksToday(analysis: DeviceAnalysis, now: number): LogEntry[] {
+  const today = istanbulDayKey(now);
+  const latest = new Map<string, LogEntry>();
+  const recordedAt = new Map<string, number>();
+  const key = (entry: LogEntry) => `${entry.studentId}|${entry.week}`;
   for (const entry of analysis.entries) {
-    if (entry.result !== RESULT.recorded) continue;
-    if (entry.studentId === studentId || entry.deviceId === device.id) continue;
-    if (entry.timestamp <= analysis.lastResetAt) continue;
-    if (entry.model !== model || entry.ip !== ip) continue;
-    const ageMs = now - entry.timestamp;
-    if (ageMs < 0 || ageMs > SUSPICION_WINDOW_MS) continue;
-    const minutes = Math.max(1, Math.round(ageMs / 60000));
-    return `⚠️ ŞÜPHELİ: Bu tarayıcı kimliği ilk kez kullanılıyor ve ${minutes} dk önce aynı ağdan, ` +
-      `aynı model bir cihazdan ${entry.studentId} yoklama vermiş (çerez silme / gizli sekme / ikinci tarayıcı olabilir)`;
+    if (entry.timestamp <= analysis.lastResetAt || !entry.studentId) continue;
+    if (isSameBrowserBlock(entry) && istanbulDayKey(entry.timestamp) === today) {
+      latest.set(key(entry), entry);
+    } else if (entry.result === RESULT.recorded) {
+      recordedAt.set(key(entry), Math.max(recordedAt.get(key(entry)) ?? 0, entry.timestamp));
+    }
   }
-  return '';
+  return [...latest.values()]
+    .filter(entry => entry.timestamp > (recordedAt.get(key(entry)) ?? 0))
+    .sort((a, b) => b.timestamp - a.timestamp);
+}
+
+export function sameBrowserOwner(entry: LogEntry): string {
+  return sameBrowserOther(entry);
 }

@@ -1,14 +1,20 @@
 // pages/api/approvals.ts
 // Öğretmen paneli: öğretmen onayı bekleyen yoklamalar (bkz. utils/deviceGuard.ts)
 //
-// GET  -> bekleyenler (uyarılarıyla), bugün otomatik onaylananlar, ayarlar
-// POST -> { action: 'approve' | 'reject' | 'cancel', studentId, week }
-//         { action: 'approveClean' }               uyarısız olanların hepsini onayla
-//         { action: 'setAutoApprove', enabled }    otomatik onay ayarı
+// GET  -> bekleyenler (uyarılarıyla), bugün reddedilenler, bugün kontrol
+//         edilmesi önerilen kayıtlar, ayarlar
+// POST -> { action: 'approve' | 'reject', studentId, week }   bekleyen istek
+//         { action: 'approveClean' }                          uyarısızların hepsini onayla
+//         { action: 'override', studentId, week }             reddedilene yine de yoklama ver
+//         { action: 'cancel', studentId, week }               kontrol listesindeki kaydı iptal et
+//         { action: 'setAutoApprove', enabled }               otomatik onay ayarı
 //
 // Onay: yoklama yazılır, öğrencinin önceki cihaz eşleşmesi kaldırılır ve
 // isteği gönderdiği cihaz yeni kayıtlı cihazı olur. Ret: yoklama yazılmaz.
-// İptal (otomatik onaylananlar için): hücre boşaltılır, cihaz eşleşmesi kaldırılır.
+// "Yine de yoklama ver": aynı tarayıcıdan reddedilen öğrenciye (ör. telefonu
+// bozuk, arkadaşınınkini kullandı) yoklama yazılır; cihaz kaydı DEĞİŞMEZ.
+// İptal (otomatik onaylanan / kayıt döneminde serbestçe kaydedilen): hücre
+// boşaltılır, öğrencinin cihaz eşleşmesi kaldırılır.
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { requireTeacher } from '@/utils/teacherAuth';
@@ -16,7 +22,9 @@ import { getSheetData, writeMainCell, appendLogRow, isRetryableError, SheetData 
 import {
   analyzeDevices,
   openPendingEntries,
-  autoApprovedToday,
+  unattendedRecordsToday,
+  sameBrowserBlocksToday,
+  sameBrowserOwner,
   warningsFor,
   parseReasonTag,
   reasonLabel,
@@ -25,6 +33,8 @@ import {
   buildLogRow,
   RESULT,
   NOTE_TEACHER_APPROVED,
+  NOTE_TEACHER_OVERRIDE,
+  NOTE_AUTO_APPROVED,
   REGISTRATION_CLASS_DAYS,
   LogEntry,
   DeviceAnalysis
@@ -42,10 +52,15 @@ export interface ApprovalItem {
   warnings: { level: 'weak' | 'strong'; text: string }[];
 }
 
-function describe(analysis: DeviceAnalysis, data: SheetData, entry: LogEntry): ApprovalItem {
+function describe(
+  analysis: DeviceAnalysis,
+  data: SheetData,
+  entry: LogEntry,
+  options: { recordedOnly?: boolean } = {}
+): ApprovalItem {
   const nameOf = nameLookup(data.main);
   const reason = parseReasonTag(entry.note);
-  const { level, warnings } = warningsFor(analysis, entry, reason, nameOf);
+  const { level, warnings } = warningsFor(analysis, entry, reason, nameOf, undefined, options);
   return {
     studentId: entry.studentId,
     name: entry.name || nameOf(entry.studentId),
@@ -65,15 +80,48 @@ function currentPending(data: SheetData, analysis: DeviceAnalysis): LogEntry[] {
   });
 }
 
+// Bugün öğretmene sorulmadan yazılan kayıtlardan kontrol edilmesi gerekenler:
+// tüm otomatik onaylar ve sonradan uyarı oluşan serbest ilk kayıtlar
+// (yalnızca diğer öğrencilerin yazılmış yoklamalarıyla karşılaştırılır; bekleyen
+// istekler zaten kendi listesinde görünüyor)
+function reviewItems(data: SheetData, analysis: DeviceAnalysis, now: number) {
+  return unattendedRecordsToday(analysis, now)
+    .map(entry => {
+      const auto = entry.note.startsWith(NOTE_AUTO_APPROVED);
+      const item = describe(analysis, data, entry, { recordedOnly: true });
+      return {
+        entry,
+        auto,
+        item: { ...item, reason: auto ? 'Otomatik onaylandı' : 'Kayıt döneminde öğretmen onayı olmadan kaydedildi' }
+      };
+    })
+    .filter(({ item, auto }) => auto || item.level !== 'clean');
+}
+
+function blockedItems(data: SheetData, analysis: DeviceAnalysis, now: number) {
+  const nameOf = nameLookup(data.main);
+  return sameBrowserBlocksToday(analysis, now).map(entry => {
+    const owner = sameBrowserOwner(entry);
+    const item: ApprovalItem = {
+      studentId: entry.studentId,
+      name: entry.name || nameOf(entry.studentId),
+      week: entry.week,
+      at: formatIstanbul(entry.timestamp),
+      reason: `${owner} ${nameOf(owner)} adına kayıtlı telefondan denedi; yoklama reddedildi`,
+      level: 'strong',
+      warnings: []
+    };
+    return { entry, item };
+  });
+}
+
 function buildState(data: SheetData) {
   const analysis = analyzeDevices(data.log);
   const now = Date.now();
   return {
     pending: currentPending(data, analysis).map(entry => describe(analysis, data, entry)),
-    autoApproved: autoApprovedToday(analysis, now).map(entry => ({
-      ...describe(analysis, data, entry),
-      reason: 'Otomatik onaylandı'
-    })),
+    blocked: blockedItems(data, analysis, now).map(({ item }) => item),
+    review: reviewItems(data, analysis, now).map(({ item }) => item),
     autoApproveEnabled: analysis.autoApproveEnabled,
     registration: {
       open: isRegistrationOpen(analysis, now),
@@ -147,24 +195,42 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         deviceId: entry.deviceId, model: entry.model, ip: entry.ip, note: 'Öğretmen reddetti'
       }));
       message = `${entry.studentId} ${entry.name}: Hafta ${entry.week} reddedildi`;
+    } else if (action === 'override') {
+      const found = blockedItems(data, analysis, now)
+        .find(({ entry }) => entry.studentId === studentId && entry.week === week);
+      if (!found) return res.status(404).json({ error: 'Reddedilen deneme bulunamadı (başka bir işlemle sonuçlanmış olabilir)' });
+      const entry = found.entry;
+      const row = findStudentRow(data.main, entry.studentId);
+      if (row === -1) return res.status(404).json({ error: `${entry.studentId} listede yok` });
+      // Cihaz kimliği boş yazılır: telefon kimin adına kayıtlıysa onun kalır
+      await Promise.all([
+        ...(!hasAttended(data.main, row, entry.week) ? [writeMainCell(row, weekColumn(entry.week), 'VAR')] : []),
+        appendLogRow(buildLogRow({
+          now, week: entry.week, studentId: entry.studentId, name: entry.name, result: RESULT.recorded,
+          deviceId: '', model: entry.model, ip: entry.ip,
+          note: `${NOTE_TEACHER_OVERRIDE}: ${sameBrowserOwner(entry)} adına kayıtlı telefondan (cihaz kaydı değişmedi)`
+        }))
+      ]);
+      message = `${entry.studentId} ${entry.name}: Hafta ${entry.week} yoklaması verildi`;
     } else if (action === 'cancel') {
-      const entry = autoApprovedToday(analysis, now)
-        .find(item => item.studentId === studentId && item.week === week);
-      if (!entry) return res.status(404).json({ error: 'Otomatik onaylanan kayıt bulunamadı' });
+      const found = reviewItems(data, analysis, now)
+        .find(({ entry }) => entry.studentId === studentId && entry.week === week);
+      if (!found) return res.status(404).json({ error: 'İptal edilecek kayıt bulunamadı' });
+      const entry = found.entry;
       const row = findStudentRow(data.main, entry.studentId);
       const base = { week: entry.week, studentId: entry.studentId, name: entry.name };
       await Promise.all([
         ...(row !== -1 ? [writeMainCell(row, weekColumn(entry.week), '')] : []),
         appendLogRow(buildLogRow({
           ...base, now, result: RESULT.cancelled, deviceId: entry.deviceId, model: entry.model, ip: entry.ip,
-          note: 'Öğretmen otomatik onayı iptal etti'
+          note: 'Öğretmen kaydı iptal etti'
         })),
         appendLogRow(buildLogRow({
           ...base, now: now + 1, result: RESULT.release, deviceId: '', model: '', ip: '',
-          note: 'Otomatik onay iptal edildi: cihaz eşleşmesi kaldırıldı'
+          note: 'Kayıt iptal edildi: cihaz eşleşmesi kaldırıldı'
         }))
       ]);
-      message = `${entry.studentId} ${entry.name}: Hafta ${entry.week} otomatik onayı iptal edildi`;
+      message = `${entry.studentId} ${entry.name}: Hafta ${entry.week} yoklaması iptal edildi`;
     } else if (action === 'setAutoApprove') {
       const enabled = body.enabled === true;
       await appendLogRow(settingRow(now, enabled));
