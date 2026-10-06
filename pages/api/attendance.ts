@@ -19,7 +19,6 @@ import {
   RESULT
 } from '@/utils/deviceGuard';
 import { getPlace, distanceKm, isValidCoordinate, MAX_DISTANCE_KM } from '@/utils/places';
-import { formatIstanbul } from '@/utils/time';
 import { parseQrPayload, isLegacyQr } from '@/utils/qrFormat';
 import { isQrSignatureValid, requireTeacher } from '@/utils/teacherAuth';
 
@@ -168,11 +167,11 @@ async function handlePostRequest(
       return res.status(200).json({ success: true, isAlreadyAttended: true });
     }
 
-    // 7. Yoklamayı kaydet: hücreye sadece "VAR <tarih saat>", ayrıntılar kayıt
+    // 7. Yoklamayı kaydet: hücreye sadece "VAR", tarih/saat ve ayrıntılar kayıt
     //    sayfasına (ikisi diğer öğrencilerin yazmalarıyla birlikte tek istekte gider)
     const note = findSuspicion(data.log, { device, model, ip, studentId, now });
     await Promise.all([
-      writeMainCell(studentRowIndex, weekColumnIndex, `VAR ${formatIstanbul(now)}`),
+      writeMainCell(studentRowIndex, weekColumnIndex, 'VAR'),
       appendLogRow(buildLogRow({ ...logBase, result: RESULT.recorded, note }))
     ]);
 
@@ -207,7 +206,7 @@ async function handlePostRequest(
 //  - Kayıt sayfasına SIFIRLAMA satırı ekler: bu andan önceki cihaz eşleşmeleri
 //    artık engel oluşturmaz (kayıtlar silinmez, geçmiş korunur)
 //  - Eski sürümün yazdığı "VAR (DF:..) (HW:..) (IP:..) (DATE:..)" hücrelerini
-//    "VAR <tarih saat>" biçimine çevirir
+//    sadece "VAR" yapar; hücredeki tarih/saat kayıt sayfasına aktarılır
 async function handleResetRequest(res: NextApiResponse<ResponseData>) {
   try {
     const now = Date.now();
@@ -218,11 +217,23 @@ async function handleResetRequest(res: NextApiResponse<ResponseData>) {
     for (let row = 1; row < data.main.length; row++) {
       for (let col = FIRST_WEEK_COLUMN; col < FIRST_WEEK_COLUMN + MAX_WEEK; col++) {
         const cell = data.main[row]?.[col];
-        if (typeof cell !== 'string' || !cell.startsWith('VAR') || !cell.includes('(')) continue;
-        const dateMatch = /\(DATE:(\d{12,14})\)/.exec(cell);
-        const newValue = dateMatch ? `VAR ${formatIstanbul(Number(dateMatch[1]))}` : 'VAR';
-        writes.push(writeMainCell(row, col, newValue));
+        // Yalnızca eski sistemin ürettiği hücreler (öğretmenin elle yazdığı notlara dokunulmaz)
+        if (typeof cell !== 'string' || !cell.startsWith('VAR') || !/\((DF|HW|IP|DATE):/.test(cell)) continue;
+        writes.push(writeMainCell(row, col, 'VAR'));
         convertedCells++;
+
+        const dateMatch = /\(DATE:(\d{12,14})\)/.exec(cell);
+        if (dateMatch) {
+          writes.push(appendLogRow(buildLogRow({
+            now: Number(dateMatch[1]),
+            week: col - FIRST_WEEK_COLUMN + 1,
+            studentId: String(data.main[row]?.[STUDENT_ID_COLUMN] ?? '').trim(),
+            name: String(data.main[row]?.[STUDENT_NAME_COLUMN] ?? ''),
+            result: RESULT.legacy,
+            deviceId: '', model: '', ip: '',
+            note: 'Eski biçimli hücreden aktarıldı'
+          })));
+        }
       }
     }
     writes.push(appendLogRow(buildLogRow({

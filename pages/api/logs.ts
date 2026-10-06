@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { requireTeacher } from '@/utils/teacherAuth';
+import { formatIstanbul } from '@/utils/time';
 
 const MAX_LOGS = 500;
 const MAX_LOG_LENGTH = 500;
@@ -20,7 +21,8 @@ export default async function handler(
       if (!log) {
         return res.status(400).json({ error: 'Log içeriği gerekli' });
       }
-      debugLogs.push(String(log).slice(0, MAX_LOG_LENGTH));
+      // Her satırın başına İstanbul saatiyle tarih/saat eklenir
+      debugLogs.push(`[${formatIstanbul(Date.now(), true)}] ${String(log).slice(0, MAX_LOG_LENGTH)}`);
       if (debugLogs.length > MAX_LOGS) {
         debugLogs = debugLogs.slice(-MAX_LOGS);
       }

@@ -204,7 +204,7 @@ const AttendanceSystem = () => {
     const confirmed = window.confirm(
       'Cihaz kayıtları sıfırlansın mı?\n\n' +
       'Bugün yoklama verilmiş telefonlar başka öğrenciler için tekrar kullanılabilir hale gelir. ' +
-      'Eski biçimdeki uzun hücreler de "VAR tarih saat" biçimine sadeleştirilir.'
+      'Eski biçimdeki uzun hücreler de sadece "VAR" olarak sadeleştirilir (tarih/saat Yoklama Kayıtları sayfasına aktarılır).'
     );
     if (!confirmed) return;
 

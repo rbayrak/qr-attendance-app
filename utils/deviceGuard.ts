@@ -33,7 +33,8 @@ export const RESULT = {
   blocked: 'ENGELLENDİ',
   outOfLocation: 'KONUM DIŞI',
   cameraError: 'KAMERA HATASI',
-  reset: 'SIFIRLAMA'
+  reset: 'SIFIRLAMA',
+  legacy: 'ESKİ KAYIT' // eski biçimli hücreden aktarılan yoklama (cihaz kuralında kullanılmaz)
 } as const;
 
 // İstemcinin IP adresi (Vercel bu başlıkları kendisi ayarlar)

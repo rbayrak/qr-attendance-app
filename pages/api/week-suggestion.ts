@@ -10,9 +10,11 @@ import { istanbulDayKey, dayKeyDiff, dayKeyFromTurkishDate } from '@/utils/time'
 const FIRST_WEEK_COLUMN = 3;
 const MAX_WEEK = 16;
 
-// Hücredeki yoklama tarihini gün anahtarı olarak döndürür (yoksa null)
+// Hücredeki yoklama tarihini gün anahtarı olarak döndürür (yoksa null).
+// Yeni kayıtlarda hücrede yalnızca "VAR" bulunur, tarih kayıt sayfasından gelir;
+// burada eski biçimli ya da öğretmenin elle tarih yazdığı hücreler okunur.
 function cellDayKey(cell: string): string | null {
-  const fromText = dayKeyFromTurkishDate(cell); // "VAR 06.10.2026 14:32"
+  const fromText = dayKeyFromTurkishDate(cell); // "VAR 06.10.2026"
   if (fromText) return fromText;
   const legacy = /\(DATE:(\d{12,14})\)/.exec(cell); // eski biçim
   return legacy ? istanbulDayKey(Number(legacy[1])) : null;
@@ -56,7 +58,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (cell.includes('VAR')) consider(cellDayKey(cell));
     }
     for (const row of log.slice(1)) {
-      if (row[LOG_COL.result] === RESULT.recorded && Number(row[LOG_COL.week]) === lastWeek) {
+      const result = row[LOG_COL.result];
+      if ((result === RESULT.recorded || result === RESULT.legacy) && Number(row[LOG_COL.week]) === lastWeek) {
         const timestamp = Number(row[LOG_COL.timestamp]);
         if (Number.isFinite(timestamp) && timestamp > 0) consider(istanbulDayKey(timestamp));
       }
