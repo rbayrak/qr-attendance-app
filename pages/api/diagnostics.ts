@@ -1,7 +1,8 @@
 // pages/api/diagnostics.ts
-// Öğrenci tarafında kamera açılamadığında hatanın nedenini "Yoklama Kayıtları"
-// sayfasına yazar. Böylece sorunun tarayıcı izninden mi, uygulama içi
-// tarayıcıdan mı (Instagram vb.) yoksa uygulamadan mı kaynaklandığı görülebilir.
+// Öğrenci tarafında kamera açılamadığında ya da konum alınamadığında hatanın
+// nedenini "Yoklama Kayıtları" sayfasına yazar. Böylece sorunun tarayıcı
+// izninden mi, uygulama içi tarayıcıdan mı (Instagram vb.) yoksa uygulamadan mı
+// kaynaklandığı görülebilir. Bu satırlar cihaz kurallarında kullanılmaz.
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { appendLogRow } from '@/utils/sheets';
@@ -27,13 +28,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   recentReports.push(now);
 
   const body = req.body || {};
+  const isLocation = body.kind === 'location';
   const studentId = clip(body.studentId, 20);
   const error = clip(body.error, 160);
   const browser = clip(body.browser, 60);
   const userAgent = clip(req.headers['user-agent'], 200);
   const note = `${error} | ${browser}${body.inAppBrowser ? ' (uygulama içi tarayıcı)' : ''} | ${userAgent}`;
 
-  console.warn(`Kamera hatası: öğrenci=${studentId} ${note}`);
+  console.warn(`${isLocation ? 'Konum' : 'Kamera'} hatası: öğrenci=${studentId} ${note}`);
 
   try {
     const device = getDeviceIdentity(req, res);
@@ -42,14 +44,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       week: '',
       studentId,
       name: '',
-      result: RESULT.cameraError,
+      result: isLocation ? RESULT.locationError : RESULT.cameraError,
       deviceId: device.id,
       model: clip(body.hardwareSignature, 8),
       ip: getClientIP(req),
       note
     }));
   } catch (writeError) {
-    console.error('Kamera hatası kaydı yazılamadı:', writeError);
+    console.error('Hata kaydı yazılamadı:', writeError);
   }
 
   return res.status(200).json({ success: true });

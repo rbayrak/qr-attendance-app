@@ -142,10 +142,19 @@ const FullscreenQrScanner: React.FC<FullscreenQrScannerProps> = ({
         const detail = String((error as Error)?.message || error || '');
         const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
         if (/NotAllowed|Permission/i.test(detail)) {
+          // İzin reddedilince tarayıcı bunu hatırlar: "QR Tara"ya tekrar basmak aynı
+          // hatayı verir. En hızlı yol izin gerektirmeyen fotoğraf seçeneği.
+          const photoTip = 'En kolayı: aşağıdaki turuncu "📸 Fotoğraf çekerek okut" düğmesine basın. ';
           onCameraErrorRef.current(
-            isIOS
-              ? 'Kamera izni verilmedi. Adres çubuğundaki "aA" > Web Sitesi Ayarları > Kamera > İzin Ver yapıp tekrar deneyin ya da "Fotoğraf çekerek okut" seçeneğini kullanın.'
-              : 'Kamera izni verilmedi. Adres çubuğundaki kilit simgesi > İzinler > Kamera > İzin ver yapıp tekrar deneyin ya da "Fotoğraf çekerek okut" seçeneğini kullanın.',
+            /dismissed/i.test(detail)
+              ? 'Kamera izni sorusu yanıtlanmadan kapandı. ' + photoTip +
+                'Canlı kamera için "Canlı kamerayı tekrar dene"ye basıp soruda "İzin ver"i seçin.'
+              : isIOS
+                ? 'Kamera izni verilmedi. ' + photoTip +
+                  'Canlı kamera için sayfayı yenileyin, "QR Tara"ya basın ve soruda "İzin Ver"i seçin ' +
+                  '(soru gelmezse adres çubuğundaki "aA" > Web Sitesi Ayarları > Kamera > İzin Ver).'
+                : 'Kamera izni verilmedi. ' + photoTip +
+                  'Canlı kamera için adres çubuğundaki kilit/ayar simgesi > İzinler > Kamera > İzin ver yapıp sayfayı yenileyin.',
             detail
           );
         } else if (/NotFound|Overconstrained|Requested device not found/i.test(detail)) {

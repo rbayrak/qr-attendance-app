@@ -64,6 +64,8 @@ export const RESULT = {
   blocked: 'ENGELLENDİ',
   outOfLocation: 'KONUM DIŞI',
   cameraError: 'KAMERA HATASI',
+  // Öğrencinin telefonu konum veremedi ya da konum okuldan uzak çıktı (yalnızca teşhis için)
+  locationError: 'KONUM HATASI',
   reset: 'SIFIRLAMA',
   release: 'CİHAZ SERBEST', // öğrencinin önceki cihaz eşleşmeleri artık sayılmaz
   setting: 'AYAR',

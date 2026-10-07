@@ -24,6 +24,7 @@ const ICONS: Record<string, string> = {
   [RESULT.blocked]: '⛔',
   [RESULT.outOfLocation]: '📍',
   [RESULT.cameraError]: '📷',
+  [RESULT.locationError]: '🧭',
   [RESULT.reset]: '🔄',
   [RESULT.release]: '🔓',
   [RESULT.setting]: '⚙️',

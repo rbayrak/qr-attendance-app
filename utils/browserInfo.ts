@@ -39,7 +39,12 @@ export function detectEphemeralBrowser(userAgent: string): string | null {
 
 // Kısa tarayıcı özeti: "iOS 17.5 / Safari", "Android 14 / Chrome 129"
 export function browserSummary(userAgent: string): string {
-  const ios = /OS (\d+)[_.](\d+)/.exec(userAgent);
+  // iOS 26'dan itibaren Safari, kimlik metnindeki iOS sürümünü 18.x'te sabit
+  // tutuyor; gerçek sürüm "Version/26.x" kısmında (Safari sürümü = iOS sürümü)
+  const safariVersion = /Version\/(\d+)\.(\d+)/.exec(userAgent);
+  const ios = safariVersion && Number(safariVersion[1]) >= 26
+    ? safariVersion
+    : /OS (\d+)[_.](\d+)/.exec(userAgent);
   const android = /Android (\d+(?:\.\d+)?)/.exec(userAgent);
   const os = /iPhone|iPad|iPod/.test(userAgent) && ios
     ? `iOS ${ios[1]}.${ios[2]}`

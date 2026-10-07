@@ -152,6 +152,24 @@ async function collectDeviceDetail(): Promise<string> {
   return parts.join(';');
 }
 
+// Bu kadar kötü (metre) doğrulukla gelen konum "yaklaşık konum" sayılır: iPhone'da
+// "Tam Konum" kapalıysa (Android'de yaklaşık konum izni) konum kilometrelerce kayar
+const APPROXIMATE_ACCURACY_M = 1000;
+// Bir sayfa açılışında debug konsoluna yazılan en fazla konum sorunu
+const MAX_LOCATION_REPORTS = 3;
+
+const isIOSDevice = () => /iPhone|iPad|iPod/.test(navigator.userAgent);
+
+// iPhone'da konum izni tarayıcı başına verilir (Konum Servisleri listesindeki adı)
+const iosLocationAppName = () => {
+  const userAgent = navigator.userAgent;
+  if (/CriOS/.test(userAgent)) return 'Chrome';
+  if (/FxiOS/.test(userAgent)) return 'Firefox';
+  if (/EdgiOS/.test(userAgent)) return 'Edge';
+  if (/GSA\//.test(userAgent)) return 'Google';
+  return 'Safari Web Siteleri';
+};
+
 const parseJsonSafe = <T,>(text: string): T | null => {
   try {
     return JSON.parse(text) as T;
@@ -267,6 +285,9 @@ const AttendanceSystem = () => {
   const [inAppBrowser, setInAppBrowser] = useState<string | null>(null);
   const [ephemeralBrowser, setEphemeralBrowser] = useState<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
+  // Canlı kamera bu sayfada açılamadıysa fotoğraf seçeneği öne çıkarılır
+  const [cameraFailed, setCameraFailed] = useState<boolean>(false);
+  const locationReportsRef = useRef<number>(0);
 
   // Debug konsolu: olaylar sunucuda "Yoklama Kayıtları" sayfasından okunur (sahte
   // satır eklenemez). Öğretmenin bu oturumdaki kendi işlemleri (QR oluşturma vb.)
@@ -553,12 +574,37 @@ const AttendanceSystem = () => {
     if (savedId) setStudentId(current => current || savedId);
   }, [mode]);
 
+  // Kamera / konum sorununun nedenini öğretmenin debug konsoluna yazar
+  const reportProblem = (kind: 'camera' | 'location', detail: string) => {
+    const userAgent = navigator.userAgent;
+    void fetch('/api/diagnostics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kind,
+        studentId: verifiedStudent?.studentId || studentId.trim(),
+        error: detail,
+        browser: browserSummary(userAgent),
+        inAppBrowser: !!detectInAppBrowser(userAgent)
+      })
+    }).catch(() => undefined);
+  };
+
+  // Aynı öğrenci defalarca denerse konsol dolmasın
+  const reportLocationProblem = (detail: string) => {
+    if (locationReportsRef.current >= MAX_LOCATION_REPORTS) return;
+    locationReportsRef.current += 1;
+    reportProblem('location', detail);
+  };
+
   const getLocation = () => {
     if (!navigator.geolocation) {
-      setStatus('❌ Bu tarayıcı konum özelliğini desteklemiyor');
+      setStatus('❌ Bu tarayıcı konum özelliğini desteklemiyor. Sayfayı Safari veya Chrome ile açın.');
+      reportLocationProblem('Tarayıcıda konum özelliği yok');
       return;
     }
 
+    const ios = isIOSDevice();
     setIsCheckingLocation(true);
     setStatus('📍 Konum alınıyor...');
     navigator.geolocation.getCurrentPosition(
@@ -583,8 +629,15 @@ const AttendanceSystem = () => {
           if (data.atSchool) {
             setStatus('✅ Konum doğrulandı');
           } else {
+            const accuracyM = Math.round(currentLocation.accuracy);
+            const approximate = accuracyM > APPROXIMATE_ACCURACY_M;
             setStatus(`⚠️ Okul konumunda görünmüyorsunuz (${data.distanceToSchoolM} metre uzakta). ` +
-              'Sınıftaysanız konumunuz tam algılanamamış olabilir; tekrar deneyin veya QR\'ı okutun.');
+              (!approximate
+                ? 'Sınıftaysanız konumunuz tam algılanamamış olabilir; tekrar deneyin veya QR\'ı okutun.'
+                : `Telefonunuz konumu yaklaşık veriyor (±${accuracyM} m). ` + (ios
+                  ? `Ayarlar > Gizlilik ve Güvenlik > Konum Servisleri > ${iosLocationAppName()} > "Tam Konum"u açıp tekrar deneyin.`
+                  : 'Tarayıcıya "tam konum" izni verip telefonun Konum özelliğini açın, sonra tekrar deneyin.')));
+            reportLocationProblem(`Okula ${data.distanceToSchoolM} m uzakta görünüyor (doğruluk ±${accuracyM} m)`);
           }
         } catch {
           setStatus('❌ Konum doğrulanamadı (bağlantı hatası). Tekrar deneyin.');
@@ -593,13 +646,25 @@ const AttendanceSystem = () => {
         }
       },
       (error) => {
+        // Telefonun verdiği hata metni (çoğu zaman İngilizce) yalnızca konsola yazılır
+        const locationServices = ios
+          ? 'Ayarlar > Gizlilik ve Güvenlik > Konum Servisleri'
+          : 'telefonun Konum özelliği';
         if (error.code === error.PERMISSION_DENIED) {
-          setStatus('❌ Konum izni verilmedi. Tarayıcı ayarlarından konum izni verin.');
+          setStatus(ios
+            ? `❌ Konum izni verilmedi. iPhone'da ${locationServices} açık olmalı ve aynı ekrandaki ` +
+              `"${iosLocationAppName()}" için "Uygulamayı Kullanırken" seçili olmalı. ` +
+              'Sonra sayfayı yenileyip "Konumu Doğrula"ya basın ve soruda "İzin Ver"i seçin.'
+            : '❌ Konum izni verilmedi. Adres çubuğundaki kilit/ayar simgesi > İzinler > Konum > İzin ver yapın; ' +
+              'telefonun Konum özelliği de açık olmalı. Sonra sayfayı yenileyip tekrar deneyin.');
         } else if (error.code === error.TIMEOUT) {
-          setStatus('❌ Konum alınamadı (zaman aşımı). Tekrar deneyin.');
+          setStatus(`❌ Konum alınamadı (zaman aşımı). ${upperFirst(locationServices)} açık mı kontrol edip tekrar deneyin; ` +
+            'Wi-Fi\'yi açmak konumu hızlandırır.');
         } else {
-          setStatus(`❌ Konum hatası: ${error.message}`);
+          setStatus(`❌ Konum bulunamadı. ${upperFirst(locationServices)} açık mı kontrol edip tekrar deneyin; ` +
+            'Wi-Fi\'yi açmak konumu hızlandırır.');
         }
+        reportLocationProblem(`Konum alınamadı (kod ${error.code}: ${error.message || '-'})`);
         setIsCheckingLocation(false);
       },
       // Konum alınamazsa sonsuza kadar beklemesin; 1 dk içindeki konum yeniden kullanılabilir
@@ -793,25 +858,11 @@ const AttendanceSystem = () => {
 
   const handleQrDecoded = (decodedText: string): boolean => processQrText(decodedText);
 
-  // Kamera hatasının nedenini öğretmenin görebilmesi için kayda geçir
-  const reportCameraError = (detail: string) => {
-    const userAgent = navigator.userAgent;
-    void fetch('/api/diagnostics', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        studentId: studentId.trim(),
-        error: detail,
-        browser: browserSummary(userAgent),
-        inAppBrowser: !!detectInAppBrowser(userAgent)
-      })
-    }).catch(() => undefined);
-  };
-
   const handleCameraError = (message: string, detail: string) => {
     setIsScanning(false);
+    setCameraFailed(true);
     setStatus(`❌ ${message}`);
-    reportCameraError(detail);
+    reportProblem('camera', detail);
   };
 
   // Telefonun kendi kamera uygulamasıyla fotoğraf çekip QR'ı fotoğraftan oku
@@ -1302,15 +1353,26 @@ const AttendanceSystem = () => {
                   <MapPin size={18} /> {isCheckingLocation ? 'Konum kontrol ediliyor...' : 'Konumu Doğrula'}
                 </button>
 
+                {/* Kamera izni reddedilince tarayıcı bunu hatırlar; öğrenci "QR Tara"ya
+                    defalarca basmasın diye izin gerektirmeyen yol öne çıkarılır */}
+                {canScan && cameraFailed && (
+                  <button
+                    onClick={openPhotoCapture}
+                    className="w-full p-4 bg-orange-500 text-white rounded-lg text-lg font-semibold hover:bg-orange-600"
+                  >
+                    📸 Fotoğraf çekerek okut
+                  </button>
+                )}
+
                 <button
                   onClick={() => setIsScanning(true)}
                   className="w-full p-4 bg-green-600 text-white rounded-lg text-lg font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={!canScan}
                 >
-                  {isSubmitting ? '⏳ Gönderiliyor...' : '📷 QR Tara'}
+                  {isSubmitting ? '⏳ Gönderiliyor...' : cameraFailed ? '📷 Canlı kamerayı tekrar dene' : '📷 QR Tara'}
                 </button>
 
-                {canScan && (
+                {canScan && !cameraFailed && (
                   <button
                     onClick={openPhotoCapture}
                     className="w-full text-sm text-gray-600 underline"
