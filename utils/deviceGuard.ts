@@ -488,6 +488,87 @@ function timeDistance(ms: number): string {
 }
 
 /**
+ * Öğrencinin kendi geçmişine dayanan ek bilgiler (önceki onaylar, kayıtlı telefonuyla
+ * karşılaştırma, eski tarayıcının geri dönmesi). Yalnızca öğretmene gösterilir; hiçbir
+ * yoklama kararını değiştirmez. warningsFor bunu hata yakalayıcı içinde çağırır.
+ */
+function historySignals(
+  analysis: DeviceAnalysis,
+  subject: { studentId: string; deviceId: string; model: string; timestamp: number },
+  reason: PendingReason,
+  modelKnown: boolean,
+  options: { recordedOnly?: boolean }
+): { warnings: Warning[]; notes: string[] } {
+  const extraWarnings: Warning[] = [];
+  const extraNotes: string[] = [];
+
+  // Çerez silinmesi telefonu aynı kalan öğrencide ender ve tek seferliktir; gelmeyen
+  // bir arkadaş için başka telefondan verilen yoklama ise her hafta yeni bir "cihaz
+  // değişikliği" ister. Bu yüzden daha önceki her onay söylenir (bu kaydın kendisi hariç).
+  let earlierApprovals = 0;
+  for (const entry of analysis.entries) {
+    if (entry.timestamp >= subject.timestamp) break;
+    if (entry.timestamp <= analysis.lastResetAt || entry.studentId !== subject.studentId) continue;
+    if (entry.result === RESULT.recorded &&
+      (entry.note.startsWith(NOTE_AUTO_APPROVED) || entry.note.startsWith(NOTE_TEACHER_APPROVED))) {
+      earlierApprovals++;
+    }
+  }
+  if (earlierApprovals > 0) {
+    extraWarnings.push({
+      level: 'weak',
+      text: `Bu dönem daha önce ${earlierApprovals} kez cihaz değişikliği onaylandı (tekrarlıyorsa öğrenciyle konuşun)`
+    });
+  }
+
+  // Cihaz değişikliğinde öğrencinin KENDİ kayıtlı telefonuyla karşılaştırma. Çerezi
+  // silinen öğrencinin telefonu aynıdır; başka birinin telefonu (ya da ikinci bir cihaz)
+  // çoğu zaman farklı modeldir. Aynı model telefonlar ayırt edilemediği için "aynı"
+  // sonucu riski düşürmez, yalnızca bilgi olarak (sınıftaki aynı model sayısıyla) yazılır.
+  if (reason.code === 'deviceChanged' && !options.recordedOnly) {
+    const registered = analysis.studentDevice.get(subject.studentId);
+    if (registered && modelKnown && isKnownModel(registered.model)) {
+      if (!sameHardware(registered.model, subject.model)) {
+        extraWarnings.push({
+          level: 'weak',
+          text: 'Kayıtlı telefonundan farklı cihaz imzası: yeni bir telefon ya da başka birinin telefonu olabilir'
+        });
+      } else {
+        let sameModelOthers = 0;
+        for (const [studentId, binding] of analysis.studentDevice) {
+          if (studentId !== subject.studentId && sameHardware(binding.model, subject.model)) sameModelOthers++;
+        }
+        extraNotes.push(sameModelOthers === 0
+          ? '✓ Kayıtlı telefonuyla aynı cihaz imzası ve bu model sınıfta başka kimsede yok: büyük olasılıkla kendi telefonu, çerezleri silinmiş'
+          : `Kayıtlı telefonuyla aynı model; ancak bu modelden sınıfta ${sameModelOthers} kişi daha var, ` +
+            'aynı model başka bir telefon da olabilir');
+      }
+    }
+
+    // Bu tarayıcı daha önce bu öğrenciye kayıtlıydı ama sonradan başka bir cihaz onaylandı:
+    // eski çerez silinmemiş, demek ki onaylanan değişiklik başka bir telefondan olabilir
+    if (subject.deviceId && registered && registered.id !== subject.deviceId) {
+      let lastOwnUse = 0;
+      for (const entry of analysis.entries) {
+        if (entry.timestamp >= subject.timestamp) break;
+        if (entry.timestamp <= analysis.lastResetAt) continue;
+        if (entry.result === RESULT.recorded && entry.studentId === subject.studentId && entry.deviceId === subject.deviceId) {
+          lastOwnUse = entry.timestamp;
+        }
+      }
+      if (lastOwnUse) {
+        extraWarnings.push({
+          level: 'weak',
+          text: `Bu tarayıcı daha önce bu öğrenciye kayıtlıydı (son yoklama ${formatIstanbul(lastOwnUse)}); ` +
+            'sonradan onaylanan cihaz değişikliği başka bir telefondan yapılmış olabilir ya da öğrenci iki tarayıcı kullanıyor'
+        });
+      }
+    }
+  }
+  return { warnings: extraWarnings, notes: extraNotes };
+}
+
+/**
  * Bir cihaz değişikliği / onay bekleyen kayıt için uyarılar. `until` verilirse
  * yalnızca o andan önceki satırlara bakılır (yoklama anındaki karar); verilmezse
  * sonradan gelen satırlar da hesaba katılır (öğretmen panelinde güncel durum).
@@ -616,68 +697,14 @@ export function warningsFor(
     });
   }
 
-  // Çerez silinmesi telefonu aynı kalan öğrencide ender ve tek seferliktir; gelmeyen
-  // bir arkadaş için başka telefondan verilen yoklama ise her hafta yeni bir "cihaz
-  // değişikliği" ister. Bu yüzden daha önceki her onay söylenir (bu kaydın kendisi hariç).
-  let earlierApprovals = 0;
-  for (const entry of analysis.entries) {
-    if (entry.timestamp >= subject.timestamp) break;
-    if (entry.timestamp <= analysis.lastResetAt || entry.studentId !== subject.studentId) continue;
-    if (entry.result === RESULT.recorded &&
-      (entry.note.startsWith(NOTE_AUTO_APPROVED) || entry.note.startsWith(NOTE_TEACHER_APPROVED))) {
-      earlierApprovals++;
-    }
-  }
-  if (earlierApprovals > 0) {
-    warnings.push({
-      level: 'weak',
-      text: `Bu dönem daha önce ${earlierApprovals} kez cihaz değişikliği onaylandı (tekrarlıyorsa öğrenciyle konuşun)`
-    });
-  }
-
-  // Cihaz değişikliğinde öğrencinin KENDİ kayıtlı telefonuyla karşılaştırma. Çerezi
-  // silinen öğrencinin telefonu aynıdır; başka birinin telefonu (ya da ikinci bir cihaz)
-  // çoğu zaman farklı modeldir. Aynı model telefonlar ayırt edilemediği için "aynı"
-  // sonucu riski düşürmez, yalnızca bilgi olarak (sınıftaki aynı model sayısıyla) yazılır.
-  if (reason.code === 'deviceChanged' && !options.recordedOnly) {
-    const registered = analysis.studentDevice.get(subject.studentId);
-    if (registered && modelKnown && isKnownModel(registered.model)) {
-      if (!sameHardware(registered.model, subject.model)) {
-        warnings.push({
-          level: 'weak',
-          text: 'Kayıtlı telefonundan farklı cihaz imzası: yeni bir telefon ya da başka birinin telefonu olabilir'
-        });
-      } else {
-        let sameModelOthers = 0;
-        for (const [studentId, binding] of analysis.studentDevice) {
-          if (studentId !== subject.studentId && sameHardware(binding.model, subject.model)) sameModelOthers++;
-        }
-        notes.push(sameModelOthers === 0
-          ? '✓ Kayıtlı telefonuyla aynı cihaz imzası ve bu model sınıfta başka kimsede yok: büyük olasılıkla kendi telefonu, çerezleri silinmiş'
-          : `Kayıtlı telefonuyla aynı model; ancak bu modelden sınıfta ${sameModelOthers} kişi daha var, ` +
-            'aynı model başka bir telefon da olabilir');
-      }
-    }
-
-    // Bu tarayıcı daha önce bu öğrenciye kayıtlıydı ama sonradan başka bir cihaz onaylandı:
-    // eski çerez silinmemiş, demek ki onaylanan değişiklik başka bir telefondan olabilir
-    if (subject.deviceId && registered && registered.id !== subject.deviceId) {
-      let lastOwnUse = 0;
-      for (const entry of analysis.entries) {
-        if (entry.timestamp >= subject.timestamp) break;
-        if (entry.timestamp <= analysis.lastResetAt) continue;
-        if (entry.result === RESULT.recorded && entry.studentId === subject.studentId && entry.deviceId === subject.deviceId) {
-          lastOwnUse = entry.timestamp;
-        }
-      }
-      if (lastOwnUse) {
-        warnings.push({
-          level: 'weak',
-          text: `Bu tarayıcı daha önce bu öğrenciye kayıtlıydı (son yoklama ${formatIstanbul(lastOwnUse)}); ` +
-            'sonradan onaylanan cihaz değişikliği başka bir telefondan yapılmış olabilir ya da öğrenci iki tarayıcı kullanıyor'
-        });
-      }
-    }
+  // Öğrencinin kendi geçmişine dayanan ek bilgiler. Beklenmedik bir hata olursa yalnızca
+  // bu bilgiler atlanır: yoklama isteği ve öğretmenin onay listesi her durumda çalışır.
+  try {
+    const extra = historySignals(analysis, subject, reason, modelKnown, options);
+    warnings.push(...extra.warnings);
+    notes.push(...extra.notes);
+  } catch (error) {
+    console.error('Ek cihaz bilgisi hesaplanamadı, atlandı:', error);
   }
 
   const level: WarningLevel = warnings.some(w => w.level === 'strong')
