@@ -56,6 +56,7 @@ interface ApprovalItem {
   reason: string;
   level: 'clean' | 'weak' | 'strong';
   warnings: { level: 'weak' | 'strong'; text: string }[];
+  notes?: string[]; // riski değiştirmeyen bilgi satırları
 }
 
 interface ApprovalsState {
@@ -1107,11 +1108,16 @@ const AttendanceSystem = () => {
                     <span className="font-normal text-gray-500"> · Hafta {item.week} · {item.at}</span>
                   </div>
                   <div className="text-gray-700">{item.reason}</div>
-                  {item.warnings.length === 0 ? (
+                  {item.warnings.length === 0 && !item.notes?.length ? (
                     <div className="text-green-700">✓ Benzer cihaz yok; büyük olasılıkla öğrencinin kendi telefonu</div>
                   ) : item.warnings.map((warning, i) => (
                     <div key={i} className={warning.level === 'strong' ? 'text-red-700' : 'text-yellow-800'}>
                       {warning.level === 'strong' ? '⚠️' : '•'} {warning.text}
+                    </div>
+                  ))}
+                  {item.notes?.map((note, i) => (
+                    <div key={`note-${i}`} className={note.startsWith('✓') ? 'text-green-700' : 'text-gray-600'}>
+                      {note.startsWith('✓') ? note : `ℹ️ ${note}`}
                     </div>
                   ))}
                   {item.level === 'strong' ? (

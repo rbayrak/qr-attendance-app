@@ -57,6 +57,7 @@ export interface ApprovalItem {
   reason: string;
   level: 'clean' | 'weak' | 'strong';
   warnings: { level: 'weak' | 'strong'; text: string }[];
+  notes: string[];
 }
 
 function describe(
@@ -67,7 +68,7 @@ function describe(
 ): ApprovalItem {
   const nameOf = nameLookup(data.main);
   const reason = parseReasonTag(entry.note);
-  const { level, warnings } = warningsFor(analysis, entry, reason, nameOf, undefined, options);
+  const { level, warnings, notes } = warningsFor(analysis, entry, reason, nameOf, undefined, options);
   return {
     studentId: entry.studentId,
     name: entry.name || nameOf(entry.studentId),
@@ -75,7 +76,8 @@ function describe(
     at: formatIstanbul(entry.timestamp),
     reason: reasonLabel(reason, nameOf),
     level,
-    warnings
+    warnings,
+    notes
   };
 }
 
@@ -117,7 +119,8 @@ function blockedItems(data: SheetData, analysis: DeviceAnalysis, now: number) {
       at: formatIstanbul(entry.timestamp),
       reason: `${owner} ${nameOf(owner)} tarafından kullanılan telefondan (tarayıcıdan) denedi; yoklama reddedildi`,
       level: 'strong',
-      warnings: []
+      warnings: [],
+      notes: []
     };
     return { entry, item };
   });
