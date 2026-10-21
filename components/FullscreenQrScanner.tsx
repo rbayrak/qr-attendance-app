@@ -13,6 +13,17 @@ const RENDER_WIDTH = 1080;
 
 const ZOOM_PRESETS = [1, 2, 3];
 
+// iPhone'da Safari dışındaki tarayıcılarda kamera izni uygulamanın kendi ayarındadır
+// (iPhone Ayarlar > Chrome > Kamera); Safari'ye özgü "aA" menüsü bu tarayıcılarda yoktur
+const iosBrowserApp = (userAgent: string): string | null => {
+  if (/CriOS/.test(userAgent)) return 'Chrome';
+  if (/FxiOS/.test(userAgent)) return 'Firefox';
+  if (/EdgiOS/.test(userAgent)) return 'Edge';
+  if (/OPiOS|OPT\//.test(userAgent)) return 'Opera';
+  if (/GSA\//.test(userAgent)) return 'Google';
+  return null;
+};
+
 interface ZoomState {
   min: number;
   max: number;
@@ -141,6 +152,7 @@ const FullscreenQrScanner: React.FC<FullscreenQrScannerProps> = ({
         if (cancelled) return;
         const detail = String((error as Error)?.message || error || '');
         const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+        const iosApp = isIOS ? iosBrowserApp(navigator.userAgent) : null;
         if (/NotAllowed|Permission/i.test(detail)) {
           // İzin reddedilince tarayıcı bunu hatırlar: "QR Tara"ya tekrar basmak aynı
           // hatayı verir. En hızlı yol izin gerektirmeyen fotoğraf seçeneği.
@@ -149,6 +161,10 @@ const FullscreenQrScanner: React.FC<FullscreenQrScannerProps> = ({
             /dismissed/i.test(detail)
               ? 'Kamera izni sorusu yanıtlanmadan kapandı. ' + photoTip +
                 'Canlı kamera için "Canlı kamerayı tekrar dene"ye basıp soruda "İzin ver"i seçin.'
+              : iosApp
+                ? 'Kamera izni verilmedi. ' + photoTip +
+                  `Canlı kamera için iPhone Ayarlar > ${iosApp} > Kamera açık olmalı; sonra sayfayı yenileyip ` +
+                  '"QR Tara"ya basın ve soruda "İzin Ver"i seçin.'
               : isIOS
                 ? 'Kamera izni verilmedi. ' + photoTip +
                   'Canlı kamera için sayfayı yenileyin, "QR Tara"ya basın ve soruda "İzin Ver"i seçin ' +
