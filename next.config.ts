@@ -1,6 +1,23 @@
 import type { NextConfig } from 'next'
 
+// Eski adres (vercel.app) bazı mobil ağlardan açılmıyor; site qryoklama.dev'e taşındı.
+// Eski adrese gelen her istek yeni adrese gönderilir. Tanıma çerezi adrese bağlı
+// olduğu için öğrencilerin tek bir adreste kalması gerekir. Geçici (307) yönlendirme:
+// tarayıcılar kalıcı olarak ezberlemez, gerekirse geri alınabilir.
+const OLD_HOST = 'qr-attendance-app-ramazan-bayraks-projects.vercel.app';
+const NEW_ORIGIN = 'https://qryoklama.dev';
+
 const nextConfig: NextConfig = {
+  async redirects() {
+    return [
+      {
+        source: '/:path*',
+        has: [{ type: 'host', value: OLD_HOST }],
+        destination: `${NEW_ORIGIN}/:path*`,
+        permanent: false,
+      },
+    ];
+  },
   images: {
     remotePatterns: [
       {
